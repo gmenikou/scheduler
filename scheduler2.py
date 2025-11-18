@@ -31,26 +31,36 @@ def load_initial_week():
     return None
 
 # ---------------------------------------------
-# 3. Rotation logic
+# 3. Week-based rotation
 # ---------------------------------------------
-def rotate_doctors_by_weekdays(initial_week, all_dates):
+def rotate_week_list(week_list, shift):
+    # shift >0 → forward, shift <0 → backward
+    shift = shift % 7
+    return week_list[-shift:] + week_list[:-shift]
+
+def generate_schedule(initial_week, all_dates):
+    """
+    initial_week: dict {date: doctor} for first week
+    all_dates: list of dates
+    """
     schedule = {}
-    initial_week_sorted = sorted(initial_week.keys())
-    first_monday = initial_week_sorted[0]
-    initial_weekday_to_doctor = {d.weekday(): doc for d, doc in initial_week.items()}
+    first_monday = min(initial_week.keys())
+    week_list = [initial_week[d] for d in sorted(initial_week.keys())]  # Mon→Sun
 
-    for d in all_dates:
-        week_diff = (d - first_monday).days // 7
-        day_of_week = d.weekday()
-        if week_diff == 0:
-            schedule[d] = initial_weekday_to_doctor[day_of_week]
-        elif week_diff > 0:
-            rotated_weekday = (day_of_week - 2 * week_diff) % 7
-            schedule[d] = initial_weekday_to_doctor[rotated_weekday]
-        else:
-            rotated_weekday = (day_of_week + 2 * abs(week_diff)) % 7
-            schedule[d] = initial_weekday_to_doctor[rotated_weekday]
+    # Group all_dates by week (Monday→Sunday)
+    all_dates_sorted = sorted(all_dates)
+    weeks = []
+    i = 0
+    while i < len(all_dates_sorted):
+        week_block = all_dates_sorted[i:i+7]
+        weeks.append(week_block)
+        i += 7
 
+    for week_block in weeks:
+        week_diff = (week_block[0] - first_monday).days // 7
+        rotated_week = rotate_week_list(week_list, -2*week_diff)  # future weeks
+        for idx, d in enumerate(week_block):
+            schedule[d] = rotated_week[idx % 7]
     return schedule
 
 def generate_schedule_for_months(initial_week, start_month, num_months=1):
@@ -60,12 +70,12 @@ def generate_schedule_for_months(initial_week, start_month, num_months=1):
         year = start_month.year + ((start_month.month + m - 1) // 12)
         num_days = calendar.monthrange(year, month)[1]
         month_dates = [datetime.date(year, month, d) for d in range(1, num_days + 1)]
-        schedule = rotate_doctors_by_weekdays(initial_week, month_dates)
+        schedule = generate_schedule(initial_week, month_dates)
         all_schedules[(year, month)] = schedule
     return all_schedules
 
 # ---------------------------------------------
-# 4. PDF Export
+# 4. PDF export
 # ---------------------------------------------
 class PDF(FPDF):
     def header(self):
@@ -99,13 +109,11 @@ def create_pdf_multi_months(all_schedules, filename="schedule.pdf"):
 # ---------------------------------------------
 st.title("📅 Programma Giatron – Backwards Rotation")
 
-# Session initialization
 if "initial_week" not in st.session_state:
     st.session_state.initial_week = load_initial_week()
 if "start_date" not in st.session_state:
     st.session_state.start_date = None
 
-# Reset
 if st.button("🔄 Reset All"):
     st.session_state.clear()
     if os.path.exists(INIT_FILE):
@@ -113,7 +121,6 @@ if st.button("🔄 Reset All"):
     st.success("Session and initial week deleted.")
     st.stop()
 
-# Step 1: Select initial date
 st.subheader("1️⃣ Select a date in the initial week")
 if st.session_state.start_date is None:
     selected_date = st.date_input("Choose a date:", datetime.date.today())
@@ -125,7 +132,6 @@ st.write("The week is:")
 for d in week_dates:
     st.write("-", d.strftime("%d/%m/%Y"))
 
-# Step 2: Assign doctors for the initial week
 st.subheader("2️⃣ Assign doctors for the first week")
 if st.session_state.initial_week is None:
     initial_week = {}
@@ -143,16 +149,14 @@ if st.session_state.initial_week is None:
 else:
     st.info("Initial week already saved. Use Reset to change it.")
 
-# Display initial week
 if st.session_state.initial_week:
     st.write("Your assigned initial week:")
     for d in sorted(st.session_state.initial_week.keys()):
         st.write(d.strftime("%d/%m/%Y"), "→", st.session_state.initial_week[d])
 
-# Step 3: Generate schedule for forthcoming months
+# Step 3: Generate schedule
 if st.session_state.initial_week and st.session_state.start_date:
     st.subheader("3️⃣ Generate schedule for forthcoming months")
-    # Month selection
     today = datetime.date.today()
     months_options = [(today + datetime.timedelta(days=30*i)).replace(day=1) for i in range(12)]
     months_display = [d.strftime("%B %Y") for d in months_options]
@@ -184,5 +188,3 @@ if st.session_state.initial_week and st.session_state.start_date:
             filename = create_pdf_multi_months(multi_schedule)
             with open(filename, "rb") as f:
                 st.download_button("⬇️ Download PDF", data=f, file_name="schedule_all_months.pdf")
-else:
-    st.warning("Please assign and save the initial week first.")
