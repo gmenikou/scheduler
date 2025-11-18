@@ -18,21 +18,9 @@ def get_week_dates(any_date):
     monday = any_date - datetime.timedelta(days=any_date.weekday())
     return [monday + datetime.timedelta(days=i) for i in range(7)]
 
-def backwards_rotation(start_assignments, dates):
-    week_doctors = [start_assignments[d] for d in sorted(start_assignments.keys())]
-    assignments = {}
-    dates_sorted = sorted(dates)
-    weeks = [dates_sorted[i:i+7] for i in range(0, len(dates_sorted), 7)]
-    for w_idx, block in enumerate(weeks):
-        offset = (w_idx * 2) % 7
-        rotated = week_doctors[-offset:] + week_doctors[:-offset]
-        for i, d in enumerate(block):
-            assignments[d] = rotated[i % 7]
-    return assignments
-
 def get_month_dates(year, month):
     num_days = calendar.monthrange(year, month)[1]
-    return [datetime.date(year, month, d) for d in range(1, num_days + 1)]
+    return [datetime.date(year, month, d) for d in range(1, num_days+1)]
 
 def save_initial_week(initial_week):
     serializable = {d.strftime("%Y-%m-%d"): doc for d, doc in initial_week.items()}
@@ -46,23 +34,46 @@ def load_initial_week():
         return {datetime.datetime.strptime(k, "%Y-%m-%d").date(): v for k, v in data.items()}
     return None
 
-# Generate multi-month schedule
-def generate_multi_month_schedule(initial_week, start_month, num_months=3):
+# ---------------------------------------------
+# 3. Multi-month schedule with preserved initial week
+# ---------------------------------------------
+def generate_multi_month_schedule_fixed(initial_week, start_month, num_months=3):
     all_months_schedule = {}
-    week_doctors = [initial_week[d] for d in sorted(initial_week.keys())]
+    # Ordered doctors of initial week
+    initial_week_sorted = [initial_week[d] for d in sorted(initial_week.keys())]
+    last_rotated_week = initial_week_sorted.copy()
+
     for m in range(num_months):
-        year = (start_month + datetime.timedelta(days=30*m)).year
-        month = (start_month + datetime.timedelta(days=30*m)).month
+        month_start = (start_month + datetime.timedelta(days=30*m)).replace(day=1)
+        year = month_start.year
+        month = month_start.month
         num_days = calendar.monthrange(year, month)[1]
         month_dates = [datetime.date(year, month, d) for d in range(1, num_days+1)]
+
         weeks = [month_dates[i:i+7] for i in range(0, len(month_dates), 7)]
         assignments = {}
+
         for w_idx, block in enumerate(weeks):
-            offset = (w_idx * 2) % 7
-            rotated = week_doctors[-offset:] + week_doctors[:-offset]
+            # Preserve initial week dates exactly
+            preserved_block = {d: initial_week[d] for d in block if d in initial_week}
+            non_preserved_dates = [d for d in block if d not in initial_week]
+
+            if w_idx == 0 and preserved_block:
+                rotated = last_rotated_week
+            else:
+                offset = 2 % 7
+                rotated = last_rotated_week[-offset:] + last_rotated_week[:-offset]
+
             for i, d in enumerate(block):
-                assignments[d] = rotated[i % 7]
+                if d in preserved_block:
+                    assignments[d] = preserved_block[d]
+                else:
+                    assignments[d] = rotated[i % 7]
+
+            last_rotated_week = [assignments[d] for d in block]
+
         all_months_schedule[(year, month)] = assignments
+
     return all_months_schedule
 
 # ---------------------------------------------
@@ -92,7 +103,7 @@ def create_pdf(assignments, month_year_str, filename="schedule.pdf"):
     return filename
 
 # ---------------------------------------------
-# 3. STREAMLIT APP
+# 4. STREAMLIT APP
 # ---------------------------------------------
 st.title("📅 Programma Giatron – Backwards Rotation")
 
@@ -163,7 +174,7 @@ selected_month_date = months_options[selected_month_index]
 num_months = st.number_input("Number of months to generate:", min_value=1, max_value=12, value=1, step=1)
 
 if st.button("Generate Month Schedule"):
-    multi_schedule = generate_multi_month_schedule(st.session_state.initial_week, selected_month_date, num_months)
+    multi_schedule = generate_multi_month_schedule_fixed(st.session_state.initial_week, selected_month_date, num_months)
 
     # Show schedules
     for (year, month), assignments in multi_schedule.items():
