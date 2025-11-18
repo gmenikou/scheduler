@@ -18,10 +18,6 @@ def get_week_dates(any_date):
     monday = any_date - datetime.timedelta(days=any_date.weekday())
     return [monday + datetime.timedelta(days=i) for i in range(7)]
 
-def get_month_dates(year, month):
-    num_days = calendar.monthrange(year, month)[1]
-    return [datetime.date(year, month, d) for d in range(1, num_days + 1)]
-
 def save_initial_week(initial_week):
     serializable = {d.strftime("%Y-%m-%d"): doc for d, doc in initial_week.items()}
     with open(INIT_FILE, "w", encoding="utf-8") as f:
@@ -35,49 +31,40 @@ def load_initial_week():
     return None
 
 # ---------------------------------------------
-# 3. Multi-month schedule (preserve initial week)
+# 3. Schedule logic: initial week preserved
 # ---------------------------------------------
-def generate_multi_month_schedule(initial_week, start_month, num_months=3):
-    """
-    initial_week: dict {date: doctor} for first week
-    start_month: datetime.date (first day of month)
-    num_months: number of months to generate
-    """
-    all_months_schedule = {}
-    initial_week_sorted = [initial_week[d] for d in sorted(initial_week.keys())]
-    total_week_index = 0
+def full_month_schedule(initial_week, all_dates):
+    initial_week_dates = sorted(initial_week.keys())
+    initial_week_list = [initial_week[d] for d in initial_week_dates]
+    initial_monday = initial_week_dates[0]
 
-    for m in range(num_months):
-        month_start = (start_month + datetime.timedelta(days=30*m)).replace(day=1)
-        year = month_start.year
-        month = month_start.month
+    schedule = {}
+    for d in all_dates:
+        delta_days = (d - initial_monday).days
+        week_diff = delta_days // 7
+        offset = (abs(week_diff) * 2) % 7
 
-        num_days = calendar.monthrange(year, month)[1]
-        month_dates = [datetime.date(year, month, d) for d in range(1, num_days + 1)]
+        if week_diff < 0:
+            # Past weeks: +2 per week
+            rotated = initial_week_list[offset:] + initial_week_list[:offset]
+        elif week_diff > 0:
+            # Future weeks: -2 per week
+            rotated = initial_week_list[-offset:] + initial_week_list[:-offset]
+        else:
+            # Initial week: exact
+            rotated = initial_week_list
 
-        weeks = [month_dates[i:i+7] for i in range(0, len(month_dates), 7)]
-        assignments = {}
+        schedule[d] = rotated[d.weekday()]
 
-        for block in weeks:
-            offset = (total_week_index * 2) % 7
-            rotated = initial_week_sorted[-offset:] + initial_week_sorted[:-offset]
-
-            for i, d in enumerate(block):
-                assignments[d] = rotated[i % 7]
-
-            total_week_index += 1
-
-        all_months_schedule[(year, month)] = assignments
-
-    return all_months_schedule
+    return schedule
 
 # ---------------------------------------------
-# 4. PDF latin-only
+# 4. PDF Export (latin-only)
 # ---------------------------------------------
 class PDF(FPDF):
     def header(self):
         self.set_font("Arial", "B", 14)
-        self.cell(0, 10, "Programma Giatron – Month", 0, 1, "C")
+        self.cell(0, 10, "Programma Giatron", 0, 1, "C")
         self.ln(4)
 
     def create_schedule_table(self, assignments):
@@ -89,9 +76,8 @@ class PDF(FPDF):
             self.cell(60, 8, d.strftime("%d/%m/%Y"), 1, 0, "C")
             self.cell(80, 8, assignments[d], 1, 1, "C")
 
-def create_pdf(assignments, month_year_str, filename="schedule.pdf"):
+def create_pdf(assignments, filename="schedule.pdf"):
     pdf = PDF()
-    pdf.title = f"Programma Giatron – {month_year_str}"
     pdf.add_page()
     pdf.create_schedule_table(assignments)
     pdf.output(filename)
@@ -128,63 +114,47 @@ st.write("The week is:")
 for d in week_dates:
     st.write("-", d.strftime("%d/%m/%Y"))
 
-# Step 2: Manual assignment
+# Step 2: Assign doctors for the initial week
 st.subheader("2️⃣ Assign doctors for the first week")
 if st.session_state.initial_week is None:
     initial_week = {}
-    selected_doctors = []
     cols = st.columns(7)
     for i, d in enumerate(week_dates):
         with cols[i]:
             doc = st.selectbox(d.strftime("%a\n%d/%m"), DOCTORS, key=f"manual_{d}")
             initial_week[d] = doc
-            selected_doctors.append(doc)
 
-    if len(set(selected_doctors)) < len(selected_doctors):
-        st.error("❗ Duplicate doctors in the same week are not allowed.")
-    else:
-        if st.button("💾 Save initial week"):
-            st.session_state.initial_week = initial_week
-            st.session_state.start_date = selected_date
-            save_initial_week(initial_week)
-            st.success("Initial week saved!")
+    if st.button("💾 Save initial week"):
+        st.session_state.initial_week = initial_week
+        st.session_state.start_date = selected_date
+        save_initial_week(initial_week)
+        st.success("Initial week saved!")
 else:
     st.info("Initial week already saved. Use Reset to change it.")
 
-# Step 2b: Show initial week exactly as assigned
-if st.session_state.initial_week is not None:
+# Display initial week
+if st.session_state.initial_week:
     st.write("Your assigned initial week:")
     for d in sorted(st.session_state.initial_week.keys()):
         st.write(d.strftime("%d/%m/%Y"), "→", st.session_state.initial_week[d])
 
-# Step 3: Select month(s) and generate schedule
-st.subheader("3️⃣ Select month for full schedule")
-today = datetime.date.today()
-months_options = [(today + datetime.timedelta(days=30*i)).replace(day=1) for i in range(12)]
-months_display = [d.strftime("%B %Y") for d in months_options]
+# Step 3: Generate schedule
+st.subheader("3️⃣ Generate full schedule")
+year = st.session_state.start_date.year
+month = st.session_state.start_date.month
+num_days = calendar.monthrange(year, month)[1]
+all_dates = [datetime.date(year, month, d) for d in range(1, num_days + 1)]
 
-selected_month_index = st.selectbox("Choose month:", list(range(12)), format_func=lambda x: months_display[x])
-selected_month_date = months_options[selected_month_index]
+schedule = full_month_schedule(st.session_state.initial_week, all_dates)
 
-num_months = st.number_input("Number of months to generate:", min_value=1, max_value=12, value=1, step=1)
+# Show schedule
+st.write("### 📋 Month Schedule")
+for d in sorted(schedule.keys()):
+    st.write(d.strftime("%d/%m/%Y"), "→", schedule[d])
 
-if st.button("Generate Month Schedule"):
-    multi_schedule = generate_multi_month_schedule(st.session_state.initial_week, selected_month_date, num_months)
-
-    # Show schedules
-    for (year, month), assignments in multi_schedule.items():
-        st.write(f"### 📋 Schedule for {datetime.date(year, month, 1).strftime('%B %Y')}")
-        for d in sorted(assignments.keys()):
-            st.write(d.strftime("%d/%m/%Y"), "→", assignments[d])
-
-    # PDF export in latin-only
-    st.subheader("📄 Export PDF")
-    if st.button("🖨️ Create PDF for selected month"):
-        assignments = multi_schedule[(selected_month_date.year, selected_month_date.month)]
-        filename = create_pdf(assignments, selected_month_date.strftime('%B %Y'))
-        with open(filename, "rb") as f:
-            st.download_button(
-                "⬇️ Download PDF",
-                data=f,
-                file_name=f"schedule_{selected_month_date.strftime('%Y_%m')}.pdf"
-            )
+# Step 4: PDF export
+st.subheader("📄 Export PDF")
+if st.button("🖨️ Create PDF"):
+    filename = create_pdf(schedule)
+    with open(filename, "rb") as f:
+        st.download_button("⬇️ Download PDF", data=f, file_name="schedule.pdf")
