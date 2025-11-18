@@ -47,7 +47,7 @@ def load_initial_week():
     return None
 
 # ---------------------------------------------
-# PDF για latin-only strings
+# PDF latin-only (to avoid Unicode errors)
 # ---------------------------------------------
 class PDF(FPDF):
     def header(self):
@@ -126,11 +126,14 @@ if st.session_state.initial_week is None:
 else:
     st.info("Initial week already saved. Use Reset to change it.")
 
-if st.session_state.initial_week is None:
-    st.stop()
+# Step 2b: Show initial week exactly as assigned
+if st.session_state.initial_week is not None:
+    st.write("Your assigned initial week:")
+    for d in sorted(st.session_state.initial_week.keys()):
+        st.write(d.strftime("%d/%m/%Y"), "→", st.session_state.initial_week[d])
 
-# Step 3: Select month
-st.subheader("3️⃣ Select month to display schedule")
+# Step 3: Select month and generate schedule
+st.subheader("3️⃣ Select month for full schedule")
 today = datetime.date.today()
 months_options = [(today + datetime.timedelta(days=30*i)).replace(day=1) for i in range(12)]
 months_display = [d.strftime("%B %Y") for d in months_options]
@@ -138,21 +141,22 @@ months_display = [d.strftime("%B %Y") for d in months_options]
 selected_month_index = st.selectbox("Choose month:", list(range(12)), format_func=lambda x: months_display[x])
 selected_month_date = months_options[selected_month_index]
 
-# Step 4: Generate schedule
-month_dates = get_month_dates(selected_month_date.year, selected_month_date.month)
-assignments = backwards_rotation(st.session_state.initial_week, month_dates)
+if st.button("Generate Month Schedule"):
+    # Only now rotate using the saved initial week
+    month_dates = get_month_dates(selected_month_date.year, selected_month_date.month)
+    assignments = backwards_rotation(st.session_state.initial_week, month_dates)
 
-st.write(f"### 📋 Schedule for {selected_month_date.strftime('%B %Y')}")
-for d in sorted(assignments.keys()):
-    st.write(d.strftime("%d/%m/%Y"), "→", assignments[d])
+    st.write(f"### 📋 Schedule for {selected_month_date.strftime('%B %Y')}")
+    for d in sorted(assignments.keys()):
+        st.write(d.strftime("%d/%m/%Y"), "→", assignments[d])
 
-# Step 5: Export PDF
-st.subheader("📄 Export PDF")
-if st.button("🖨️ Create PDF"):
-    filename = create_pdf(assignments, selected_month_date.strftime('%B %Y'))
-    with open(filename, "rb") as f:
-        st.download_button(
-            "⬇️ Download PDF",
-            data=f,
-            file_name=f"schedule_{selected_month_date.strftime('%Y_%m')}.pdf"
-        )
+    # PDF export in latin-only
+    st.subheader("📄 Export PDF")
+    if st.button("🖨️ Create PDF"):
+        filename = create_pdf(assignments, selected_month_date.strftime('%B %Y'))
+        with open(filename, "rb") as f:
+            st.download_button(
+                "⬇️ Download PDF",
+                data=f,
+                file_name=f"schedule_{selected_month_date.strftime('%Y_%m')}.pdf"
+            )
