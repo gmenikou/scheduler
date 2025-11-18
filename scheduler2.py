@@ -47,7 +47,7 @@ def generate_schedule(initial_week, all_dates):
         weeks.append(week_block)
         current += datetime.timedelta(days=7)
 
-    week_counter = 0
+    week_counter = 1  # Start counting rotation from week immediately after initial week
     for week_block in weeks:
         # Preserve initial week exactly
         if any(d in initial_week for d in week_block):
