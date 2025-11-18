@@ -166,12 +166,12 @@ with right:
         ym = st.session_state.generated_months[-1]
         y,m = ym
         dates = month_dates(y,m)
-        df_export = pd.DataFrame({
-            "Date": [d for d in dates],
-            "Weekday": [calendar.day_name[d.weekday()] for d in dates],
-            "Doctor": [st.session_state.prev_assignments[d] for d in dates],
-            "Holiday": ["Yes" if d in st.session_state.holidays.get(ym,set()) else "" for d in dates]
-        })
+       df_export = pd.DataFrame({
+    "Date": [d for d in dates],
+    "Weekday": [calendar.day_name[d.weekday()] for d in dates],
+    "Doctor": [st.session_state.prev_assignments.get(d, "") for d in dates],
+    "Holiday": ["Yes" if d in st.session_state.holidays.get(ym,set()) else "" for d in dates]
+    })
 
         # Excel
         excel_buffer = io.BytesIO()
@@ -239,3 +239,4 @@ if st.session_state.generated_months:
 
 else:
     st.info("No months generated yet. Use the controls on the left to generate a month.")
+
