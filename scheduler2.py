@@ -2,229 +2,183 @@
 import streamlit as st
 import pandas as pd
 import calendar
-from datetime import date, timedelta, datetime
-from collections import defaultdict, deque
+from datetime import date, datetime, timedelta
+from collections import defaultdict
 import pickle
 from fpdf import FPDF
 
 # ---------------------------
-# Helper Functions
-# ---------------------------
-
-def get_week_dates(start_date):
-    """Return list of 7 dates for the week containing start_date (Monday to Sunday)."""
-    monday = start_date - timedelta(days=start_date.weekday())
-    return [monday + timedelta(days=i) for i in range(7)]
-
-def assign_backwards_rotation(initial_week, doctors, all_dates):
-    """
-    Given the manual assignment of the initial week (dict {date: doctor}),
-    populate remaining dates forward and backward according to backwards 2-days per week rotation.
-    """
-    all_dates_sorted = sorted(all_dates)
-    N = len(doctors)
-    dates_to_assign = [d for d in all_dates_sorted if d not in initial_week]
-    assign_map = dict(initial_week)
-
-    # Prepare reference sequence from initial week
-    ref_week = sorted(initial_week.keys())
-    ref_doc_order = [initial_week[d] for d in ref_week]
-
-    # Forward propagation
-    for i, d in enumerate(dates_to_assign):
-        # number of weeks from the initial reference
-        weeks_offset = (d - ref_week[-1]).days // 7 + 1
-        prev_doc = assign_map[ref_week[-1]]
-        idx = (doctors.index(prev_doc) + weeks_offset) % N
-        assign_map[d] = doctors[idx]
-
-    # Backward propagation
-    for i, d in enumerate(reversed(all_dates_sorted)):
-        if d in assign_map:
-            continue
-        # number of weeks backward from first reference week
-        weeks_offset = (ref_week[0] - d).days // 7 + 1
-        prev_doc = assign_map[ref_week[0]]
-        idx = (doctors.index(prev_doc) - weeks_offset) % N
-        assign_map[d] = doctors[idx]
-
-    return assign_map
+# Βοηθητικές συναρτήσεις
 
 def month_dates(year, month):
     first = date(year, month, 1)
     _, last_day = calendar.monthrange(year, month)
     return [first + timedelta(days=i) for i in range(last_day)]
 
-def print_schedule_pdf(assign_map, holidays, filename="schedule.pdf"):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=12)
-    pdf.cell(0, 10, "Doctor Shift Schedule", ln=True, align="C")
-    pdf.ln(5)
-    pdf.cell(40, 8, "Date", 1)
-    pdf.cell(40, 8, "Weekday", 1)
-    pdf.cell(60, 8, "Doctor", 1)
-    pdf.cell(40, 8, "Holiday", 1)
-    pdf.ln()
-    for d in sorted(assign_map.keys()):
-        pdf.cell(40, 8, d.isoformat(), 1)
-        pdf.cell(40, 8, calendar.day_name[d.weekday()], 1)
-        pdf.cell(60, 8, assign_map[d], 1)
-        pdf.cell(40, 8, "Yes" if d in holidays else "", 1)
-        pdf.ln()
-    pdf.output(filename)
-    return filename
+def week_dates_from_monday(start_monday):
+    """Επιστρέφει τις 7 ημερομηνίες της εβδομάδας ξεκινώντας από Monday"""
+    return [start_monday + timedelta(days=i) for i in range(7)]
+
+def assign_backwards_rotation(initial_week_assignment, doctors, all_dates):
+    """Γεμίζει το μήνα βάσει backwards-2-days rotation, αρχής γενομένης από την αρχική εβδομάδα"""
+    assign_map = {}
+    # αρχική εβδομάδα
+    sorted_initial_dates = sorted(initial_week_assignment.keys())
+    N = len(doctors)
+    # βρίσκουμε το index του γιατρού για κάθε μέρα στην αρχική εβδομάδα
+    ref_index_map = {d: doctors.index(initial_week_assignment[d]) for d in sorted_initial_dates}
+    
+    # γεμίζουμε προς τα εμπρός
+    current_date = sorted_initial_dates[-1] + timedelta(days=1)
+    while current_date <= max(all_dates):
+        prev_date = current_date - timedelta(days=7)
+        if prev_date in assign_map:
+            prev_doc_idx = doctors.index(assign_map[prev_date])
+        else:
+            # αν προηγούμενη εβδομάδα είναι αρχική
+            prev_doc_idx = ref_index_map.get(prev_date, 0)
+        # backwards 2-day rotation
+        doc_idx = (prev_doc_idx + 1) % N  # +1 κάθε μέρα (backwards effect)
+        assign_map[current_date] = doctors[doc_idx]
+        current_date += timedelta(days=1)
+        
+    # γεμίζουμε προς τα πίσω
+    current_date = sorted_initial_dates[0] - timedelta(days=1)
+    while current_date >= min(all_dates):
+        next_date = current_date + timedelta(days=7)
+        if next_date in assign_map:
+            next_doc_idx = doctors.index(assign_map[next_date])
+        else:
+            next_doc_idx = ref_index_map.get(next_date, 0)
+        doc_idx = (next_doc_idx -1) % N
+        assign_map[current_date] = doctors[doc_idx]
+        current_date -= timedelta(days=1)
+        
+    # προσθέτουμε την αρχική εβδομάδα
+    assign_map.update(initial_week_assignment)
+    
+    return assign_map
 
 # ---------------------------
 # Streamlit App
 
-st.set_page_config(page_title="Doctor Shift Scheduler", layout="wide")
+st.set_page_config(page_title="Πρόγραμμα Γιατρών", layout="wide")
 
-# Initialize session state
-if 'initial_week' not in st.session_state:
-    st.session_state.initial_week = {}  # {date: doctor}
+# αρχικοποίηση session state
 if 'prev_assignments' not in st.session_state:
-    st.session_state.prev_assignments = {}  # {date: doctor}
+    st.session_state.prev_assignments = {}
+if 'initial_week' not in st.session_state:
+    st.session_state.initial_week = {}
 if 'holidays' not in st.session_state:
-    st.session_state.holidays = set()
+    st.session_state.holidays = defaultdict(set)
+if 'doctors' not in st.session_state:
+    st.session_state.doctors = ["Elena","Eva","Maria","Athina","Alexandros","Elia","Christina"]
 if 'generated_months' not in st.session_state:
     st.session_state.generated_months = []
-if 'doctors' not in st.session_state:
-    st.session_state.doctors = ["Έλενα", "Εύα", "Μαρία", "Αθηνά", "Αλέξανδρος", "Έλια", "Χριστίνα"]
+if 'initial_week_range' not in st.session_state:
+    st.session_state.initial_week_range = []
 
-st.title("Πρόγραμμα Εφημεριών Ιατρών — Περιστροφή 2-ημέρες ανά εβδομάδα")
+st.title("Πρόγραμμα Γιατρών - Backwards 2-day Rotation")
 
-# ---------------------------
-# Select initial week for manual assignment
+# Επιλογή αρχικής εβδομάδας
 st.subheader("Επιλογή αρχικής εβδομάδας")
-ref_start_date = st.date_input("Επιλέξτε την αρχική Δευτέρα της εβδομάδας", value=date(2026,1,12))
+today = date.today()
+monday_this_week = today - timedelta(days=today.weekday())
+start_week = st.date_input("Δευτέρα αρχικής εβδομάδας", value=monday_this_week)
+initial_week_dates = week_dates_from_monday(start_week)
+st.session_state.initial_week_range = initial_week_dates
 
-week_dates_list = get_week_dates(ref_start_date)
-
-# Prepare dataframe for manual assignment
-week_df = pd.DataFrame({
-    "Ημέρα": [calendar.day_name[d.weekday()] for d in week_dates_list],
-    "Ημερομηνία": week_dates_list,
-    "Γιατρός": [st.session_state.initial_week.get(d, "") for d in week_dates_list]
+# Χειροκίνητη ανάθεση για αρχική εβδομάδα
+st.subheader("Χειροκίνητη ανάθεση για αρχική εβδομάδα")
+initial_week_df = pd.DataFrame({
+    "Ημερομηνία": [d.isoformat() for d in initial_week_dates],
+    "Ημέρα": [calendar.day_name[d.weekday()] for d in initial_week_dates],
+    "Γιατρός": [st.session_state.initial_week.get(d, st.session_state.doctors[0]) for d in initial_week_dates]
 })
 
-st.write("Αναθέστε χειροκίνητα τους γιατρούς για κάθε ημέρα της εβδομάδας:")
-edited_df = st.data_editor(week_df, key="initial_week_editor", num_rows="fixed")
+edited_df = st.experimental_data_editor(initial_week_df, num_rows="fixed", key="initial_week_editor")
 
-# Apply manual assignment
+# Αποθήκευση χειροκίνητης ανάθεσης
 if st.button("Αποθήκευση αρχικής εβδομάδας"):
-    for idx, row in edited_df.iterrows():
-        st.session_state.initial_week[row["Ημερομηνία"]] = row["Γιατρός"]
-    st.success("Αρχική εβδομάδα αποθηκεύτηκε.")
+    st.session_state.initial_week = {datetime.fromisoformat(row["Ημερομηνία"]).date(): row["Γιατρός"] for i,row in edited_df.iterrows()}
+    st.success("Αρχική εβδομάδα αποθηκεύτηκε")
 
-# ---------------------------
-# Generate month schedule using rotation
-st.subheader("Δημιουργία προγράμματος για μήνα")
-col1, col2 = st.columns(2)
-with col1:
-    year = st.number_input("Έτος", min_value=2000, max_value=2100, value=2026)
-    month = st.selectbox("Μήνας", list(range(1,13)), index=0)
-    start_balance = st.checkbox("Επαναφορά ισορροπίας από αυτόν τον μήνα", value=False)
-with col2:
-    if st.button("Γεννήστε πρόγραμμα για μήνα"):
-        if start_balance:
-            st.session_state.prev_assignments = {}
-            st.session_state.generated_months = []
-        dates = month_dates(year, month)
-        assign_map = assign_backwards_rotation(st.session_state.initial_week, st.session_state.doctors, dates)
+# Επιλογή μήνα για πλήρωση
+st.subheader("Επιλογή μήνα για πλήρωση")
+year = st.number_input("Έτος", min_value=2000, max_value=2100, value=today.year)
+month = st.selectbox("Μήνας", list(range(1,13)), index=today.month-1)
+
+dates_in_month = month_dates(year, month)
+
+# Γέμισμα μήνα
+if st.button("Γέμισμα μήνα βάσει αρχικής εβδομάδας"):
+    if not st.session_state.initial_week:
+        st.warning("Πρέπει πρώτα να ορίσετε την αρχική εβδομάδα!")
+    else:
+        assign_map = assign_backwards_rotation(st.session_state.initial_week, st.session_state.doctors, dates_in_month)
         st.session_state.prev_assignments.update(assign_map)
-        if (year,month) not in st.session_state.generated_months:
-            st.session_state.generated_months.append((year,month))
-        st.success(f"Πρόγραμμα για {calendar.month_name[month]} {year} δημιουργήθηκε.")
+        if (year, month) not in st.session_state.generated_months:
+            st.session_state.generated_months.append((year, month))
+        st.success(f"Μήνας {calendar.month_name[month]} {year} γεμίστηκε.")
 
-# ---------------------------
-# Holiday selection
-st.subheader("Αναθέσεις Αργιών")
+# Επιλογή αργιών
+st.subheader("Χειροκίνητη επιλογή αργιών")
 if st.session_state.generated_months:
     selected_ym = st.selectbox("Επιλέξτε μήνα για αργίες", st.session_state.generated_months)
     y,m = selected_ym
-    dates = month_dates(y,m)
-    date_strs = [d.isoformat() + " - " + calendar.day_name[d.weekday()] for d in dates]
-    date_map = {date_strs[i]: dates[i] for i in range(len(dates))}
-    default_hols = [d.isoformat() + " - " + calendar.day_name[d.weekday()] for d in st.session_state.holidays if d in dates]
-    hol_selection = st.multiselect("Επιλογή αργιών", date_strs, default=default_hols)
-    st.session_state.holidays.update({date_map[s] for s in hol_selection})
+    month_dates_list = month_dates(y,m)
+    date_strs = [d.isoformat() + " - " + calendar.day_name[d.weekday()] for d in month_dates_list]
+    default_hols = [d.isoformat() + " - " + calendar.day_name[d.weekday()] for d in st.session_state.holidays.get(selected_ym,set()) if d in month_dates_list]
+    selected_hols = st.multiselect("Αργίες (μόνο για ενημέρωση balance)", date_strs, default=default_hols)
+    st.session_state.holidays[selected_ym] = set(datetime.fromisoformat(s.split(" - ")[0]).date() for s in selected_hols)
 
-# ---------------------------
-# Display schedule table
+# Εμφάνιση προγράμματος και balance
+st.subheader("Πρόγραμμα & Balance")
 if st.session_state.generated_months:
-    st.subheader("Πρόγραμμα Εφημεριών")
-    display_dates = month_dates(year, month)
-    df_rows = []
-    for d in display_dates:
-        df_rows.append({
-            "Ημερομηνία": d,
-            "Ημέρα": calendar.day_name[d.weekday()],
-            "Γιατρός": st.session_state.prev_assignments.get(d, ""),
-            "Αργία": "Ναι" if d in st.session_state.holidays else ""
+    for ym in st.session_state.generated_months:
+        y,m = ym
+        df = pd.DataFrame({
+            "Ημερομηνία": month_dates(y,m),
+            "Ημέρα": [calendar.day_name[d.weekday()] for d in month_dates(y,m)],
+            "Γιατρός": [st.session_state.prev_assignments.get(d,"") for d in month_dates(y,m)],
+            "Αργία": ["Yes" if d in st.session_state.holidays.get(ym,set()) else "" for d in month_dates(y,m)]
         })
-    df_display = pd.DataFrame(df_rows)
-    st.dataframe(df_display, height=480)
+        st.write(f"Μήνας {calendar.month_name[m]} {y}")
+        st.dataframe(df, height=400)
 
-# ---------------------------
 # Balance panel
-st.subheader("Πίνακας Ισορροπίας")
+st.subheader("Πίνακας ισορροπίας (Συσσωρευτικά)")
 balance_rows = []
 for doc in st.session_state.doctors:
-    fr = sum(1 for d, dd in st.session_state.prev_assignments.items() if dd==doc and d.weekday()==4)
-    sa = sum(1 for d, dd in st.session_state.prev_assignments.items() if dd==doc and d.weekday()==5)
-    su = sum(1 for d, dd in st.session_state.prev_assignments.items() if dd==doc and d.weekday()==6)
-    hol_non_weekday = sum(1 for d in st.session_state.holidays if d.weekday() not in (5,6) and st.session_state.prev_assignments.get(d)==doc)
-    balance_rows.append({
-        "Γιατρός": doc,
-        "Παρασκευές": fr,
-        "Σάββατα": sa,
-        "Κυριακές": su,
-        "Αργίες (μη Σ/Κ)": hol_non_weekday
-    })
+    fr = sum(1 for d,dd in st.session_state.prev_assignments.items() if dd==doc and d.weekday()==4)
+    sa = sum(1 for d,dd in st.session_state.prev_assignments.items() if dd==doc and d.weekday()==5)
+    su = sum(1 for d,dd in st.session_state.prev_assignments.items() if dd==doc and d.weekday()==6)
+    hol_non_weekday = 0
+    for (ym_k, holset) in st.session_state.holidays.items():
+        for hd in holset:
+            if st.session_state.prev_assignments.get(hd) == doc and hd.weekday() not in (5,6):
+                hol_non_weekday += 1
+    balance_rows.append({"Γιατρός": doc, "Παρασκευή": fr, "Σάββατο": sa, "Κυριακή": su, "Αργίες (εκτός Σαββατοκύριακου)": hol_non_weekday})
 st.dataframe(pd.DataFrame(balance_rows).set_index("Γιατρός"))
 
-# ---------------------------
-# Print to PDF
+# Εκτύπωση σε PDF
 st.subheader("Εκτύπωση σε PDF")
-if st.button("Εκτύπωση τρέχοντος μήνα"):
-    filename = print_schedule_pdf(st.session_state.prev_assignments, st.session_state.holidays)
-    st.success(f"Αρχείο PDF δημιουργήθηκε: {filename}")
-
-# ---------------------------
-# Save / Load / Reset state
-st.subheader("Αποθήκευση / Φόρτωση / Επαναφορά Προγράμματος")
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    if st.button("Αποθήκευση κατάστασης"):
-        data = {
-            "initial_week": {d.isoformat(): doc for d, doc in st.session_state.initial_week.items()},
-            "prev_assignments": {d.isoformat(): doc for d, doc in st.session_state.prev_assignments.items()},
-            "holidays": [d.isoformat() for d in st.session_state.holidays],
-            "generated_months": st.session_state.generated_months
-        }
-        with open("schedule_state.pkl","wb") as f:
-            pickle.dump(data, f)
-        st.success("Κατάσταση προγράμματος αποθηκεύτηκε.")
-
-with col2:
-    if st.button("Φόρτωση κατάστασης"):
-        try:
-            with open("schedule_state.pkl","rb") as f:
-                data = pickle.load(f)
-            st.session_state.initial_week = {datetime.fromisoformat(d).date(): doc for d, doc in data.get("initial_week", {}).items()}
-            st.session_state.prev_assignments = {datetime.fromisoformat(d).date(): doc for d, doc in data.get("prev_assignments", {}).items()}
-            st.session_state.holidays = set(datetime.fromisoformat(d).date() for d in data.get("holidays", []))
-            st.session_state.generated_months = data.get("generated_months", [])
-            st.success("Κατάσταση προγράμματος φορτώθηκε.")
-        except Exception as e:
-            st.error(f"Αποτυχία φόρτωσης: {e}")
-
-with col3:
-    if st.button("Επαναφορά / Διαγραφή προγράμματος"):
-        st.session_state.initial_week = {}
-        st.session_state.prev_assignments = {}
-        st.session_state.holidays = set()
-        st.session_state.generated_months = []
-        st.success("Όλα διαγράφηκαν.")
+if st.button("Δημιουργία PDF για τελευταίο μήνα"):
+    if not st.session_state.generated_months:
+        st.warning("Δεν υπάρχει μήνας για εκτύπωση")
+    else:
+        last_ym = st.session_state.generated_months[-1]
+        y,m = last_ym
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Arial", size=12)
+        pdf.cell(0,10,f"Πρόγραμμα {calendar.month_name[m]} {y}",ln=1)
+        pdf.ln(5)
+        pdf.set_font("Arial", size=10)
+        dates_list = month_dates(y,m)
+        for d in dates_list:
+            doc = st.session_state.prev_assignments.get(d,"")
+            hol_flag = " (Αργία)" if d in st.session_state.holidays.get(last_ym,set()) else ""
+            pdf.cell(0,8,f"{d.isoformat()} {calendar.day_name[d.weekday()]} : {doc}{hol_flag}",ln=1)
+        pdf.output("schedule.pdf")
+        st.success("PDF δημιουργήθηκε: schedule.pdf")
