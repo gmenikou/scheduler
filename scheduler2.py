@@ -39,31 +39,32 @@ def generate_schedule(initial_week, all_dates):
     week_list = [initial_week[d] for d in sorted(initial_week.keys())]
     initial_monday = min(initial_week.keys())
 
-    # Group dates into weeks starting from the first date in all_dates
-    all_dates_sorted = sorted(all_dates)
+    # Start grouping weeks from Monday of initial week
+    start_date = initial_monday
     weeks = []
-    i = 0
-    while i < len(all_dates_sorted):
-        week_block = all_dates_sorted[i:i+7]
+    current = start_date
+    while current <= max(all_dates):
+        week_block = [current + datetime.timedelta(days=i) for i in range(7)]
         weeks.append(week_block)
-        i += 7
+        current += datetime.timedelta(days=7)
 
-    week_counter = 0  # counts weeks after initial week for rotation
+    week_counter = 0
     for week_block in weeks:
-        # Skip weeks completely before initial week
+        # Skip weeks completely before initial week (should not happen now)
         if max(week_block) < initial_monday:
             continue
 
-        # If this week contains any initial week date, preserve exact
+        # Preserve initial week exactly
         if any(d in initial_week for d in week_block):
             for d in week_block:
                 if d in initial_week:
                     schedule[d] = initial_week[d]
         else:
-            # Apply rotation for weeks after initial
+            # Rotation for weeks after initial
             rotated_week = rotate_week_list(week_list, -2 * week_counter)
             for idx, d in enumerate(week_block):
-                schedule[d] = rotated_week[idx % 7]
+                if d in all_dates:  # only keep dates in this month(s)
+                    schedule[d] = rotated_week[idx % 7]
             week_counter += 1
 
     # Only keep dates from initial week onwards
