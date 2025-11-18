@@ -36,9 +36,10 @@ def rotate_week_list(week_list, shift):
 
 def generate_schedule(initial_week, all_dates):
     schedule = {}
-    first_monday = min(initial_week.keys())
     week_list = [initial_week[d] for d in sorted(initial_week.keys())]
+    initial_monday = min(initial_week.keys())
 
+    # Group dates into weeks starting from first Monday in all_dates
     all_dates_sorted = sorted(all_dates)
     weeks = []
     i = 0
@@ -47,16 +48,24 @@ def generate_schedule(initial_week, all_dates):
         weeks.append(week_block)
         i += 7
 
+    # Apply cumulative rotation only from week after initial week
     for week_idx, week_block in enumerate(weeks):
-        if week_idx == 0:
-            rotated_week = week_list  # preserve initial week
+        if week_idx == 0 and initial_monday in week_block:
+            # initial week: preserve exactly
+            rotated_week = [initial_week[d] for d in week_block if d in initial_week]
+            # fill the rest if week starts before initial_monday
+            for d in week_block:
+                if d not in initial_week:
+                    rotated_week.append(week_list[week_block.index(d) % 7])
         else:
-            rotated_week = rotate_week_list(week_list, -2*week_idx)
+            # weeks after initial week
+            weeks_after_initial = week_idx
+            rotated_week = rotate_week_list(week_list, -2 * weeks_after_initial)
         for idx, d in enumerate(week_block):
             schedule[d] = rotated_week[idx % 7]
 
-    # Only return schedule from initial week onwards
-    schedule = {d: doc for d, doc in schedule.items() if d >= first_monday}
+    # Keep only dates from initial week onwards
+    schedule = {d: doc for d, doc in schedule.items() if d >= initial_monday}
     return schedule
 
 def generate_schedule_for_months(initial_week, start_month, num_months=1):
@@ -109,6 +118,7 @@ if "initial_week" not in st.session_state:
 if "start_date" not in st.session_state:
     st.session_state.start_date = None
 
+# Reset All
 if st.button("🔄 Reset All"):
     st.session_state.clear()
     if os.path.exists(INIT_FILE):
@@ -116,6 +126,7 @@ if st.button("🔄 Reset All"):
     st.success("Session and initial week deleted.")
     st.stop()
 
+# Step 1: Select initial week date
 st.subheader("1️⃣ Select a date in the initial week")
 if st.session_state.start_date is None:
     selected_date = st.date_input("Choose a date:", datetime.date.today())
@@ -127,6 +138,7 @@ st.write("The week is:")
 for d in week_dates:
     st.write("-", d.strftime("%d/%m/%Y"))
 
+# Step 2: Assign doctors
 st.subheader("2️⃣ Assign doctors for the first week")
 if st.session_state.initial_week is None:
     initial_week = {}
@@ -147,7 +159,7 @@ else:
 if st.session_state.initial_week:
     st.write("Your assigned initial week:")
     for d in sorted(st.session_state.initial_week.keys()):
-        st.write(d.strftime("%d/%m/%Y"), "→", st.session_state.initial_week[d])
+        st.write(f"{d.strftime('%d/%m/%Y')} ({d.strftime('%a')}) → {st.session_state.initial_week[d]}")
 
 # Step 3: Generate schedule
 if st.session_state.initial_week and st.session_state.start_date:
@@ -169,6 +181,7 @@ if st.session_state.initial_week and st.session_state.start_date:
             for d in sorted(schedule.keys()):
                 st.write(f"{d.strftime('%d/%m/%Y')} ({d.strftime('%a')}) → {schedule[d]}")
 
+        # PDF export buttons
         st.subheader("📄 Export PDF for selected month")
         if st.button("🖨️ Create PDF for selected month only"):
             schedule_single = multi_schedule[(selected_month_date.year, selected_month_date.month)]
