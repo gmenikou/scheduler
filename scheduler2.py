@@ -1,8 +1,8 @@
-# doctor_shift_scheduler_streamlit_full.py
+# doctor_shift_scheduler_streamlit_full_v2.py
 import streamlit as st
 import pandas as pd
 import calendar
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from collections import defaultdict
 import pickle
 
@@ -14,69 +14,33 @@ def month_dates(year, month):
     _, last_day = calendar.monthrange(year, month)
     return [first + timedelta(days=i) for i in range(last_day)]
 
-def weekday_monday(d: date):
-    """Return Monday of the week containing d."""
-    return d - timedelta(days=d.weekday())
-
-def weeks_in_month(year, month):
-    """Return list of Monday dates (week starts) that intersect the month."""
-    first = date(year, month, 1)
-    last = date(year, month, calendar.monthrange(year, month)[1])
-    cur = weekday_monday(first)
-    mondays = []
-    while cur <= last:
-        mondays.append(cur)
-        cur += timedelta(days=7)
-    return mondays
-
 # ---------------------------
-# Rotation assignment function
-def assign_rotation_for_month(year, month, doctors, first_week_manual, continue_across_months=True):
-    """Assign shifts for the month using the backward-2-days-per-week rotation."""
-    mondays = weeks_in_month(year, month)
-    if not mondays:
-        return {}
-
+# Rotation assignment function (day-by-day backward 2-day rotation)
+def assign_rotation_from_first_week(first_week_manual, doctors, month_dates_list):
+    """Populate all remaining days in the month based on first-week manual assignment"""
+    assign_map = dict(first_week_manual)  # start with manual first week
     N = len(doctors)
 
-    # Determine reference from manual first week
-    manual_dates = sorted(first_week_manual.keys())
-    ref_date = manual_dates[0]
-    ref_doc_index = doctors.index(first_week_manual[ref_date])
+    # Sort first week dates
+    manual_dates_sorted = sorted(first_week_manual.keys())
 
-    assign_map = {}
+    if not manual_dates_sorted:
+        return assign_map
 
-    # Populate manual first week
-    assign_map.update(first_week_manual)
+    # Start from last day of manual week
+    last_manual_date = manual_dates_sorted[-1]
+    last_doc = first_week_manual[last_manual_date]
+    doc_index = doctors.index(last_doc)
 
-    # Compute forward/backward weeks
-    for week_monday in mondays:
-        for i in range(7):
-            day = week_monday + timedelta(days=i)
-            if day in assign_map:
-                continue  # skip manual assigned
-            weeks_between = (week_monday - weekday_monday(ref_date)).days // 7
-            # rotation: backward 2 days per week
-            shift_weekday = (ref_date.weekday() - 2*weeks_between) % 7
-            shift_date = week_monday + timedelta(days=shift_weekday)
-            if shift_date.month != month:
-                continue
-            doc_index = (ref_doc_index + weeks_between) % N
-            doc = doctors[doc_index]
-            assign_map[shift_date] = doc
+    # Forward population
+    all_dates_sorted = sorted(month_dates_list)
+    for d in all_dates_sorted:
+        if d in assign_map:
+            continue
+        # rotate doctor forward
+        doc_index = (doc_index + 1) % N
+        assign_map[d] = doctors[doc_index]
 
-    # Fill missing weekdays in month (forward/backward)
-    # any unassigned date in month gets rotation
-    all_dates = month_dates(year, month)
-    for d in all_dates:
-        if d not in assign_map:
-            weeks_between = (weekday_monday(d) - weekday_monday(ref_date)).days // 7
-            shift_weekday = (ref_date.weekday() - 2*weeks_between) % 7
-            shift_date = weekday_monday(d) + timedelta(days=shift_weekday)
-            doc_index = (ref_doc_index + weeks_between) % N
-            doc = doctors[doc_index]
-            if shift_date == d:
-                assign_map[d] = doc
     return assign_map
 
 # ---------------------------
@@ -104,8 +68,8 @@ left, mid, right = st.columns([2,1,1])
 
 with left:
     st.subheader("Ρυθμίσεις Μήνα / Αφετηρίας")
-    year = st.number_input("Έτος", min_value=2000, max_value=2100, value=date.today().year)
-    month = st.selectbox("Μήνας", list(range(1,13)), index=date.today().month-1)
+    year = st.number_input("Έτος", min_value=2000, max_value=2100, value=2026)
+    month = st.selectbox("Μήνας", list(range(1,13)), index=0)
     start_balance = st.checkbox("Ξεκίνημα ισορροπίας από αυτόν τον μήνα", value=False)
 
     # Manual first week
@@ -127,8 +91,10 @@ with mid:
         if start_balance:
             st.session_state.prev_assignments = {}
             st.session_state.generated_months = []
+
         ym = (year, month)
-        assign_map = assign_rotation_for_month(year, month, st.session_state.doctors, st.session_state.first_week_manual)
+        dates_list = month_dates(year, month)
+        assign_map = assign_rotation_from_first_week(st.session_state.first_week_manual, st.session_state.doctors, dates_list)
         st.session_state.prev_assignments.update(assign_map)
         if ym not in st.session_state.generated_months:
             st.session_state.generated_months.append(ym)
@@ -156,13 +122,13 @@ with mid:
         try:
             with open("schedule_state.pkl","rb") as f:
                 data = pickle.load(f)
-            st.session_state.prev_assignments = {datetime.fromisoformat(k).date(): v for k,v in data["prev_assignments"].items()}
+            st.session_state.prev_assignments = {pd.to_datetime(k).date(): v for k,v in data["prev_assignments"].items()}
             st.session_state.holidays = defaultdict(set)
             for key,lst in data.get("holidays",{}).items():
                 y,m = map(int,key.split("-"))
-                st.session_state.holidays[(y,m)] = set(datetime.fromisoformat(d).date() for d in lst)
+                st.session_state.holidays[(y,m)] = set(pd.to_datetime(d).date() for d in lst)
             st.session_state.generated_months = data.get("generated_months", [])
-            st.session_state.first_week_manual = {datetime.fromisoformat(k).date(): v for k,v in data.get("first_week_manual",{}).items()}
+            st.session_state.first_week_manual = {pd.to_datetime(k).date(): v for k,v in data.get("first_week_manual",{}).items()}
             st.success("Κατάσταση φορτώθηκε")
         except Exception as e:
             st.error(f"Αποτυχία φόρτωσης: {e}")
@@ -196,7 +162,7 @@ if st.session_state.generated_months:
     date_strs = [d.isoformat() + " - " + calendar.day_name[d.weekday()] for d in dates]
     date_map = {date_strs[i]: dates[i] for i in range(len(dates))}
     selected_defaults = [s.isoformat() + " - " + calendar.day_name[s.weekday()] for s in default_hols if s in dates]
-    hol_selection = st.multiselect("Αργίες (δεν επηρεάζουν την περιστροφή)", date_strs, default=selected_defaults)
+    hol_selection = st.multiselect("Αργίες (δεν επηρεάζουν περιστροφή)", date_strs, default=selected_defaults)
     st.session_state.holidays[selected_ym] = set(date_map[s] for s in hol_selection)
 
     # Display schedule
