@@ -45,13 +45,10 @@ def full_month_schedule(initial_week, all_dates):
         offset = (abs(week_diff) * 2) % 7
 
         if week_diff < 0:
-            # Past weeks: +2 per week
             rotated = initial_week_list[offset:] + initial_week_list[:offset]
         elif week_diff > 0:
-            # Future weeks: -2 per week
             rotated = initial_week_list[-offset:] + initial_week_list[:-offset]
         else:
-            # Initial week: exact
             rotated = initial_week_list
 
         schedule[d] = rotated[d.weekday()]
@@ -138,23 +135,26 @@ if st.session_state.initial_week:
     for d in sorted(st.session_state.initial_week.keys()):
         st.write(d.strftime("%d/%m/%Y"), "→", st.session_state.initial_week[d])
 
-# Step 3: Generate schedule
-st.subheader("3️⃣ Generate full schedule")
-year = st.session_state.start_date.year
-month = st.session_state.start_date.month
-num_days = calendar.monthrange(year, month)[1]
-all_dates = [datetime.date(year, month, d) for d in range(1, num_days + 1)]
+# Step 3 & 4: Generate schedule & PDF only if initial week exists
+if st.session_state.initial_week is not None and st.session_state.start_date is not None:
+    st.subheader("3️⃣ Generate full schedule")
+    year = st.session_state.start_date.year
+    month = st.session_state.start_date.month
+    num_days = calendar.monthrange(year, month)[1]
+    all_dates = [datetime.date(year, month, d) for d in range(1, num_days + 1)]
 
-schedule = full_month_schedule(st.session_state.initial_week, all_dates)
+    schedule = full_month_schedule(st.session_state.initial_week, all_dates)
 
-# Show schedule
-st.write("### 📋 Month Schedule")
-for d in sorted(schedule.keys()):
-    st.write(d.strftime("%d/%m/%Y"), "→", schedule[d])
+    # Show schedule
+    st.write("### 📋 Month Schedule")
+    for d in sorted(schedule.keys()):
+        st.write(d.strftime("%d/%m/%Y"), "→", schedule[d])
 
-# Step 4: PDF export
-st.subheader("📄 Export PDF")
-if st.button("🖨️ Create PDF"):
-    filename = create_pdf(schedule)
-    with open(filename, "rb") as f:
-        st.download_button("⬇️ Download PDF", data=f, file_name="schedule.pdf")
+    # PDF export
+    st.subheader("📄 Export PDF")
+    if st.button("🖨️ Create PDF"):
+        filename = create_pdf(schedule)
+        with open(filename, "rb") as f:
+            st.download_button("⬇️ Download PDF", data=f, file_name="schedule.pdf")
+else:
+    st.warning("Please assign and save the initial week first.")
