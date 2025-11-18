@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 import calendar
 from datetime import date, datetime, timedelta
-from collections import defaultdict, deque
+from collections import defaultdict
 from io import BytesIO
 import pickle
 
@@ -46,7 +46,6 @@ def assign_rotation_for_month(year, month, doctors, ref_date, ref_doc, manual_as
         shift_weekday = (ref_date.weekday() - 2 * weeks_between) % 7
         shift_date = week_monday + timedelta(days=shift_weekday)
         if shift_date.year == year and shift_date.month == month:
-            # Check manual assignments
             if manual_assign and shift_date in manual_assign:
                 assign_map[shift_date] = manual_assign[shift_date]
             else:
@@ -86,7 +85,7 @@ def print_schedule_to_html(dates, assignments, holidays, month, year):
 
 st.set_page_config(page_title="Doctor Shift Scheduler", layout="wide")
 
-# Session state initialization
+# Session state
 if 'prev_assignments' not in st.session_state:
     st.session_state.prev_assignments = {}
 if 'holidays' not in st.session_state:
@@ -122,24 +121,34 @@ with mid:
         st.session_state.ref_date = ref_date
         st.session_state.ref_doc = ref_doc
         ym = (year, month)
-        # Handle manual first week assignment
-        first_week_monday = weekday_monday(date.today())
-        first_week_dates = [first_week_monday + timedelta(days=i) for i in range(7)]
+
+        # Determine current week Monday–Sunday
+        today = date.today()
+        week_monday = weekday_monday(today)
+        week_dates = [week_monday + timedelta(days=i) for i in range(7)]
+
+        # Manual first-week assignment table
+        st.write("### Assign First Week (Monday–Sunday)")
+        manual_df = pd.DataFrame({
+            "Date": [d for d in week_dates],
+            "Weekday": [calendar.day_name[d.weekday()] for d in week_dates],
+            "Doctor": [st.session_state.doctors[0] for _ in range(7)]
+        })
         manual_assign = {}
-        st.session_state.manual_assign_done = False
-        # Check if user already assigned manual first week
-        if not st.session_state.manual_assign_done:
-            st.session_state.manual_assign_done = True
-            # Temporary empty manual_assign to be filled via multiselect or inputs
-            manual_assign = {}
-        # Generate month assignments
+        for idx, row in manual_df.iterrows():
+            doc = st.selectbox(f"{row['Date']} ({row['Weekday']})", st.session_state.doctors, key=f"manual_{row['Date']}")
+            manual_assign[row['Date']] = doc
+
+        # Generate assignments for the month
         assign_map = assign_rotation_for_month(year, month, st.session_state.doctors, st.session_state.ref_date, st.session_state.ref_doc, manual_assign=manual_assign)
         st.session_state.prev_assignments.update(assign_map)
+
         if ym not in st.session_state.generated_months:
             st.session_state.generated_months.append(ym)
         if start_balance:
             st.session_state.prev_assignments = assign_map.copy()
             st.session_state.generated_months = [ym]
+
         st.success(f"Schedule generated for {calendar.month_name[month]} {year}")
 
     if st.button("Reset All"):
@@ -191,11 +200,10 @@ with right:
             b.write(html.encode('utf-8'))
             b.seek(0)
             st.download_button("Download Printable Schedule", b, file_name=f"schedule_{y}_{m}.html", mime="text/html")
-            st.info("Open the HTML file and print from your browser")
+            st.info("Open HTML file and print from browser")
 
 # ---------------------------
-# Month viewer, holiday toggling, balances
-
+# Month viewer & balances
 st.markdown("---")
 
 if st.session_state.generated_months:
@@ -213,11 +221,10 @@ if st.session_state.generated_months:
     new_hols = set(date_map[s] for s in hol_selection)
     st.session_state.holidays[selected_ym] = new_hols
 
-    # Recompute assignments (holidays do not change rotation)
+    # Recompute assignments for display (rotation unchanged)
     assign_map = assign_rotation_for_month(y,m, st.session_state.doctors, st.session_state.ref_date, st.session_state.ref_doc)
     st.session_state.prev_assignments.update(assign_map)
 
-    # Prepare dataframe
     rows = []
     for d in dates:
         doc = st.session_state.prev_assignments.get(d,"")
