@@ -36,7 +36,7 @@ def get_month_dates(year, month):
 
 def save_initial_week(initial_week):
     serializable = {d.strftime("%Y-%m-%d"): doc for d, doc in initial_week.items()}
-    with open(INIT_FILE, "w") as f:
+    with open(INIT_FILE, "w", encoding="utf-8") as f:
         json.dump(serializable, f, ensure_ascii=False)
 
 def load_initial_week():
@@ -121,7 +121,6 @@ if st.session_state.initial_week is None:
             st.session_state.start_date = selected_date
             save_initial_week(initial_week)
             st.success("Η αρχική εβδομάδα αποθηκεύτηκε!")
-            st.experimental_rerun()
 else:
     st.info("Η αρχική εβδομάδα έχει ήδη αποθηκευτεί. Για αλλαγές, κάντε Reset.")
 
