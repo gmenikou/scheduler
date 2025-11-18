@@ -19,11 +19,10 @@ def get_week_dates(any_date):
 
 def backwards_rotation(start_assignments, dates):
     """
-    start_assignments: dict {date: doctor} for the first (Mon–Sun) week.
+    start_assignments: dict {date: doctor} for the first week.
     dates: all dates of the month.
-    Rotation: Every next week shifts backwards by 2 positions.
+    Rotation: every next week shifts backwards by 2 positions.
     """
-
     week_doctors = [start_assignments[d] for d in sorted(start_assignments.keys())]
     assignments = {}
     dates_sorted = sorted(dates)
@@ -47,7 +46,6 @@ def create_pdf(assignments, filename="schedule.pdf"):
     pdf.add_page()
     pdf.set_font("Arial", size=12)
 
-    # Basic Greek letters supported via latin-1 encoding fallback
     title = "PROGRAMMA GIATRWN"
     pdf.cell(190, 10, txt=title, ln=1, align='C')
     pdf.ln(4)
@@ -68,18 +66,17 @@ def create_pdf(assignments, filename="schedule.pdf"):
 # ---------------------------------------------
 st.title("📅 Πρόγραμμα Γιατρών – Backwards Rotation")
 
+# Initialize session_state
 if "initial_week" not in st.session_state:
     st.session_state.initial_week = None
-
 if "start_date" not in st.session_state:
     st.session_state.start_date = None
 
-# RESET
+# ---- RESET ----
 if st.button("🔄 Reset Όλων"):
-    st.session_state.initial_week = None
-    st.session_state.start_date = None
-    st.experimental_rerun()
-
+    st.session_state.clear()
+    st.success("Το session επαναφέρθηκε. Παρακαλώ ξεκινήστε ξανά.")
+    st.stop()  # σταματά το script μετά το reset
 
 # ---- Step 1: Select initial date ----
 st.subheader("1️⃣ Επιλογή ημερομηνίας μέσα στην αρχική εβδομάδα")
@@ -91,8 +88,7 @@ st.write("Η εβδομάδα είναι:")
 for d in week_dates:
     st.write("-", d.strftime("%d/%m/%Y"))
 
-
-# ---- Step 2: Manual assignment (with uniqueness check) ----
+# ---- Step 2: Manual assignment (uniqueness check) ----
 st.subheader("2️⃣ Ανάθεση γιατρών για την πρώτη εβδομάδα")
 
 initial_week = {}
@@ -102,7 +98,6 @@ cols = st.columns(7)
 
 for i, d in enumerate(week_dates):
     with cols[i]:
-        default_index = 0
         doc = st.selectbox(
             d.strftime("%a\n%d/%m"),
             DOCTORS,
@@ -119,12 +114,9 @@ else:
         st.session_state.initial_week = initial_week
         st.session_state.start_date = selected_date
         st.success("Η αρχική εβδομάδα αποθηκεύτηκε!")
-        st.experimental_rerun()
-
 
 if st.session_state.initial_week is None:
     st.stop()
-
 
 # ---- Step 3: Full month schedule ----
 st.subheader("3️⃣ Παραγωγή προγράμματος μηνός")
@@ -140,7 +132,6 @@ assignments = backwards_rotation(st.session_state.initial_week, all_dates)
 st.write("### 📋 Πρόγραμμα Μηνός")
 for d in sorted(assignments.keys()):
     st.write(d.strftime("%d/%m/%Y"), "→", assignments[d])
-
 
 # ---- Step 4: Export PDF ----
 st.subheader("📄 Εκτύπωση")
