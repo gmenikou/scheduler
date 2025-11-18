@@ -5,15 +5,15 @@ from fpdf import FPDF
 import json
 import os
 
-# ---------------------------------------------
-# 1. CONSTANTS
-# ---------------------------------------------
+# -------------------------------
+# Constants
+# -------------------------------
 DOCTORS = ["Elena", "Eva", "Maria", "Athina", "Alexandros", "Elia", "Christina"]
 INIT_FILE = "initial_week.json"
 
-# ---------------------------------------------
-# 2. HELPERS
-# ---------------------------------------------
+# -------------------------------
+# Helpers
+# -------------------------------
 def get_week_dates(any_date):
     monday = any_date - datetime.timedelta(days=any_date.weekday())
     return [monday + datetime.timedelta(days=i) for i in range(7)]
@@ -30,9 +30,6 @@ def load_initial_week():
         return {datetime.datetime.strptime(k, "%Y-%m-%d").date(): v for k, v in data.items()}
     return None
 
-# ---------------------------------------------
-# 3. Week-based rotation
-# ---------------------------------------------
 def rotate_week_list(week_list, shift):
     shift = shift % 7
     return week_list[-shift:] + week_list[:-shift]
@@ -50,15 +47,16 @@ def generate_schedule(initial_week, all_dates):
         weeks.append(week_block)
         i += 7
 
-    for week_block in weeks:
-        week_diff = (week_block[0] - first_monday).days // 7
-        if week_diff == 0:
-            rotated_week = week_list  # initial week preserved exactly
+    for week_idx, week_block in enumerate(weeks):
+        if week_idx == 0:
+            rotated_week = week_list  # preserve initial week
         else:
-            rotated_week = rotate_week_list(week_list, -2*week_diff)
+            rotated_week = rotate_week_list(week_list, -2*week_idx)
         for idx, d in enumerate(week_block):
             schedule[d] = rotated_week[idx % 7]
 
+    # Only return schedule from initial week onwards
+    schedule = {d: doc for d, doc in schedule.items() if d >= first_monday}
     return schedule
 
 def generate_schedule_for_months(initial_week, start_month, num_months=1):
@@ -72,9 +70,7 @@ def generate_schedule_for_months(initial_week, start_month, num_months=1):
         all_schedules[(year, month)] = schedule
     return all_schedules
 
-# ---------------------------------------------
-# 4. PDF export
-# ---------------------------------------------
+# PDF export
 class PDF(FPDF):
     def header(self):
         self.set_font("Arial", "B", 14)
@@ -87,7 +83,8 @@ class PDF(FPDF):
         self.cell(60, 8, "Date", 1, 0, "C", 1)
         self.cell(80, 8, "Doctor", 1, 1, "C", 1)
         for d in sorted(assignments.keys()):
-            self.cell(60, 8, d.strftime("%d/%m/%Y"), 1, 0, "C")
+            weekday = d.strftime("%a")
+            self.cell(60, 8, f"{d.strftime('%d/%m/%Y')} ({weekday})", 1, 0, "C")
             self.cell(80, 8, assignments[d], 1, 1, "C")
 
 def create_pdf_multi_months(all_schedules, filename="schedule.pdf"):
@@ -102,9 +99,9 @@ def create_pdf_multi_months(all_schedules, filename="schedule.pdf"):
     pdf.output(filename)
     return filename
 
-# ---------------------------------------------
-# 5. STREAMLIT APP
-# ---------------------------------------------
+# -------------------------------
+# Streamlit App
+# -------------------------------
 st.title("📅 Programma Giatron – Backwards Rotation")
 
 if "initial_week" not in st.session_state:
@@ -152,6 +149,7 @@ if st.session_state.initial_week:
     for d in sorted(st.session_state.initial_week.keys()):
         st.write(d.strftime("%d/%m/%Y"), "→", st.session_state.initial_week[d])
 
+# Step 3: Generate schedule
 if st.session_state.initial_week and st.session_state.start_date:
     st.subheader("3️⃣ Generate schedule for forthcoming months")
     today = datetime.date.today()
@@ -169,7 +167,7 @@ if st.session_state.initial_week and st.session_state.start_date:
         for (year, month), schedule in multi_schedule.items():
             st.write(f"### 📋 Schedule for {datetime.date(year, month, 1).strftime('%B %Y')}")
             for d in sorted(schedule.keys()):
-                st.write(d.strftime("%d/%m/%Y"), "→", schedule[d])
+                st.write(f"{d.strftime('%d/%m/%Y')} ({d.strftime('%a')}) → {schedule[d]}")
 
         st.subheader("📄 Export PDF for selected month")
         if st.button("🖨️ Create PDF for selected month only"):
