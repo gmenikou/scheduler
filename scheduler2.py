@@ -1,15 +1,13 @@
-# doctor_shift_scheduler_streamlit.py
+# doctor_shift_scheduler_streamlit_manual.py
 import streamlit as st
 import pandas as pd
 import calendar
 from datetime import date, timedelta, datetime
 from collections import defaultdict
-import pickle
 from fpdf import FPDF
 
 # ---------------------------
 # Helper functions
-
 def month_dates(year, month):
     first = date(year, month, 1)
     _, last_day = calendar.monthrange(year, month)
@@ -28,26 +26,15 @@ def weeks_in_month(year, month):
         cur += timedelta(days=7)
     return mondays
 
-# ---------------------------
-# Rotation logic
 def populate_month_with_rotation(year, month, doctors, initial_week):
-    """
-    initial_week: dict {date: doctor} for the manually assigned first week
-    """
-    # collect first week's monday
-    min_date = min(initial_week.keys())
-    max_date = max(initial_week.keys())
-    first_week_monday = weekday_monday(min_date)
-    
-    # assign_map starts with initial_week
     assign_map = initial_week.copy()
-    N = len(doctors)
-
-    # compute subsequent weeks
+    if not initial_week:
+        return assign_map
+    first_week_monday = weekday_monday(min(initial_week.keys()))
     mondays = weeks_in_month(year, month)
+    N = len(doctors)
     for week_monday in mondays:
-        # skip first week
-        if week_monday >= first_week_monday and week_monday <= max_date:
+        if first_week_monday <= week_monday <= max(initial_week.keys()):
             continue
         weeks_between = (week_monday - first_week_monday).days // 7
         for doc in doctors:
@@ -66,16 +53,14 @@ def populate_month_with_rotation(year, month, doctors, initial_week):
 
 # ---------------------------
 # Streamlit App
+st.set_page_config(page_title="Προγραμματιστής Εφημεριών", layout="wide")
 
-st.set_page_config(page_title="Doctor Shift Scheduler", layout="wide")
-
-# Initialize session state
 if 'initial_week' not in st.session_state:
     st.session_state.initial_week = {}  # {date: doctor}
 if 'prev_assignments' not in st.session_state:
-    st.session_state.prev_assignments = {}  # cumulative
+    st.session_state.prev_assignments = {}
 if 'holidays' not in st.session_state:
-    st.session_state.holidays = defaultdict(set)  # {(y,m): set(date)}
+    st.session_state.holidays = defaultdict(set)
 if 'doctors' not in st.session_state:
     st.session_state.doctors = ["Αθηνά","Αλέξανδρος","Έλενα","Έλια","Εύα","Μαρία","Χριστίνα"]
 if 'generated_months' not in st.session_state:
@@ -84,26 +69,21 @@ if 'generated_months' not in st.session_state:
 st.title("Προγραμματιστής Εφημεριών Γιατρών")
 
 # ---------------------------
-# 1. Επιλογή αρχικής εβδομάδας χειροκίνητα
-st.subheader("Επιλογή αρχικής εβδομάδας (χειροκίνητη)")
-
+# 1. Χειροκίνητη Αρχική Εβδομάδα
+st.subheader("Χειροκίνητη Αρχική Εβδομάδα")
 today = date.today()
 start_of_week = weekday_monday(today)
 week_dates = [start_of_week + timedelta(days=i) for i in range(7)]
-
-# Prepare DataFrame for user selection
-df_week = pd.DataFrame({
-    "Ημερομηνία": week_dates,
-    "Ημέρα": [calendar.day_name[d.weekday()] for d in week_dates],
-    "Γιατρός": [st.session_state.initial_week.get(d,"") for d in week_dates]
-})
-
-edited_df = st.experimental_data_editor(df_week, key="initial_week_editor", num_rows="fixed")
+cols = st.columns(7)
+for i, d in enumerate(week_dates):
+    selected_doc = st.selectbox(f"{calendar.day_name[d.weekday()]} {d.isoformat()}",
+                                [""]+st.session_state.doctors,
+                                index=(st.session_state.doctors.index(st.session_state.initial_week.get(d, st.session_state.doctors[0]))+1 if st.session_state.initial_week.get(d) else 0),
+                                key=f"init_{i}")
+    if selected_doc:
+        st.session_state.initial_week[d] = selected_doc
 
 if st.button("Αποθήκευση Αρχικής Εβδομάδας"):
-    for idx, row in edited_df.iterrows():
-        if row["Γιατρός"] in st.session_state.doctors:
-            st.session_state.initial_week[row["Ημερομηνία"]] = row["Γιατρός"]
     st.success("Αρχική εβδομάδα αποθηκεύτηκε.")
 
 if st.button("Reset Αρχικής Εβδομάδας"):
@@ -111,12 +91,12 @@ if st.button("Reset Αρχικής Εβδομάδας"):
     st.success("Αρχική εβδομάδα διαγράφηκε.")
 
 # ---------------------------
-# 2. Επιλογή μήνα προς γέμισμα
+# 2. Γέμισμα μήνα
 st.subheader("Γέμισμα Μήνα")
 year = st.number_input("Έτος", min_value=2000, max_value=2100, value=today.year)
 month = st.selectbox("Μήνας", list(range(1,13)), index=today.month-1)
 
-if st.button("Γέμισμα μήνα με κανόνες περιστροφής"):
+if st.button("Γέμισμα μήνα με περιστροφή"):
     if not st.session_state.initial_week:
         st.warning("Πρέπει να ορίσετε αρχική εβδομάδα πρώτα.")
     else:
@@ -124,13 +104,13 @@ if st.button("Γέμισμα μήνα με κανόνες περιστροφής
         st.session_state.prev_assignments.update(assign_map)
         if (year, month) not in st.session_state.generated_months:
             st.session_state.generated_months.append((year, month))
-        st.success(f"Μήνας {calendar.month_name[month]} {year} γέμισε με βάση την αρχική εβδομάδα.")
+        st.success(f"Μήνας {calendar.month_name[month]} {year} γεμίστηκε.")
 
 # ---------------------------
-# 3. Επιλογή αργιών
+# 3. Χειρισμός Αργιών
 st.subheader("Χειρισμός Αργιών")
 if st.session_state.generated_months:
-    selected_ym = st.selectbox("Επιλέξτε μήνα για αργίες", st.session_state.generated_months)
+    selected_ym = st.selectbox("Επιλογή μήνα για αργίες", st.session_state.generated_months)
     y,m = selected_ym
     dates = month_dates(y,m)
     date_strs = [d.isoformat() + " - " + calendar.day_name[d.weekday()] for d in dates]
@@ -142,7 +122,7 @@ if st.session_state.generated_months:
         st.success("Αργίες εφαρμοσμένες.")
 
 # ---------------------------
-# 4. Προβολή προγράμματος και balance
+# 4. Προβολή προγράμματος & Balance
 if st.session_state.generated_months:
     selected_ym = st.selectbox("Προβολή μήνα", st.session_state.generated_months, index=len(st.session_state.generated_months)-1)
     y,m = selected_ym
@@ -155,7 +135,7 @@ if st.session_state.generated_months:
     df_month = pd.DataFrame(rows)
     st.dataframe(df_month, height=400)
 
-    # balance panel
+    # Balance panel
     balance_rows = []
     for doc in st.session_state.doctors:
         fr = sum(1 for d,dd in st.session_state.prev_assignments.items() if dd==doc and d.weekday()==4)
@@ -165,7 +145,7 @@ if st.session_state.generated_months:
         for (ym_k, holset) in st.session_state.holidays.items():
             for hd in holset:
                 if st.session_state.prev_assignments.get(hd) == doc and hd.weekday() not in (5,6):
-                    hol_non_weekday += 1
+                    hol_non_weekday +=1
         balance_rows.append({"Γιατρός":doc,"Παρασκευή":fr,"Σάββατο":sa,"Κυριακή":su,"Αργίες (μη Σ/Κ)":hol_non_weekday})
     st.subheader("Balance Panel")
     st.dataframe(pd.DataFrame(balance_rows).set_index("Γιατρός"))
