@@ -39,7 +39,7 @@ def generate_schedule(initial_week, all_dates):
     week_list = [initial_week[d] for d in sorted(initial_week.keys())]
     initial_monday = min(initial_week.keys())
 
-    # Group dates into weeks starting from first Monday in all_dates
+    # Group dates into weeks starting from the first date in all_dates
     all_dates_sorted = sorted(all_dates)
     weeks = []
     i = 0
@@ -48,23 +48,25 @@ def generate_schedule(initial_week, all_dates):
         weeks.append(week_block)
         i += 7
 
-    # Apply cumulative rotation only from week after initial week
-    for week_idx, week_block in enumerate(weeks):
-        if week_idx == 0 and initial_monday in week_block:
-            # initial week: preserve exactly
-            rotated_week = [initial_week[d] for d in week_block if d in initial_week]
-            # fill the rest if week starts before initial_monday
-            for d in week_block:
-                if d not in initial_week:
-                    rotated_week.append(week_list[week_block.index(d) % 7])
-        else:
-            # weeks after initial week
-            weeks_after_initial = week_idx
-            rotated_week = rotate_week_list(week_list, -2 * weeks_after_initial)
-        for idx, d in enumerate(week_block):
-            schedule[d] = rotated_week[idx % 7]
+    week_counter = 0  # counts weeks after initial week for rotation
+    for week_block in weeks:
+        # Skip weeks completely before initial week
+        if max(week_block) < initial_monday:
+            continue
 
-    # Keep only dates from initial week onwards
+        # If this week contains any initial week date, preserve exact
+        if any(d in initial_week for d in week_block):
+            for d in week_block:
+                if d in initial_week:
+                    schedule[d] = initial_week[d]
+        else:
+            # Apply rotation for weeks after initial
+            rotated_week = rotate_week_list(week_list, -2 * week_counter)
+            for idx, d in enumerate(week_block):
+                schedule[d] = rotated_week[idx % 7]
+            week_counter += 1
+
+    # Only keep dates from initial week onwards
     schedule = {d: doc for d, doc in schedule.items() if d >= initial_monday}
     return schedule
 
