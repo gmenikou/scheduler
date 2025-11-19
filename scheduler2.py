@@ -30,25 +30,25 @@ def rotate_week(week_list, offset=-2):
     return week_list[-offset:] + week_list[:-offset]
 
 def generate_schedule(initial_week, start_date, months=1):
-    """Generate schedule month by month starting from initial week."""
     schedule = {}
     year, month = start_date.year, start_date.month
-    week_doctors = initial_week.copy()
-    
+    week_doctors = initial_week.copy()  # Preserve initial week
+
     for m in range(months):
         m_year = year + (month + m - 1) // 12
         m_month = (month + m - 1) % 12 + 1
         num_days = calendar.monthrange(m_year, m_month)[1]
-        all_dates = [datetime.date(m_year, m_month, d) for d in range(1, num_days+1)]
-        
+        all_dates = [datetime.date(m_year, m_month, d) for d in range(1, num_days + 1)]
+
         i = 0
         while i < len(all_dates):
-            week_block = all_dates[i:i+7]
+            week_block = all_dates[i:i + 7]
             if i == 0 and week_block[0] == start_date:
-                # first week: preserve initial week
+                # Preserve initial week exactly
                 for d, doc in zip(week_block, week_doctors):
                     schedule[d] = doc
             else:
+                # Rotation starts from the second week onward
                 week_doctors = rotate_week(week_doctors, offset=-2)
                 for d, doc in zip(week_block, week_doctors):
                     schedule[d] = doc
@@ -61,48 +61,92 @@ def compute_balance(schedule):
         counts[doc] += 1
     df = pd.DataFrame.from_dict(counts, orient="index", columns=["Shifts"])
     df.index.name = "Doctor"
-    df = df.reset_index()
-    return df
+    return df.reset_index()
 
 def get_text_color(rgb):
-    """Return black or white text depending on background brightness."""
     r, g, b = rgb
     brightness = (r*299 + g*587 + b*114)/1000
     return (0,0,0) if brightness > 125 else (255,255,255)
 
-def create_pdf(schedule, filename="schedule.pdf"):
-    pdf = FPDF()
+# ---------------------------------------------
+# PDF Export with Calendar Grid
+# ---------------------------------------------
+def create_pdf(schedule, filename="schedule_calendar.pdf"):
+    pdf = FPDF(orientation='L', unit='mm', format='A4')  # Landscape
     pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
-    pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, "Doctor Schedule", ln=True, align="C")
-    pdf.ln(5)
     
     last_month = None
     pdf.set_font("Arial", "", 12)
-    
+
     for date in sorted(schedule.keys()):
-        doc = schedule[date]
         month_name = date.strftime("%B %Y")
         if month_name != last_month:
+            pdf.add_page()
+            pdf.set_font("Arial", "B", 16)
+            pdf.cell(0, 10, month_name, ln=True, align="C")
             pdf.ln(3)
-            pdf.set_font("Arial", "B", 14)
-            pdf.cell(0, 8, month_name, ln=True)
-            pdf.set_font("Arial", "", 12)
             last_month = month_name
-        
-        color = DOCTOR_COLORS.get(doc, (200,200,200))
-        text_color = get_text_color(color)
-        pdf.set_fill_color(*color)
-        pdf.set_text_color(*text_color)
-        pdf.cell(50, 8, date.strftime("%d/%m (%a)"), border=1, fill=True)
-        pdf.cell(0, 8, doc, border=1, ln=True, fill=True)
-    
+
+            # Draw weekday headers
+            pdf.set_font("Arial", "B", 12)
+            days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+            col_width = pdf.w / 7 - 5
+            for d in days:
+                pdf.cell(col_width, 8, d, border=1, align='C')
+            pdf.ln()
+
+            pdf.set_font("Arial", "", 12)
+
+            # Generate weeks
+            cal = calendar.Calendar(firstweekday=0)
+            m_year, m_month = date.year, date.month
+            weeks = cal.monthdatescalendar(m_year, m_month)
+            
+            for week in weeks:
+                for day in week:
+                    if day.month == m_month:
+                        doc = schedule.get(day, "")
+                        color = DOCTOR_COLORS.get(doc, (220,220,220))
+                        text_color = get_text_color(color)
+                        pdf.set_fill_color(*color)
+                        pdf.set_text_color(*text_color)
+                        pdf.multi_cell(col_width, 15, f"{day.day}\n{doc}", border=1, ln=3, align='C', fill=True)
+                    else:
+                        pdf.set_fill_color(240,240,240)
+                        pdf.cell(col_width, 15, "", border=1, ln=0)
+                pdf.ln()
     pdf.output(filename)
     return filename
 
 # ---------------------------------------------
-# 3. STREAMLIT UI
+# Calendar View in Streamlit
+# ---------------------------------------------
+def display_calendar(schedule):
+    """Display schedule in a 7-column calendar grid per month."""
+    last_month = None
+    for date in sorted(schedule.keys()):
+        month_name = date.strftime("%B %Y")
+        if month_name != last_month:
+            st.markdown(f"## {month_name}")
+            last_month = month_name
+            m_year, m_month = date.year, date.month
+
+            cal = calendar.Calendar(firstweekday=0)
+            weeks = cal.monthdatescalendar(m_year, m_month)
+            for week in weeks:
+                cols = st.columns(7)
+                for i, day in enumerate(week):
+                    if day.month == m_month:
+                        doc = schedule.get(day, "")
+                        color = '#%02x%02x%02x' % DOCTOR_COLORS.get(doc, (220,220,220))
+                        cols[i].markdown(
+                            f"<div style='background-color:{color}; padding:6px; border-radius:4px; text-align:center'>"
+                            f"<b>{day.day}</b><br>{doc}</div>", unsafe_allow_html=True)
+                    else:
+                        cols[i].markdown("<div style='padding:6px'></div>", unsafe_allow_html=True)
+
+# ---------------------------------------------
+# STREAMLIT UI
 # ---------------------------------------------
 st.set_page_config(page_title="📅 Programma Giatron – Backwards Rotation", layout="wide")
 st.title("📅 Programma Giatron – Backwards Rotation")
@@ -122,7 +166,7 @@ if st.button("🔄 Reset All"):
     st.session_state.generated_schedule = None
     st.experimental_rerun()
 
-# LEFT PANEL: balance table
+# Sidebar: Doctor balance
 with st.sidebar:
     st.subheader("📊 Doctor Balance Table")
     if st.session_state.generated_schedule:
@@ -170,18 +214,10 @@ if st.button("🗓️ Generate Schedule"):
         months_to_generate
     )
 
-# 4️⃣ Display schedule single-column, color-coded by doctor
+# 4️⃣ Display calendar view
 if st.session_state.generated_schedule:
     st.subheader("📋 Calendar View")
-    last_month = None
-    for date in sorted(st.session_state.generated_schedule.keys()):
-        doc = st.session_state.generated_schedule[date]
-        month_name = date.strftime("%B %Y")
-        if month_name != last_month:
-            st.markdown(f"### {month_name}")
-            last_month = month_name
-        color = '#%02x%02x%02x' % DOCTOR_COLORS.get(doc, (200,200,200))
-        st.markdown(f"<div style='background-color:{color}; padding:4px'>{date.strftime('%d/%m (%a)')} → {doc}</div>", unsafe_allow_html=True)
+    display_calendar(st.session_state.generated_schedule)
 
 # 5️⃣ Export PDF
 if st.session_state.generated_schedule:
@@ -189,4 +225,4 @@ if st.session_state.generated_schedule:
     if st.button("🖨️ Export PDF"):
         pdf_file = create_pdf(st.session_state.generated_schedule)
         with open(pdf_file, "rb") as f:
-            st.download_button("⬇️ Download PDF", f, file_name="schedule.pdf")
+            st.download_button("⬇️ Download PDF", f, file_name="schedule_calendar.pdf")
