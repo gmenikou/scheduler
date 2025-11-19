@@ -165,7 +165,7 @@ for key in ["initial_week", "start_date", "generated_schedule", "balance_df"]:
         st.session_state[key] = None
 
 # Reset
-if st.button("🔄 Reset All", key="reset_all"):
+if st.button("🔄 Reset All"):
     for key in ["initial_week", "start_date", "generated_schedule", "balance_df"]:
         st.session_state[key] = None
     st.experimental_rerun()
@@ -200,7 +200,7 @@ with right_col:
             doc = st.selectbox(d.strftime("%a\n%d/%m"), DOCTORS, key=f"manual_{d}")
             initial_week[d] = doc
 
-    if st.button("💾 Save Initial Week", key="save_initial"):
+    if st.button("💾 Save Initial Week"):
         st.session_state.initial_week = [initial_week[d] for d in sorted(initial_week.keys())]
         st.session_state.start_date = week_dates[0]
         st.success("Initial week saved!")
@@ -216,8 +216,8 @@ with right_col:
     with col2:
         end_month = st.date_input("End date", value=st.session_state.start_date + datetime.timedelta(days=30))
 
-    # ✅ Minimal fix: recalc balance inside the same button click
-    if st.button("🗓️ Generate Schedule", key="generate_schedule"):
+    # ✅ Generate schedule & recalc balance immediately on single click
+    if st.button("🗓️ Generate Schedule"):
         st.session_state.generated_schedule = generate_schedule(
             st.session_state.initial_week,
             start_month,
@@ -225,7 +225,7 @@ with right_col:
         )
         st.session_state.balance_df = compute_balance_fri_sat_sun(st.session_state.generated_schedule)
 
-    # Display calendar if schedule exists
+    # Display calendar
     if st.session_state.generated_schedule:
         st.subheader("📋 Calendar View")
         display_calendar(st.session_state.generated_schedule)
@@ -233,7 +233,7 @@ with right_col:
     # Export PDF
     if st.session_state.generated_schedule:
         st.subheader("📄 Export PDF")
-        if st.button("🖨️ Export PDF", key="export_pdf"):
+        if st.button("🖨️ Export PDF"):
             pdf_file = create_pdf(st.session_state.generated_schedule)
             with open(pdf_file, "rb") as f:
                 st.download_button("⬇️ Download PDF", f, file_name="schedule_calendar.pdf")
