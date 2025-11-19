@@ -123,9 +123,8 @@ def create_pdf(schedule, filename="schedule_calendar.pdf"):
 # ----------------------------
 # 6. STREAMLIT CALENDAR DISPLAY
 # ----------------------------
-def display_calendar(schedule, show_balance=False):
+def display_calendar(schedule):
     last_month = None
-    first_month_done = False
     for date in sorted(schedule.keys()):
         month_name = date.strftime("%B %Y")
         if month_name != last_month:
@@ -134,10 +133,7 @@ def display_calendar(schedule, show_balance=False):
             m_year, m_month = date.year, date.month
 
             # Weekday headers
-            if show_balance and not first_month_done:
-                header_cols = st.columns([0.6]*7 + [0.4])
-            else:
-                header_cols = st.columns(7)
+            header_cols = st.columns(7)
             days = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
             for i, d in enumerate(days):
                 header_cols[i].markdown(f"**{d}**", unsafe_allow_html=True)
@@ -146,10 +142,7 @@ def display_calendar(schedule, show_balance=False):
             weeks = cal.monthdatescalendar(m_year, m_month)
 
             for week in weeks:
-                if show_balance and not first_month_done:
-                    cols = st.columns([0.6]*7 + [0.4])
-                else:
-                    cols = st.columns(7)
+                cols = st.columns(7)
                 for i, day in enumerate(week):
                     if day.month == m_month:
                         doc = schedule.get(day, "")
@@ -159,14 +152,6 @@ def display_calendar(schedule, show_balance=False):
                             f"<b>{day.day}</b><br>{doc}</div>", unsafe_allow_html=True)
                     else:
                         cols[i].markdown("<div style='padding:6px'></div>", unsafe_allow_html=True)
-
-            # Show balance table next to first month
-            if show_balance and not first_month_done:
-                with cols[-1]:
-                    st.subheader("📊 Weekend Balance (All Months)")
-                    if "balance_df" in st.session_state:
-                        st.dataframe(st.session_state.balance_df, width=250, height=400)
-                first_month_done = True
 
 # ----------------------------
 # 7. STREAMLIT UI
@@ -185,8 +170,22 @@ if st.button("🔄 Reset All"):
         st.session_state[key] = None
     st.experimental_rerun()
 
-# Right panel: Main UI
-right_col, _ = st.columns([0.65, 0.35])  # right side main content
+# ----------------------------
+# Layout: Left balance, Right calendar & controls
+# ----------------------------
+left_col, right_col = st.columns([0.35, 0.65])
+
+# ----------------------------
+# Left: Balance table
+# ----------------------------
+with left_col:
+    st.subheader("📊 Weekend Balance Table")
+    if st.session_state.balance_df is not None:
+        st.dataframe(st.session_state.balance_df, width=400, height=800)
+
+# ----------------------------
+# Right: Main UI
+# ----------------------------
 with right_col:
     st.subheader("1️⃣ Select a date in the initial week")
     selected_date = st.date_input("Pick a date (Mon–Sun of initial week):", datetime.date.today())
@@ -226,13 +225,13 @@ with right_col:
             start_month,
             end_month
         )
-        # Recalculate balance for all months immediately
+        # Recalculate balance table for all months immediately
         st.session_state.balance_df = compute_balance_fri_sat_sun(st.session_state.generated_schedule)
 
     # Display calendar
     if st.session_state.generated_schedule:
         st.subheader("📋 Calendar View")
-        display_calendar(st.session_state.generated_schedule, show_balance=True)
+        display_calendar(st.session_state.generated_schedule)
 
     # Export PDF
     if st.session_state.generated_schedule:
