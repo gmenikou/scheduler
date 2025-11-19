@@ -64,6 +64,12 @@ def compute_balance(schedule):
     df = df.reset_index()
     return df
 
+def get_text_color(rgb):
+    """Return black or white text depending on background brightness."""
+    r, g, b = rgb
+    brightness = (r*299 + g*587 + b*114)/1000
+    return (0,0,0) if brightness > 125 else (255,255,255)
+
 def create_pdf(schedule, filename="schedule.pdf"):
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
@@ -71,9 +77,10 @@ def create_pdf(schedule, filename="schedule.pdf"):
     pdf.set_font("Arial", "B", 16)
     pdf.cell(0, 10, "Doctor Schedule", ln=True, align="C")
     pdf.ln(5)
-    pdf.set_font("Arial", "", 12)
     
     last_month = None
+    pdf.set_font("Arial", "", 12)
+    
     for date in sorted(schedule.keys()):
         doc = schedule[date]
         month_name = date.strftime("%B %Y")
@@ -84,8 +91,10 @@ def create_pdf(schedule, filename="schedule.pdf"):
             pdf.set_font("Arial", "", 12)
             last_month = month_name
         
-        color = DOCTOR_COLORS.get(doc, (200, 200, 200))
+        color = DOCTOR_COLORS.get(doc, (200,200,200))
+        text_color = get_text_color(color)
         pdf.set_fill_color(*color)
+        pdf.set_text_color(*text_color)
         pdf.cell(50, 8, date.strftime("%d/%m (%a)"), border=1, fill=True)
         pdf.cell(0, 8, doc, border=1, ln=True, fill=True)
     
