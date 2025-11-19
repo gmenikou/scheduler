@@ -68,14 +68,22 @@ def generate_schedule(initial_week, all_dates):
 
 def generate_schedule_for_months(initial_week, start_month, num_months=1):
     all_schedules = {}
-    for m in range(num_months):
-        month = (start_month.month + m - 1) % 12 + 1
-        year = start_month.year + ((start_month.month + m - 1) // 12)
+    # Use a datetime.date as the month iterator
+    current = start_month
+    for _ in range(num_months):
+        year = current.year
+        month = current.month
         num_days = calendar.monthrange(year, month)[1]
-        month_dates = [datetime.date(year, month, d) for d in range(1, num_days + 1)]
+        month_dates = [datetime.date(year, month, d) for d in range(1, num_days+1)]
         schedule = generate_schedule(initial_week, month_dates)
         all_schedules[(year, month)] = schedule
+        # move to next month
+        if month == 12:
+            current = datetime.date(year+1, 1, 1)
+        else:
+            current = datetime.date(year, month+1, 1)
     return all_schedules
+
 
 # -------------------------------
 # Doctor color generator
@@ -293,3 +301,4 @@ if "generated_schedule" in st.session_state:
         for d in sorted(st.session_state.edits.keys()):
             val = st.session_state.edits[d]
             st.write(f"{d.strftime('%d/%m/%Y')} → {val if val else '(cleared)'}")
+
