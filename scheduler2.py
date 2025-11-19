@@ -154,8 +154,8 @@ def export_calendar_pdf(all_schedules, edits_map, filename="calendar.pdf"):
         pdf.add_calendar_page(year, month, schedule, edits=edits_map.get((year, month), {}))
     # Save to in-memory bytes and return bytes buffer
     buf = io.BytesIO()
-    pdf.output(buf)
-    buf.seek(0)
+    pdf_bytes = pdf.output(dest='S').encode('latin-1')
+    buf = BytesIO(pdf_bytes)
     return buf
 
 # -------------------------------
@@ -478,5 +478,6 @@ if "generated_schedule" in st.session_state:
 
 else:
     st.info("Create and save an initial week, then press 'Generate Schedule' to view the calendar.")
+
 
 
