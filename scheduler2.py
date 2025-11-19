@@ -4,9 +4,9 @@ import calendar
 import pandas as pd
 from fpdf import FPDF
 
-# ---------------------------------------------
-# 1. CONSTANT DOCTOR LIST & COLORS
-# ---------------------------------------------
+# ----------------------------
+# 1. CONSTANTS
+# ----------------------------
 DOCTORS = ["Elena", "Eva", "Maria", "Athina", "Alexandros", "Elia", "Christina"]
 DOCTOR_COLORS = {
     "Elena": (255, 200, 200),
@@ -18,9 +18,9 @@ DOCTOR_COLORS = {
     "Christina": (220, 220, 220)
 }
 
-# ---------------------------------------------
+# ----------------------------
 # 2. HELPERS
-# ---------------------------------------------
+# ----------------------------
 def get_week_dates(any_date):
     monday = any_date - datetime.timedelta(days=any_date.weekday())
     return [monday + datetime.timedelta(days=i) for i in range(7)]
@@ -30,10 +30,10 @@ def get_text_color(rgb):
     brightness = (r*299 + g*587 + b*114)/1000
     return (0,0,0) if brightness > 125 else (255,255,255)
 
-# ---------------------------------------------
+# ----------------------------
 # 3. SCHEDULE GENERATION
-# ---------------------------------------------
-def generate_schedule(initial_week, start_date, months=1):
+# ----------------------------
+def generate_schedule(initial_week, start_date, end_date):
     schedule = {}
     doctor_to_weekday = {doc: i for i, doc in enumerate(initial_week)}
 
@@ -42,24 +42,21 @@ def generate_schedule(initial_week, start_date, months=1):
         schedule[start_date + datetime.timedelta(days=i)] = doc
 
     current_week_start = start_date + datetime.timedelta(days=7)
-    last_month = (start_date.month + months - 1 - 1) % 12 + 1
-    last_year = start_date.year + (start_date.month + months - 1 - 1) // 12
-    last_day = datetime.date(last_year, last_month, calendar.monthrange(last_year, last_month)[1])
 
-    while current_week_start <= last_day:
+    while current_week_start <= end_date:
         new_doctor_to_weekday = {doc: (wd - 2) % 7 for doc, wd in doctor_to_weekday.items()}
         for doc, wd in new_doctor_to_weekday.items():
             day_date = current_week_start + datetime.timedelta(days=wd)
-            if day_date <= last_day:
+            if day_date <= end_date:
                 schedule[day_date] = doc
         doctor_to_weekday = new_doctor_to_weekday
         current_week_start += datetime.timedelta(days=7)
 
     return schedule
 
-# ---------------------------------------------
+# ----------------------------
 # 4. BALANCE TABLE
-# ---------------------------------------------
+# ----------------------------
 def compute_balance_fri_sat_sun(schedule):
     counts = {doc: {"Friday":0, "Saturday":0, "Sunday":0} for doc in DOCTORS}
     for date, doc in schedule.items():
@@ -75,9 +72,9 @@ def compute_balance_fri_sat_sun(schedule):
     df = df.reset_index()
     return df
 
-# ---------------------------------------------
+# ----------------------------
 # 5. PDF EXPORT
-# ---------------------------------------------
+# ----------------------------
 def create_pdf(schedule, filename="schedule_calendar.pdf"):
     pdf = FPDF(orientation='L', unit='mm', format='A4')
     pdf.set_auto_page_break(auto=True, margin=15)
@@ -123,9 +120,9 @@ def create_pdf(schedule, filename="schedule_calendar.pdf"):
     pdf.output(filename)
     return filename
 
-# ---------------------------------------------
+# ----------------------------
 # 6. STREAMLIT CALENDAR DISPLAY
-# ---------------------------------------------
+# ----------------------------
 def display_calendar(schedule):
     last_month = None
     for date in sorted(schedule.keys()):
@@ -155,9 +152,9 @@ def display_calendar(schedule):
                     else:
                         cols[i].markdown("<div style='padding:6px'></div>", unsafe_allow_html=True)
 
-# ---------------------------------------------
+# ----------------------------
 # 7. STREAMLIT UI
-# ---------------------------------------------
+# ----------------------------
 st.set_page_config(page_title="📅 Programma Giatron – Backwards Rotation", layout="wide")
 st.title("📅 Programma Giatron – Backwards Rotation")
 
@@ -184,7 +181,7 @@ with left_col:
     st.subheader("📊 Doctor Weekend Balance Table")
     if st.session_state.generated_schedule:
         balance_df = compute_balance_fri_sat_sun(st.session_state.generated_schedule)
-        st.dataframe(balance_df, width=350, height=800)
+        st.dataframe(balance_df, width=400, height=800)
 
 # Right: Main UI
 with right_col:
@@ -214,19 +211,20 @@ with right_col:
         st.info("Save an initial week to proceed.")
         st.stop()
 
-    # Generate schedule
-    st.subheader("3️⃣ Generate schedule for forthcoming months")
+    # Generate schedule by range
+    st.subheader("3️⃣ Generate schedule (Start → End)")
     col1, col2 = st.columns(2)
     with col1:
-        start_month = st.date_input("Start month", value=st.session_state.start_date)
+        start_month = st.date_input("Start date (Monday of initial week)", value=st.session_state.start_date)
     with col2:
-        months_to_generate = st.number_input("Number of months to generate", min_value=1, max_value=12, value=1)
+        end_month = st.date_input("End date", value=st.session_state.start_date + datetime.timedelta(days=30))
 
-    if st.button("🗓️ Generate Schedule"):
+    generate_clicked = st.button("🗓️ Generate Schedule")
+    if generate_clicked:
         st.session_state.generated_schedule = generate_schedule(
             st.session_state.initial_week,
             start_month,
-            months_to_generate
+            end_month
         )
 
     # Display calendar
