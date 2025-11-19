@@ -134,8 +134,10 @@ def export_calendar_pdf(all_schedules, edits_map):
     pdf = CalendarPDF()
     for (year, month), schedule in sorted(all_schedules.items()):
         pdf.add_calendar_page(year, month, schedule, edits=edits_map.get((year, month), {}))
-    buf = io.BytesIO()
-    pdf.output(buf)
+    
+    # Correct way to get PDF as bytes
+    pdf_bytes = pdf.output(dest='S').encode('latin1')
+    buf = io.BytesIO(pdf_bytes)
     buf.seek(0)
     return buf
 
@@ -297,3 +299,4 @@ if "generated_schedule" in st.session_state:
         for (year,month),schedule in sorted(st.session_state.generated_schedule.items()):
             month_edits={d:doc for d,doc in st.session_state.edits.items() if d.year==year and d.month==month}
             display_month_calendar_enhanced(year,month,schedule,month_edits,selected_doctor)
+
