@@ -254,7 +254,7 @@ def display_month_calendar_enhanced(year, month, schedule, edits, selected_docto
                         if selected_doctor:
                             # set edit in session_state
                             st.session_state.edits[d] = selected_doctor
-                            st.experimental_rerun()
+                            st.rerun()
                         else:
                             st.warning("Select a doctor from the 'Assign doctor' selector above before assigning.")
                 if c2.button("Clear", key=key+"_clear"):
@@ -263,7 +263,7 @@ def display_month_calendar_enhanced(year, month, schedule, edits, selected_docto
                     else:
                         # allow clearing base schedule by setting to empty edit
                         st.session_state.edits[d] = ""
-                    st.experimental_rerun()
+                    st.rerun()
 
                 # Small details / modal
                 if st.button("Details", key=key + "_details"):
@@ -316,7 +316,7 @@ with col1:
         if os.path.exists(INIT_FILE):
             os.remove(INIT_FILE)
         st.success("Session and initial week deleted.")
-        st.experimental_rerun()
+        st.rerun()
 
 with col3:
     # Dark mode toggle
@@ -413,7 +413,7 @@ if "generated_schedule" in st.session_state:
         # Quick actions
         if st.button("Clear all edits"):
             st.session_state.edits = {}
-            st.experimental_rerun()
+            st.rerun()
         if st.button("Export calendar PDF (with edits)"):
             # Build edits map grouped per (year, month)
             edits_map = {}
@@ -471,3 +471,4 @@ if "generated_schedule" in st.session_state:
 
 else:
     st.info("Create and save an initial week, then press 'Generate Schedule' to view the calendar.")
+
