@@ -25,51 +25,75 @@ def get_week_dates(any_date):
     monday = any_date - datetime.timedelta(days=any_date.weekday())
     return [monday + datetime.timedelta(days=i) for i in range(7)]
 
-def rotate_week(week_list, offset=-2):
-    offset = offset % 7
-    return week_list[-offset:] + week_list[:-offset]
-
-def generate_schedule(initial_week, start_date, months=1):
-    schedule = {}
-    year, month = start_date.year, start_date.month
-    week_doctors = initial_week.copy()  # Preserve initial week
-
-    for m in range(months):
-        m_year = year + (month + m - 1) // 12
-        m_month = (month + m - 1) % 12 + 1
-        num_days = calendar.monthrange(m_year, m_month)[1]
-        all_dates = [datetime.date(m_year, m_month, d) for d in range(1, num_days + 1)]
-
-        i = 0
-        while i < len(all_dates):
-            week_block = all_dates[i:i + 7]
-            if i == 0 and week_block[0] == start_date:
-                # Preserve initial week exactly
-                for d, doc in zip(week_block, week_doctors):
-                    schedule[d] = doc
-            else:
-                # Rotation starts from the second week onward
-                week_doctors = rotate_week(week_doctors, offset=-2)
-                for d, doc in zip(week_block, week_doctors):
-                    schedule[d] = doc
-            i += 7
-    return schedule
-
-def compute_balance(schedule):
-    counts = {doc: 0 for doc in DOCTORS}
-    for doc in schedule.values():
-        counts[doc] += 1
-    df = pd.DataFrame.from_dict(counts, orient="index", columns=["Shifts"])
-    df.index.name = "Doctor"
-    return df.reset_index()
-
 def get_text_color(rgb):
     r, g, b = rgb
     brightness = (r*299 + g*587 + b*114)/1000
     return (0,0,0) if brightness > 125 else (255,255,255)
 
 # ---------------------------------------------
-# PDF Export with Calendar Grid
+# 3. SCHEDULE GENERATION WITH -2 DAYS ROTATION PER DOCTOR
+# ---------------------------------------------
+def generate_schedule(initial_week, start_date, months=1):
+    """
+    Generate schedule with -2 day/week rotation per doctor.
+    - initial_week: list of 7 doctors for the first week (Mon=0 ... Sun=6)
+    - start_date: Monday of the initial week
+    - months: number of months to generate
+    """
+    schedule = {}
+
+    # Map each doctor to their weekday (0=Mon ... 6=Sun) for initial week
+    doctor_to_weekday = {doc: i for i, doc in enumerate(initial_week)}
+
+    # Save initial week
+    for i, doc in enumerate(initial_week):
+        schedule[start_date + datetime.timedelta(days=i)] = doc
+
+    current_week_start = start_date + datetime.timedelta(days=7)
+
+    # Determine last day
+    last_month = (start_date.month + months - 1) % 12 or 12
+    last_year = start_date.year + (start_date.month + months - 1) // 12
+    last_day = datetime.date(last_year, last_month, calendar.monthrange(last_year, last_month)[1])
+
+    while current_week_start <= last_day:
+        # Compute new weekday for each doctor: shift -2 days (backwards)
+        new_doctor_to_weekday = {}
+        for doc, wd in doctor_to_weekday.items():
+            new_wd = (wd - 2) % 7
+            new_doctor_to_weekday[doc] = new_wd
+
+        # Assign doctors to the new week dates
+        for doc, wd in new_doctor_to_weekday.items():
+            day_date = current_week_start + datetime.timedelta(days=wd)
+            if day_date <= last_day:
+                schedule[day_date] = doc
+
+        # Prepare for next week
+        doctor_to_weekday = new_doctor_to_weekday
+        current_week_start += datetime.timedelta(days=7)
+
+    return schedule
+
+# ---------------------------------------------
+# 4. BALANCE TABLE WITH FRIDAY/SAT/SUN
+# ---------------------------------------------
+def compute_balance_fri_sat_sun(schedule):
+    counts = {doc: {"Friday":0, "Saturday":0, "Sunday":0} for doc in DOCTORS}
+    for date, doc in schedule.items():
+        weekday = date.weekday()  # 0=Mon ... 6=Sun
+        if weekday == 4:
+            counts[doc]["Friday"] += 1
+        elif weekday == 5:
+            counts[doc]["Saturday"] += 1
+        elif weekday == 6:
+            counts[doc]["Sunday"] += 1
+    df = pd.DataFrame.from_dict(counts, orient="index")
+    df.index.name = "Doctor"
+    return df.reset_index()
+
+# ---------------------------------------------
+# 5. PDF EXPORT (CALENDAR GRID)
 # ---------------------------------------------
 def create_pdf(schedule, filename="schedule_calendar.pdf"):
     pdf = FPDF(orientation='L', unit='mm', format='A4')  # Landscape
@@ -89,19 +113,17 @@ def create_pdf(schedule, filename="schedule_calendar.pdf"):
 
             # Draw weekday headers
             pdf.set_font("Arial", "B", 12)
-            days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+            days = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
             col_width = pdf.w / 7 - 5
             for d in days:
                 pdf.cell(col_width, 8, d, border=1, align='C')
             pdf.ln()
-
             pdf.set_font("Arial", "", 12)
 
             # Generate weeks
             cal = calendar.Calendar(firstweekday=0)
             m_year, m_month = date.year, date.month
             weeks = cal.monthdatescalendar(m_year, m_month)
-            
             for week in weeks:
                 for day in week:
                     if day.month == m_month:
@@ -110,19 +132,18 @@ def create_pdf(schedule, filename="schedule_calendar.pdf"):
                         text_color = get_text_color(color)
                         pdf.set_fill_color(*color)
                         pdf.set_text_color(*text_color)
-                        pdf.multi_cell(col_width, 15, f"{day.day}\n{doc}", border=1, ln=3, align='C', fill=True)
+                        pdf.cell(col_width, 20, f"{day.day}\n{doc}", border=1, ln=0, align='C', fill=True)
                     else:
                         pdf.set_fill_color(240,240,240)
-                        pdf.cell(col_width, 15, "", border=1, ln=0)
+                        pdf.cell(col_width, 20, "", border=1, ln=0)
                 pdf.ln()
     pdf.output(filename)
     return filename
 
 # ---------------------------------------------
-# Calendar View in Streamlit
+# 6. STREAMLIT CALENDAR DISPLAY
 # ---------------------------------------------
 def display_calendar(schedule):
-    """Display schedule in a 7-column calendar grid per month."""
     last_month = None
     for date in sorted(schedule.keys()):
         month_name = date.strftime("%B %Y")
@@ -146,7 +167,7 @@ def display_calendar(schedule):
                         cols[i].markdown("<div style='padding:6px'></div>", unsafe_allow_html=True)
 
 # ---------------------------------------------
-# STREAMLIT UI
+# 7. STREAMLIT UI
 # ---------------------------------------------
 st.set_page_config(page_title="📅 Programma Giatron – Backwards Rotation", layout="wide")
 st.title("📅 Programma Giatron – Backwards Rotation")
@@ -168,9 +189,9 @@ if st.button("🔄 Reset All"):
 
 # Sidebar: Doctor balance
 with st.sidebar:
-    st.subheader("📊 Doctor Balance Table")
+    st.subheader("📊 Doctor Weekend Balance Table")
     if st.session_state.generated_schedule:
-        balance_df = compute_balance(st.session_state.generated_schedule)
+        balance_df = compute_balance_fri_sat_sun(st.session_state.generated_schedule)
         st.table(balance_df)
 
 # 1️⃣ Initial week selection
