@@ -1,12 +1,9 @@
-# app.py
 import streamlit as st
 import datetime
 import calendar
+from fpdf import FPDF
 import json
 import os
-import colorsys
-import io
-from fpdf import FPDF
 
 # -------------------------------
 # Constants
@@ -24,7 +21,7 @@ def get_week_dates(any_date):
 def save_initial_week(initial_week):
     serializable = {d.strftime("%Y-%m-%d"): doc for d, doc in initial_week.items()}
     with open(INIT_FILE, "w", encoding="utf-8") as f:
-        json.dump(serializable, f, ensure_ascii=False, sort_keys=True)
+        json.dump(serializable, f, ensure_ascii=False)
 
 def load_initial_week():
     if os.path.exists(INIT_FILE):
@@ -50,8 +47,9 @@ def generate_schedule(initial_week, all_dates):
         weeks.append(week_block)
         current += datetime.timedelta(days=7)
 
-    week_counter = 1
+    week_counter = 1  # rotation starts immediately from next week
     for week_block in weeks:
+        # Preserve initial week exactly
         if any(d in initial_week for d in week_block):
             for d in week_block:
                 if d in initial_week:
@@ -63,200 +61,145 @@ def generate_schedule(initial_week, all_dates):
                     schedule[d] = rotated_week[idx % 7]
             week_counter += 1
 
+    # Only keep dates from initial week onwards
     schedule = {d: doc for d, doc in schedule.items() if d >= initial_monday}
     return schedule
 
-def generate_schedule_for_range(initial_week, start_date, end_date):
-    all_dates = [start_date + datetime.timedelta(days=i) for i in range((end_date-start_date).days+1)]
-    schedule = generate_schedule(initial_week, all_dates)
-    return schedule
-
-def generate_doctor_colors(doctor_list):
-    colors = {}
-    n = max(1, len(doctor_list))
-    for i, doc in enumerate(doctor_list):
-        hue = (i/n)
-        r, g, b = colorsys.hsv_to_rgb(hue, 0.35, 0.95)
-        colors[doc] = '#{:02x}{:02x}{:02x}'.format(int(r*255), int(g*255), int(b*255))
-    return colors
-
-DOCTOR_COLORS = generate_doctor_colors(DOCTORS)
+def generate_schedule_for_months(initial_week, start_month, num_months=1):
+    all_schedules = {}
+    for m in range(num_months):
+        month = (start_month.month + m - 1) % 12 + 1
+        year = start_month.year + ((start_month.month + m - 1) // 12)
+        num_days = calendar.monthrange(year, month)[1]
+        month_dates = [datetime.date(year, month, d) for d in range(1, num_days + 1)]
+        schedule = generate_schedule(initial_week, month_dates)
+        all_schedules[(year, month)] = schedule
+    return all_schedules
 
 # -------------------------------
-# PDF Export
+# PDF Export with DejaVu
 # -------------------------------
-class CalendarPDF(FPDF):
-    def header(self):
-        pass
-
-    def add_calendar_page(self, schedule, edits=None):
-        if edits is None:
-            edits = {}
-        self.add_page()
+class PDF(FPDF):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Register DejaVu fonts for Greek letters
         self.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
-        self.set_font('DejaVu', '', 12)
+        self.add_font('DejaVu', 'B', 'DejaVuSans-Bold.ttf', uni=True)
+        self.add_font('DejaVu', 'I', 'DejaVuSans-Oblique.ttf', uni=True)
+        self.add_font('DejaVu', 'BI', 'DejaVuSans-BoldOblique.ttf', uni=True)
 
-        # Determine month range
-        dates = sorted(schedule.keys())
-        if not dates:
-            return
-        start = dates[0]
-        end = dates[-1]
-        current = start.replace(day=1)
-        while current <= end:
-            year = current.year
-            month = current.month
-            self.set_font('DejaVu', 'B', 14)
-            self.cell(0, 10, f"{calendar.month_name[month]} {year}", 0, 1, "C")
-            self.ln(2)
+    def header(self):
+        self.set_font("DejaVu", 'B', 14)
+        self.cell(0, 10, "ΠΡΟΓΡΑΜΜΑ ΓΙΑΤΡΩΝ", 0, 1, "C")
+        self.ln(4)
 
-            col_width = 26
-            row_height = 16
-            left_margin = (self.w - (col_width*7))/2
-            self.set_x(left_margin)
-            self.set_font('DejaVu', '', 10)
-            # Weekday header
-            for wd in ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]:
-                self.cell(col_width,row_height,wd,1,0,'C')
-            self.ln(row_height)
-            self.set_x(left_margin)
+    def create_schedule_table(self, assignments):
+        self.set_font("DejaVu", '', 12)
+        self.set_fill_color(220, 220, 220)
+        self.cell(60, 8, "Ημερομηνία", 1, 0, "C", 1)
+        self.cell(80, 8, "Γιατρός", 1, 1, "C", 1)
+        for d in sorted(assignments.keys()):
+            weekday = d.strftime("%a")
+            self.cell(60, 8, f"{d.strftime('%d/%m/%Y')} ({weekday})", 1, 0, "C")
+            self.cell(80, 8, assignments[d], 1, 1, "C")
 
-            cal = calendar.Calendar(firstweekday=0)
-            for week in cal.monthdatescalendar(year,month):
-                for d in week:
-                    if d.month != month:
-                        self.cell(col_width,row_height,"",1,0,'C')
-                    else:
-                        doc = edits.get(d,schedule.get(d,""))
-                        bg = DOCTOR_COLORS.get(doc,"#ffffff") if doc else "#ffffff"
-                        try:
-                            r=int(bg[1:3],16)
-                            g=int(bg[3:5],16)
-                            b=int(bg[5:7],16)
-                        except:
-                            r=g=b=255
-                        self.set_fill_color(r,g,b)
-                        self.cell(col_width,row_height,f"{d.day}\n{doc}",1,0,'C',fill=True)
-                self.ln(row_height)
-                self.set_x(left_margin)
-            current = current + datetime.timedelta(days=calendar.monthrange(year,month)[1])
-
-def export_calendar_pdf(schedule, edits):
-    pdf = CalendarPDF()
-    pdf.add_calendar_page(schedule, edits)
-    buf = io.BytesIO()
-    pdf.output(buf)
-    buf.seek(0)
-    return buf
+def create_pdf_multi_months(all_schedules, filename="schedule.pdf"):
+    pdf = PDF()
+    pdf.add_page()
+    for (year, month), schedule in all_schedules.items():
+        pdf.set_font("DejaVu", 'B', 14)
+        pdf.cell(0, 10, datetime.date(year, month, 1).strftime("ΠΡΟΓΡΑΜΜΑ %B %Y"), 0, 1, "C")
+        pdf.ln(2)
+        pdf.create_schedule_table(schedule)
+        pdf.add_page()
+    pdf.output(filename)
+    return filename
 
 # -------------------------------
-# Streamlit UI
+# Streamlit App
 # -------------------------------
-st.set_page_config(layout="wide", page_title="Programma Giatron - Calendar")
+st.title("📅 Programma Giatron – Backwards Rotation")
 
-st.title("📅 Programma Giatron – Calendar View")
-
-# Session state
+# Load initial week if exists
 if "initial_week" not in st.session_state:
     st.session_state.initial_week = load_initial_week()
 if "start_date" not in st.session_state:
     st.session_state.start_date = None
-if "edits" not in st.session_state:
-    st.session_state.edits = {}
-if "generated_schedule" not in st.session_state:
-    st.session_state.generated_schedule = {}
 
 # Reset
 if st.button("🔄 Reset All"):
-    for k in list(st.session_state.keys()):
-        del st.session_state[k]
+    st.session_state.clear()
     if os.path.exists(INIT_FILE):
         os.remove(INIT_FILE)
-    st.experimental_rerun()
+    st.success("Session and initial week deleted.")
+    st.stop()
 
-# Step 1: Select initial week
+# Step 1: Select initial week date
 st.subheader("1️⃣ Select a date in the initial week")
-selected_date = st.date_input("Choose a date:", datetime.date.today())
+if st.session_state.start_date is None:
+    selected_date = st.date_input("Choose a date:", datetime.date.today())
+else:
+    selected_date = st.session_state.start_date
+
 week_dates = get_week_dates(selected_date)
 st.write("The week is:")
-cols = st.columns(7)
-for i,d in enumerate(week_dates):
-    cols[i].write(f"**{d.strftime('%a %d/%m/%Y')}**")
+for d in week_dates:
+    st.write("-", d.strftime("%d/%m/%Y"))
 
-# Step 2: Assign initial week
+# Step 2: Assign doctors
 st.subheader("2️⃣ Assign doctors for the first week")
 if st.session_state.initial_week is None:
     initial_week = {}
     cols = st.columns(7)
-    for i,d in enumerate(week_dates):
+    for i, d in enumerate(week_dates):
         with cols[i]:
-            doc = st.selectbox(d.strftime("%a %d/%m"), DOCTORS, key=f"manual_{d}")
+            doc = st.selectbox(d.strftime("%a\n%d/%m"), DOCTORS, key=f"manual_{d}")
             initial_week[d] = doc
+
     if st.button("💾 Save initial week"):
         st.session_state.initial_week = initial_week
         st.session_state.start_date = selected_date
         save_initial_week(initial_week)
         st.success("Initial week saved!")
 else:
-    st.write("Initial week already saved:")
+    st.info("Initial week already saved. Use Reset to change it.")
+
+if st.session_state.initial_week:
+    st.write("Your assigned initial week:")
     for d in sorted(st.session_state.initial_week.keys()):
-        st.write(f"{d.strftime('%d/%m/%Y')} → {st.session_state.initial_week[d]}")
+        st.write(f"{d.strftime('%d/%m/%Y')} ({d.strftime('%a')}) → {st.session_state.initial_week[d]}")
 
-# Step 3: Generate schedule for date range
-st.subheader("3️⃣ Generate schedule")
-start_range = st.date_input("Start date", datetime.date.today())
-end_range = st.date_input("End date", datetime.date.today()+datetime.timedelta(days=365))
-if st.button("Generate Schedule"):
-    st.session_state.generated_schedule = generate_schedule_for_range(
-        st.session_state.initial_week, start_range, end_range
-    )
-    st.success("Schedule generated!")
+# Step 3: Generate schedule
+if st.session_state.initial_week and st.session_state.start_date:
+    st.subheader("3️⃣ Generate schedule for forthcoming months")
+    today = datetime.date.today()
+    months_options = [(today + datetime.timedelta(days=30*i)).replace(day=1) for i in range(12)]
+    months_display = [d.strftime("%B %Y") for d in months_options]
+    selected_month_index = st.selectbox("Choose start month:", list(range(12)),
+                                        format_func=lambda x: months_display[x])
+    selected_month_date = months_options[selected_month_index]
 
-# Left panel: Balance table
-if st.session_state.generated_schedule:
-    st.subheader("📊 Balance (Fri/Sat/Sun per doctor)")
-    balance = {doc: {"Fri":0,"Sat":0,"Sun":0} for doc in DOCTORS}
-    for d,doc in st.session_state.generated_schedule.items():
-        if doc in DOCTORS:
-            wd = d.weekday()
-            if wd==4: balance[doc]["Fri"]+=1
-            elif wd==5: balance[doc]["Sat"]+=1
-            elif wd==6: balance[doc]["Sun"]+=1
-    # Display table with colors
-    table_data = []
-    for doc in DOCTORS:
-        row = f'<td style="background:{DOCTOR_COLORS[doc]};padding:4px">{doc}</td>'
-        for day in ["Fri","Sat","Sun"]:
-            row += f'<td style="padding:4px">{balance[doc][day]}</td>'
-        table_data.append(f"<tr>{row}</tr>")
-    html_table = f"""
-    <table border="1" style="border-collapse:collapse;text-align:center;">
-        <tr><th>Doctor</th><th>Fri</th><th>Sat</th><th>Sun</th></tr>
-        {''.join(table_data)}
-    </table>
-    """
-    st.markdown(html_table, unsafe_allow_html=True)
+    num_months = st.number_input("Number of months to generate:", min_value=1, max_value=12, value=1, step=1)
 
-# Calendar display
-if st.session_state.generated_schedule:
-    st.subheader("📋 Calendar")
-    merged = st.session_state.generated_schedule.copy()
-    for d in sorted(merged.keys()):
-        doc = merged[d]
-        key_assign = f"assign_{d.year}_{d.month}_{d.day}"
-        key_clear = f"clear_{d.year}_{d.month}_{d.day}"
-        col1, col2 = st.columns([1,1])
-        col1.write(f"{d.strftime('%d/%m/%Y')} → {doc}")
-        if col1.button("Assign", key=key_assign):
-            st.session_state.edits[d] = doc
-            st.experimental_rerun()
-        if col2.button("Clear", key=key_clear):
-            st.session_state.edits[d] = ""
-            st.experimental_rerun()
+    if st.button("Generate Schedule"):
+        multi_schedule = generate_schedule_for_months(st.session_state.initial_week,
+                                                      selected_month_date, num_months)
+        st.session_state.generated_schedule = multi_schedule
+        for (year, month), schedule in multi_schedule.items():
+            st.write(f"### 📋 Schedule for {datetime.date(year, month, 1).strftime('%B %Y')}")
+            for d in sorted(schedule.keys()):
+                st.write(f"{d.strftime('%d/%m/%Y')} ({d.strftime('%a')}) → {schedule[d]}")
 
-# PDF export
-if st.session_state.generated_schedule:
-    edits = st.session_state.edits
-    if st.button("Export PDF"):
-        buf = export_calendar_pdf(st.session_state.generated_schedule, edits)
-        st.download_button("⬇️ Download PDF", data=buf, file_name="calendar.pdf")
+        # PDF export buttons
+        st.subheader("📄 Export PDF for selected month")
+        if st.button("🖨️ Create PDF for selected month only"):
+            schedule_single = multi_schedule[(selected_month_date.year, selected_month_date.month)]
+            filename = create_pdf_multi_months({(selected_month_date.year, selected_month_date.month): schedule_single})
+            with open(filename, "rb") as f:
+                st.download_button("⬇️ Download PDF", data=f, file_name=f"schedule_{selected_month_date.strftime('%B_%Y')}.pdf")
+
+        st.subheader("📄 Export PDF for all generated months")
+        if st.button("🖨️ Create PDF for all months"):
+            filename = create_pdf_multi_months(multi_schedule)
+            with open(filename, "rb") as f:
+                st.download_button("⬇️ Download PDF", data=f, file_name="schedule_all_months.pdf")
