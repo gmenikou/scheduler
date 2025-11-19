@@ -8,6 +8,7 @@ import os
 import colorsys
 import math
 import io
+from io import BytesIO
 
 # -------------------------------
 # Constants (original + extras)
@@ -478,6 +479,7 @@ if "generated_schedule" in st.session_state:
 
 else:
     st.info("Create and save an initial week, then press 'Generate Schedule' to view the calendar.")
+
 
 
 
