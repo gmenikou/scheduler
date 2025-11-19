@@ -41,7 +41,6 @@ def generate_schedule(initial_week, all_dates):
     schedule = {}
     week_list = [initial_week[d] for d in sorted(initial_week.keys())]
     initial_monday = min(initial_week.keys())
-
     current = initial_monday
     weeks = []
     while current <= max(all_dates):
@@ -61,7 +60,6 @@ def generate_schedule(initial_week, all_dates):
                 if d in all_dates:
                     schedule[d] = rotated_week[idx % 7]
             week_counter += 1
-
     schedule = {d: doc for d, doc in schedule.items() if d >= initial_monday}
     return schedule
 
@@ -78,11 +76,23 @@ def generate_doctor_colors(doctor_list):
     for i, doc in enumerate(doctor_list):
         hue = i / n
         r, g, b = colorsys.hsv_to_rgb(hue, 0.35, 0.95)
-        hexcol = '#{:02x}{:02x}{:02x}'.format(int(r*255), int(g*255), int(b*255))
-        colors[doc] = hexcol
+        colors[doc] = '#{:02x}{:02x}{:02x}'.format(int(r*255), int(g*255), int(b*255))
     return colors
 
 DOCTOR_COLORS = generate_doctor_colors(DOCTORS)
+
+# -------------------------------
+# Balance table
+# -------------------------------
+def calculate_balance(schedule):
+    balance = {doc: {"Fri":0, "Sat":0, "Sun":0} for doc in DOCTORS}
+    for d, doc in schedule.items():
+        if doc in balance:
+            wd = d.weekday()
+            if wd == 4: balance[doc]["Fri"] += 1
+            elif wd == 5: balance[doc]["Sat"] += 1
+            elif wd == 6: balance[doc]["Sun"] += 1
+    return balance
 
 # -------------------------------
 # PDF Export
@@ -91,188 +101,180 @@ class CalendarPDF(FPDF):
     def header(self):
         pass
 
-    def add_calendar_page(self, year, month, schedule, edits=None):
-        if edits is None:
-            edits = {}
+    def add_calendar_page(self, year, month, schedule):
         self.add_page()
-        self.add_font("DejaVu", "", "DejaVuSans.ttf", uni=True)
-        self.set_font("DejaVu", "B", 16)
+        try:
+            self.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
+            self.set_font("DejaVu", "B", 14)
+        except:
+            self.set_font("Arial", "B", 14)
         self.cell(0, 10, f"{calendar.month_name[month]} {year}", 0, 1, "C")
         self.ln(4)
-
-        col_w, row_h = 26, 16
-        left_margin = (self.w - col_w * 7) / 2
+        col_width = 26
+        row_height = 16
+        left_margin = (self.w - (col_width * 7)) / 2
         self.set_x(left_margin)
-
-        self.set_font("DejaVu", "B", 10)
+        self.set_font("", "", 10)
+        # Weekday header
         for d in ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]:
-            self.cell(col_w, row_h, d, 1, 0, "C")
-        self.ln(row_h)
+            self.cell(col_width, row_height, d, 1, 0, "C")
+        self.ln(row_height)
         self.set_x(left_margin)
-
-        self.set_font("DejaVu", "", 9)
         cal = calendar.Calendar(firstweekday=0)
         for week in cal.monthdatescalendar(year, month):
             for d in week:
                 if d.month != month:
-                    self.set_fill_color(240,240,240)
-                    self.cell(col_w,row_h,"",1,0,"C",1)
+                    self.cell(col_width, row_height, "", 1, 0, "C")
                 else:
-                    doc_base = schedule.get(d,"")
-                    doc_edit = edits.get(d, doc_base)
-                    text = f"{doc_edit}" if doc_edit else ""
-                    if d in edits and edits[d]!=doc_base:
-                        text += " ✎"
-                    hexcol = DOCTOR_COLORS.get(doc_edit,"#ffffff")
-                    r = int(hexcol[1:3],16)
-                    g = int(hexcol[3:5],16)
-                    b = int(hexcol[5:7],16)
-                    self.set_fill_color(r,g,b)
-                    self.multi_cell(col_w,row_h/2,f"{d.day}\n{text}",1,"C",fill=True, ln=3)
-            self.ln(row_h)
+                    doc = schedule.get(d, "")
+                    text = f"{d.day}\n{doc}"
+                    if doc in DOCTOR_COLORS:
+                        hexcol = DOCTOR_COLORS[doc]
+                        r=int(hexcol[1:3],16)
+                        g=int(hexcol[3:5],16)
+                        b=int(hexcol[5:7],16)
+                        self.set_fill_color(r,g,b)
+                    else:
+                        self.set_fill_color(224,224,224)
+                    self.multi_cell(col_width,row_height,text,1,'C',fill=True)
+            self.ln(row_height)
             self.set_x(left_margin)
 
-def export_calendar_pdf(all_schedules, edits_map):
+def export_calendar_pdf(schedule):
     pdf = CalendarPDF()
-    for (year, month), schedule in sorted(all_schedules.items()):
-        month_edits = edits_map.get((year, month), {})
-        pdf.add_calendar_page(year, month, schedule, month_edits)
+    months = sorted(set((d.year,d.month) for d in schedule))
+    for year, month in months:
+        month_sched = {d:doc for d,doc in schedule.items() if d.year==year and d.month==month}
+        pdf.add_calendar_page(year, month, month_sched)
     buf = io.BytesIO()
     pdf.output(buf)
     buf.seek(0)
     return buf
 
 # -------------------------------
-# Balance Table
+# Calendar Display
 # -------------------------------
-def calculate_balance(flat_schedule):
-    balance = {doc: {"Fri":0,"Sat":0,"Sun":0} for doc in DOCTORS}
-    for d, doc in flat_schedule.items():
-        if doc not in DOCTORS:
-            continue
-        weekday = d.weekday()
-        if weekday==4: balance[doc]["Fri"]+=1
-        elif weekday==5: balance[doc]["Sat"]+=1
-        elif weekday==6: balance[doc]["Sun"]+=1
-    return balance
+def display_calendar(schedule, edits, selected_doctor, dark_mode):
+    months = sorted(set((d.year,d.month) for d in schedule))
+    for year, month in months:
+        st.markdown(f"### {calendar.month_name[month]} {year}")
+        cal = calendar.Calendar(firstweekday=0)
+        month_weeks = cal.monthdatescalendar(year, month)
+        # Weekday header
+        cols = st.columns(7)
+        for i, dname in enumerate(["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]):
+            cols[i].markdown(f"**{dname}**")
+        # Grid
+        for week in month_weeks:
+            cols = st.columns(7)
+            for i, day in enumerate(week):
+                with cols[i]:
+                    if day.month != month:
+                        st.markdown("<div style='height:70px;background:#f0f0f0'></div>",unsafe_allow_html=True)
+                        continue
+                    doc = edits.get(day, schedule.get(day,""))
+                    bg = DOCTOR_COLORS.get(doc,"#ffffff") if doc else "#ffffff"
+                    text_color="#000000"
+                    try:
+                        r=int(bg[1:3],16); g=int(bg[3:5],16); b=int(bg[5:7],16)
+                        lum=0.2126*r+0.7152*g+0.0722*b
+                        if dark_mode and lum<140: text_color="#ffffff"
+                    except: text_color="#ffffff"
+                    st.markdown(f"""
+                    <div style='
+                    border-radius:8px; padding:6px; min-height:70px; display:flex; flex-direction:column; justify-content:space-between; align-items:center;
+                    background:{bg}; color:{text_color}; border:1px solid #ccc'>
+                    <div style='font-weight:700'>{day.day}</div>
+                    <div style='font-size:12px;white-space:pre-wrap'>{doc}</div>
+                    </div>
+                    """,unsafe_allow_html=True)
+                    btn1, btn2 = st.columns([1,1])
+                    if btn1.button("Assign", key=f"assign_{day}"):
+                        if selected_doctor: edits[day]=selected_doctor; st.experimental_rerun()
+                    if btn2.button("Clear", key=f"clear_{day}"):
+                        edits[day] = ""; st.experimental_rerun()
+        st.markdown("<br>",unsafe_allow_html=True)
 
 # -------------------------------
-# Streamlit App
+# Streamlit UI
 # -------------------------------
-st.set_page_config(layout="wide", page_title="Programma Giatron")
-
-st.title("📅 Programma Giatron – Backwards Rotation (Calendar Grid)")
+st.set_page_config(layout="wide", page_title="Programma Giatron Calendar")
+st.title("📅 Programma Giatron – Calendar View")
 
 if "initial_week" not in st.session_state: st.session_state.initial_week = load_initial_week()
 if "start_date" not in st.session_state: st.session_state.start_date = None
 if "edits" not in st.session_state: st.session_state.edits = {}
-if "generated_schedule" not in st.session_state: st.session_state.generated_schedule = None
+if "generated_schedule" not in st.session_state: st.session_state.generated_schedule = {}
+if "dark_mode" not in st.session_state: st.session_state.dark_mode = False
 
-# -------------------------------
-# Reset / Controls
-# -------------------------------
-col1,col2,col3 = st.columns([1,2,1])
+# Top panel
+col1, col2 = st.columns([1,2])
 with col1:
     if st.button("🔄 Reset All"):
-        for k in list(st.session_state.keys()): del st.session_state[k]
+        st.session_state.clear()
         if os.path.exists(INIT_FILE): os.remove(INIT_FILE)
-        st.success("Reset done.")
+        st.success("Session cleared")
         st.experimental_rerun()
+    st.checkbox("🌙 Dark Mode", value=st.session_state.dark_mode, key="dark_mode")
 
-# -------------------------------
-# Initial Week
-# -------------------------------
-st.subheader("1️⃣ Select initial week date")
-selected_date = st.date_input("Choose a date:", datetime.date.today() if st.session_state.start_date is None else st.session_state.start_date)
-week_dates = get_week_dates(selected_date)
-st.write("The week is:")
-cols = st.columns(7)
-for i, d in enumerate(week_dates):
-    cols[i].write(f"**{d.strftime('%a %d/%m/%Y')}**")
-
-
-st.subheader("2️⃣ Assign doctors for first week")
-if st.session_state.initial_week is None:
-    initial_week = {}
-    cols = st.columns(7)
-    for i,d in enumerate(week_dates):
-        with cols[i]:
-            doc = st.selectbox(d.strftime("%a\n%d/%m"), DOCTORS, key=f"manual_{d}")
-            initial_week[d]=doc
-    if st.button("💾 Save initial week"):
-        st.session_state.initial_week = initial_week
-        st.session_state.start_date = selected_date
-        save_initial_week(initial_week)
-        st.success("Initial week saved!")
-else:
-    st.info("Initial week already saved. Use Reset to change it.")
-
-# -------------------------------
-# Generate Schedule for a Range
-# -------------------------------
-st.subheader("3️⃣ Generate schedule for a date range")
-start_gen = st.date_input("Start date:", datetime.date.today())
-end_gen = st.date_input("End date:", datetime.date.today() + datetime.timedelta(days=60))
-if st.button("Generate Schedule") and st.session_state.initial_week:
-    st.session_state.generated_schedule = generate_schedule_for_range(st.session_state.initial_week, start_gen, end_gen)
-    st.session_state.edits = {}
-    st.success("Schedule generated!")
-
-# -------------------------------
-# Display Calendar + Balance Table
-# -------------------------------
-if st.session_state.generated_schedule:
-    flat_schedule = {d: doc for s in st.session_state.generated_schedule.values() for d,doc in s.items()}
-    balance = calculate_balance(flat_schedule)
-
-    col_left, col_right = st.columns([1,3])
-    with col_left:
-        st.subheader("⚖️ Balance Table")
-        st.write("Number of Fri/Sat/Sun per doctor:")
+# Left panel balance table
+col_left, col_right = st.columns([1,3])
+with col_left:
+    if st.session_state.generated_schedule:
+        flat_sched = {d:doc for s in st.session_state.generated_schedule.values() for d,doc in s.items()}
+        balance = calculate_balance(flat_sched)
+        st.subheader("📝 Balance Table (Fri/Sat/Sun)")
         for doc in DOCTORS:
-            bg = DOCTOR_COLORS.get(doc, "#ffffff")
-            st.markdown(f"<div style='padding:6px;margin-bottom:4px;background:{bg};border-radius:6px'><b>{doc}</b>: Fri {balance[doc]['Fri']} | Sat {balance[doc]['Sat']} | Sun {balance[doc]['Sun']}</div>", unsafe_allow_html=True)
-    
-    with col_right:
-        selected_doctor = st.selectbox("Select doctor to assign:", [""]+DOCTORS)
-        months = sorted(st.session_state.generated_schedule.keys())
-        for (year, month) in months:
-            schedule = st.session_state.generated_schedule[(year,month)]
-            month_edits = {d:st.session_state.edits[d] for d in schedule if d in st.session_state.edits}
-            st.markdown(f"### 🗓️ {calendar.month_name[month]} {year}")
-            # Display calendar grid
-            cal = calendar.Calendar(firstweekday=0)
-            month_weeks = cal.monthdatescalendar(year, month)
-            # Weekday header
-            cols = st.columns(7)
-            for i,dname in enumerate(["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]): cols[i].write(f"**{dname}**")
-            for week in month_weeks:
-                cols = st.columns(7)
-                for i,d in enumerate(week):
-                    cell_col = cols[i]
-                    doc_base = schedule.get(d,"")
-                    doc_edit = st.session_state.edits.get(d, doc_base)
-                    is_edited = d in st.session_state.edits and st.session_state.edits[d]!=doc_base
-                    text = f"{d.day}\n{doc_edit}" + (" ✎" if is_edited else "")
-                    bg = DOCTOR_COLORS.get(doc_edit,"#ffffff") if doc_edit else "#f0f0f0"
-                    border = "3px solid #000" if is_edited else "1px solid #ccc"
-                    cell_col.markdown(f"<div style='background:{bg};border-radius:6px;border:{border};padding:6px;text-align:center;'>{text}</div>",unsafe_allow_html=True)
-                    # Assign / Clear side by side
-                    c1,c2 = cell_col.columns([1,1])
-                    if c1.button("Assign", key=f"assign_{d}"):
-                        if selected_doctor: st.session_state.edits[d]=selected_doctor; st.experimental_rerun()
-                    if c2.button("Clear", key=f"clear_{d}"):
-                        st.session_state.edits[d] = ""
-                        st.experimental_rerun()
+            st.markdown(f"<div style='background:{DOCTOR_COLORS[doc]}; padding:4px; border-radius:4px'><b>{doc}</b>: Fri {balance[doc]['Fri']}, Sat {balance[doc]['Sat']}, Sun {balance[doc]['Sun']}</div>", unsafe_allow_html=True)
 
-# -------------------------------
-# PDF Export
-# -------------------------------
-if st.session_state.generated_schedule:
-    edits_map = {}
-    for d,doc in st.session_state.edits.items():
-        edits_map.setdefault((d.year,d.month),{})[d]=doc
-    if st.button("Export PDF"):
-        buf = export_calendar_pdf(st.session_state.generated_schedule, edits_map)
-        st.download_button("⬇️ Download PDF", data=buf, file_name="schedule.pdf")
+with col_right:
+    # Step1 initial week
+    st.subheader("1️⃣ Select initial week date")
+    sel_date = st.date_input("Choose a date:", datetime.date.today() if st.session_state.start_date is None else st.session_state.start_date)
+    week_dates = get_week_dates(sel_date)
+    st.write("Week:", ", ".join([d.strftime("%a %d/%m/%Y") for d in week_dates]))
 
+    # Step2 assign doctors first week
+    st.subheader("2️⃣ Assign doctors for first week")
+    if st.session_state.initial_week is None:
+        init_week={}
+        cols = st.columns(7)
+        for i,d in enumerate(week_dates):
+            with cols[i]:
+                init_week[d]=st.selectbox(d.strftime("%a\n%d/%m"), DOCTORS, key=f"manual_{d}")
+        if st.button("💾 Save initial week"):
+            st.session_state.initial_week=init_week
+            st.session_state.start_date=sel_date
+            save_initial_week(init_week)
+            st.success("Initial week saved")
+    else:
+        st.info("Initial week saved. Use Reset to change.")
+        for d in sorted(st.session_state.initial_week.keys()):
+            st.write(f"{d.strftime('%d/%m/%Y')} → {st.session_state.initial_week[d]}")
+
+    # Step3 generate schedule for range
+    st.subheader("3️⃣ Generate schedule for date range")
+    start_gen = st.date_input("Start date", datetime.date.today())
+    end_gen = st.date_input("End date", datetime.date.today()+datetime.timedelta(days=30))
+    if st.button("Generate Schedule"):
+        sched = generate_schedule_for_range(st.session_state.initial_week, start_gen, end_gen)
+        # split by month
+        month_dict={}
+        for d,doc in sched.items():
+            month_dict.setdefault((d.year,d.month),{})[d]=doc
+        st.session_state.generated_schedule=month_dict
+        st.session_state.edits={}
+        st.success("Schedule generated")
+
+    # Calendar view
+    if st.session_state.generated_schedule:
+        selected_doc = st.selectbox("Select doctor to assign:", [""]+DOCTORS, index=0)
+        edits = st.session_state.edits
+        # merge all months into single schedule for display
+        merged_sched={d:doc for m,s in st.session_state.generated_schedule.items() for d,doc in s.items()}
+        display_calendar(merged_sched, edits, selected_doc if selected_doc else None, st.session_state.dark_mode)
+
+        if st.button("Export PDF"):
+            merged_sched={d:edits.get(d,doc) for d,doc in merged_sched.items()}
+            buf = export_calendar_pdf(merged_sched)
+            st.download_button("⬇️ Download PDF", data=buf, file_name="schedule.pdf")
