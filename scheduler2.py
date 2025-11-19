@@ -66,15 +66,17 @@ def generate_schedule(initial_week, all_dates):
     schedule = {d: doc for d, doc in schedule.items() if d >= initial_monday}
     return schedule
 
+# -------------------------------
+# Chronological multi-month generator
+# -------------------------------
 def generate_schedule_for_months(initial_week, start_month, num_months=1):
     all_schedules = {}
-    # Use a datetime.date as the month iterator
     current = start_month
     for _ in range(num_months):
         year = current.year
         month = current.month
         num_days = calendar.monthrange(year, month)[1]
-        month_dates = [datetime.date(year, month, d) for d in range(1, num_days+1)]
+        month_dates = [datetime.date(year, month, d) for d in range(1, num_days + 1)]
         schedule = generate_schedule(initial_week, month_dates)
         all_schedules[(year, month)] = schedule
         # move to next month
@@ -83,7 +85,6 @@ def generate_schedule_for_months(initial_week, start_month, num_months=1):
         else:
             current = datetime.date(year, month+1, 1)
     return all_schedules
-
 
 # -------------------------------
 # Doctor color generator
@@ -288,6 +289,7 @@ if "generated_schedule" in st.session_state:
             st.download_button("⬇️ Download Calendar PDF", data=buf, file_name="calendar.pdf")
 
     with preview_col:
+        # **Sort months chronologically before display**
         months = sorted(st.session_state.generated_schedule.items(), key=lambda x: (x[0][0], x[0][1]))
         col_blocks = [st.container(), st.container()]
         for idx, ((year, month), schedule) in enumerate(months):
@@ -301,4 +303,3 @@ if "generated_schedule" in st.session_state:
         for d in sorted(st.session_state.edits.keys()):
             val = st.session_state.edits[d]
             st.write(f"{d.strftime('%d/%m/%Y')} → {val if val else '(cleared)'}")
-
