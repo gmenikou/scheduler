@@ -186,7 +186,10 @@ st.subheader("1️⃣ Select initial week date")
 selected_date = st.date_input("Choose a date:", datetime.date.today() if st.session_state.start_date is None else st.session_state.start_date)
 week_dates = get_week_dates(selected_date)
 st.write("The week is:")
-st.columns([st.write(f"**{d.strftime('%a %d/%m/%Y')}**") for d in week_dates])
+cols = st.columns(7)
+for i, d in enumerate(week_dates):
+    cols[i].write(f"**{d.strftime('%a %d/%m/%Y')}**")
+
 
 st.subheader("2️⃣ Assign doctors for first week")
 if st.session_state.initial_week is None:
@@ -272,3 +275,4 @@ if st.session_state.generated_schedule:
     if st.button("Export PDF"):
         buf = export_calendar_pdf(st.session_state.generated_schedule, edits_map)
         st.download_button("⬇️ Download PDF", data=buf, file_name="schedule.pdf")
+
