@@ -298,6 +298,13 @@ st.title("📅 Programma Giatron – Backwards Rotation (Calendar Grid)")
 # Session state initializers
 if "initial_week" not in st.session_state:
     st.session_state.initial_week = load_initial_week()
+# Auto-restore start_date if initial_week was loaded from file
+if "start_date" not in st.session_state:
+    if st.session_state.initial_week:
+        st.session_state.start_date = min(st.session_state.initial_week.keys())
+    else:
+        st.session_state.start_date = None
+
 if "start_date" not in st.session_state:
     st.session_state.start_date = None
 if "edits" not in st.session_state:
@@ -471,4 +478,5 @@ if "generated_schedule" in st.session_state:
 
 else:
     st.info("Create and save an initial week, then press 'Generate Schedule' to view the calendar.")
+
 
