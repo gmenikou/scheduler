@@ -82,37 +82,42 @@ class PDFCalendar(FPDF):
         self.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
         self.add_font('DejaVu', 'B', 'DejaVuSans-Bold.ttf', uni=True)
 
-    def create_calendar(self, schedule, title="ΠΡΟΓΡΑΜΜΑ ΓΙΑΤΡΩΝ"):
+    def create_calendar(self, schedule_dict, title="ΠΡΟΓΡΑΜΜΑ ΓΙΑΤΡΩΝ"):
         self.add_page()
         self.set_font("DejaVu", 'B', 16)
         self.cell(0, 12, title, 0, 1, "C")
         self.ln(4)
         self.set_font("DejaVu", '', 12)
 
-        # Sort schedule by date
-        for d in sorted(schedule.keys()):
-            weekday = d.strftime("%a")
-            doctor = schedule[d]
-            color = DOCTOR_COLORS.get(doctor, "#FFFFFF")
-            r, g, b = tuple(int(color.lstrip("#")[i:i+2], 16) for i in (0, 2 ,4))
-            self.set_fill_color(r, g, b)
-            self.cell(0, 8, f"{d.strftime('%d/%m/%Y')} ({weekday}) → {doctor}", 0, 1, fill=True)
+        for month_str in schedule_dict:
+            self.set_font("DejaVu", 'B', 14)
+            self.cell(0, 10, f"📅 {month_str}", 0, 1)
+            self.set_font("DejaVu", '', 12)
+            schedule = schedule_dict[month_str]
+            for d in sorted(schedule.keys()):
+                weekday = d.strftime("%a")
+                doctor = schedule[d]
+                color = DOCTOR_COLORS.get(doctor, "#FFFFFF")
+                r, g, b = tuple(int(color.lstrip("#")[i:i+2], 16) for i in (0, 2 ,4))
+                self.set_fill_color(r, g, b)
+                self.cell(0, 8, f"{d.strftime('%d/%m/%Y')} ({weekday}) → {doctor}", 0, 1, fill=True)
 
-        # Balance table
-        balance = compute_balance(schedule)
-        self.ln(6)
-        self.set_font("DejaVu", 'B', 14)
-        self.cell(0, 10, "📊 Balance Table", 0, 1)
-        self.set_font("DejaVu", '', 12)
-        for doc, count in balance.items():
-            color = DOCTOR_COLORS.get(doc, "#FFFFFF")
-            r, g, b = tuple(int(color.lstrip("#")[i:i+2], 16) for i in (0, 2 ,4))
-            self.set_fill_color(r, g, b)
-            self.cell(0, 8, f"{doc} → {count} shifts", 0, 1, fill=True)
+            # Month balance
+            balance = compute_balance(schedule)
+            self.ln(2)
+            self.set_font("DejaVu", 'B', 12)
+            self.cell(0, 8, "Balance Table", 0, 1)
+            self.set_font("DejaVu", '', 12)
+            for doc, count in balance.items():
+                color = DOCTOR_COLORS.get(doc, "#FFFFFF")
+                r, g, b = tuple(int(color.lstrip("#")[i:i+2], 16) for i in (0, 2 ,4))
+                self.set_fill_color(r, g, b)
+                self.cell(0, 6, f"{doc} → {count} shifts", 0, 1, fill=True)
+            self.ln(4)
 
-def export_calendar_pdf(schedule, filename="schedule.pdf"):
+def export_calendar_pdf(schedule_dict, filename="schedule.pdf"):
     pdf = PDFCalendar()
-    pdf.create_calendar(schedule)
+    pdf.create_calendar(schedule_dict)
     pdf.output(filename)
     return filename
 
@@ -171,43 +176,65 @@ with st.sidebar:
 
     # Step 3: Schedule generation
     if st.session_state.initial_week:
-        st.subheader("3️⃣ Schedule Range")
+        st.subheader("3️⃣ Schedule Range / Months")
         start_date = st.date_input("Start date:", min_value=min(week_dates))
-        end_date = st.date_input("End date:", min_value=start_date)
+        months_to_generate = st.number_input("Number of months to generate:", min_value=1, value=1)
         if st.button("Generate Schedule"):
-            schedule = generate_schedule(st.session_state.initial_week, start_date, end_date)
-            st.session_state.generated_schedule = schedule
+            all_schedules = {}
+            current_start = start_date.replace(day=1)
+            for _ in range(months_to_generate):
+                year = current_start.year
+                month = current_start.month
+                num_days = calendar.monthrange(year, month)[1]
+                month_start = datetime.date(year, month, 1)
+                month_end = datetime.date(year, month, num_days)
+                sched = generate_schedule(st.session_state.initial_week, month_start, month_end)
+                month_str = current_start.strftime("%B %Y")
+                all_schedules[month_str] = sched
+                # next month
+                next_month = month + 1 if month < 12 else 1
+                next_year = year + 1 if next_month == 1 else year
+                current_start = datetime.date(next_year, next_month, 1)
+            st.session_state.generated_schedule = all_schedules
             st.success("Schedule generated!")
 
 # -------------------------------
 # Main Panel: Editable Schedule
 # -------------------------------
-st.subheader("📋 Schedule & Balance Table (Editable)")
+st.subheader("📋 Schedule & Balance Table (Editable & Color-coded)")
 
-if "generated_schedule" in st.session_state:
-    schedule = st.session_state.generated_schedule
+if "generated_schedule" in st.session_state and st.session_state.generated_schedule:
+    for month_str, schedule in st.session_state.generated_schedule.items():
+        st.write(f"### 📅 {month_str}")
+        # Convert schedule to DataFrame
+        df = pd.DataFrame({
+            "Date": [d.strftime("%d/%m/%Y (%a)") for d in schedule.keys()],
+            "Doctor": [schedule[d] for d in schedule.keys()]
+        })
 
-    # Convert schedule to DataFrame for editable display
-    df = pd.DataFrame({
-        "Date": [d.strftime("%d/%m/%Y (%a)") for d in schedule.keys()],
-        "Doctor": [schedule[d] for d in schedule.keys()]
-    })
+        # Apply color coding
+        def color_doctor(val):
+            color = DOCTOR_COLORS.get(val, "#FFFFFF")
+            return f'background-color: {color}'
 
-    # Editable table
-    edited_df = st.experimental_data_editor(df, num_rows="dynamic", use_container_width=True)
+        styled_df = df.style.applymap(color_doctor, subset=["Doctor"])
+        st.dataframe(styled_df, use_container_width=True)
 
-    # Update schedule with edited doctors
-    for idx, row in edited_df.iterrows():
-        d_str = row["Date"].split(" ")[0]  # extract dd/mm/yyyy
-        d = datetime.datetime.strptime(d_str, "%d/%m/%Y").date()
-        st.session_state.generated_schedule[d] = row["Doctor"]
+        # Editable table
+        edited_df = st.experimental_data_editor(df, num_rows="dynamic", use_container_width=True)
+        for idx, row in edited_df.iterrows():
+            d_str = row["Date"].split(" ")[0]  # extract dd/mm/yyyy
+            d = datetime.datetime.strptime(d_str, "%d/%m/%Y").date()
+            schedule[d] = row["Doctor"]
 
-    # Balance table
-    balance = compute_balance(st.session_state.generated_schedule)
-    st.write("### Balance Table")
-    st.table(balance)
+        # Balance table
+        balance = compute_balance(schedule)
+        st.write("### Balance Table")
+        st.table(balance)
 
     # PDF export
-    if st.button("🖨️ Export PDF"):
+    if st.button("🖨️ Export PDF for All Months"):
         export_calendar_pdf(st.session_state.generated_schedule)
         st.success("PDF created! Check app folder for schedule.pdf")
+else:
+    st.info("Generate a schedule first to see it here.")
