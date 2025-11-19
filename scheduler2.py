@@ -218,14 +218,16 @@ with right_col:
     with col2:
         end_month = st.date_input("End date", value=st.session_state.start_date + datetime.timedelta(days=30))
 
-    generate_clicked = st.button("🗓️ Generate Schedule")
-    if generate_clicked:
+    # ✅ Generate schedule
+    if st.button("🗓️ Generate Schedule"):
         st.session_state.generated_schedule = generate_schedule(
             st.session_state.initial_week,
             start_month,
             end_month
         )
-        # Recalculate balance table for all months immediately
+
+    # ✅ Recalculate balance immediately if schedule exists
+    if st.session_state.generated_schedule is not None:
         st.session_state.balance_df = compute_balance_fri_sat_sun(st.session_state.generated_schedule)
 
     # Display calendar
