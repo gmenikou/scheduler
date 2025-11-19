@@ -45,31 +45,28 @@ def generate_schedule(initial_week, start_date, months=1):
     # Map each doctor to their weekday (0=Mon ... 6=Sun) for initial week
     doctor_to_weekday = {doc: i for i, doc in enumerate(initial_week)}
 
-    # Save initial week
+    # Save initial week exactly
     for i, doc in enumerate(initial_week):
         schedule[start_date + datetime.timedelta(days=i)] = doc
 
+    # Start rotation from the week after initial
     current_week_start = start_date + datetime.timedelta(days=7)
 
-    # Determine last day
-    last_month = (start_date.month + months - 1) % 12 or 12
-    last_year = start_date.year + (start_date.month + months - 1) // 12
+    # Determine last day of the requested months
+    last_month = (start_date.month + months - 1 - 1) % 12 + 1
+    last_year = start_date.year + (start_date.month + months - 1 - 1) // 12
     last_day = datetime.date(last_year, last_month, calendar.monthrange(last_year, last_month)[1])
 
     while current_week_start <= last_day:
-        # Compute new weekday for each doctor: shift -2 days (backwards)
-        new_doctor_to_weekday = {}
-        for doc, wd in doctor_to_weekday.items():
-            new_wd = (wd - 2) % 7
-            new_doctor_to_weekday[doc] = new_wd
+        # Rotate each doctor -2 days from last week's weekday
+        new_doctor_to_weekday = {doc: (wd - 2) % 7 for doc, wd in doctor_to_weekday.items()}
 
-        # Assign doctors to the new week dates
+        # Assign doctors to this week
         for doc, wd in new_doctor_to_weekday.items():
             day_date = current_week_start + datetime.timedelta(days=wd)
             if day_date <= last_day:
                 schedule[day_date] = doc
 
-        # Prepare for next week
         doctor_to_weekday = new_doctor_to_weekday
         current_week_start += datetime.timedelta(days=7)
 
@@ -81,7 +78,7 @@ def generate_schedule(initial_week, start_date, months=1):
 def compute_balance_fri_sat_sun(schedule):
     counts = {doc: {"Friday":0, "Saturday":0, "Sunday":0} for doc in DOCTORS}
     for date, doc in schedule.items():
-        weekday = date.weekday()  # 0=Mon ... 6=Sun
+        weekday = date.weekday()
         if weekday == 4:
             counts[doc]["Friday"] += 1
         elif weekday == 5:
@@ -90,13 +87,14 @@ def compute_balance_fri_sat_sun(schedule):
             counts[doc]["Sunday"] += 1
     df = pd.DataFrame.from_dict(counts, orient="index")
     df.index.name = "Doctor"
-    return df.reset_index()
+    df = df.reset_index()
+    return df
 
 # ---------------------------------------------
 # 5. PDF EXPORT (CALENDAR GRID)
 # ---------------------------------------------
 def create_pdf(schedule, filename="schedule_calendar.pdf"):
-    pdf = FPDF(orientation='L', unit='mm', format='A4')  # Landscape
+    pdf = FPDF(orientation='L', unit='mm', format='A4')
     pdf.set_auto_page_break(auto=True, margin=15)
     
     last_month = None
@@ -160,6 +158,9 @@ def display_calendar(schedule):
                     if day.month == m_month:
                         doc = schedule.get(day, "")
                         color = '#%02x%02x%02x' % DOCTOR_COLORS.get(doc, (220,220,220))
+                        # Highlight Sat/Sun differently
+                        if day.weekday() >= 5:
+                            color = '#d9d9d9'
                         cols[i].markdown(
                             f"<div style='background-color:{color}; padding:6px; border-radius:4px; text-align:center'>"
                             f"<b>{day.day}</b><br>{doc}</div>", unsafe_allow_html=True)
@@ -192,7 +193,7 @@ with st.sidebar:
     st.subheader("📊 Doctor Weekend Balance Table")
     if st.session_state.generated_schedule:
         balance_df = compute_balance_fri_sat_sun(st.session_state.generated_schedule)
-        st.table(balance_df)
+        st.dataframe(balance_df, width=400, height=300)  # prevent wrapping
 
 # 1️⃣ Initial week selection
 st.subheader("1️⃣ Select a date in the initial week")
