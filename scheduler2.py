@@ -158,19 +158,27 @@ def display_month_calendar_enhanced(year, month, schedule, edits, selected_docto
     weekday_names = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
     for i, c in enumerate(cols):
         c.markdown(f"**{weekday_names[i]}**")
+    
     for week in month_weeks:
         cols = st.columns(7)
-        for i, d in enumerate(week):
-            col = cols[i]
+        for c_idx, d in enumerate(week):
+            cell_col = cols[c_idx]
             if d.month != month:
-                col.markdown("<div style='height:70px;background:#f6f6f6;border-radius:6px'></div>", unsafe_allow_html=True)
+                cell_col.markdown("<div style='height:70px;background:#f6f6f6;border-radius:6px'></div>", unsafe_allow_html=True)
                 continue
-            doc = merged.get(d,"")
-            bg = DOCTOR_COLORS.get(doc,"#e0e0e0") if doc else "#ffffff"
+
+            doc_base = schedule.get(d, "")
+            doc_edited = edits.get(d, doc_base)
+            edit_symbol = " ✎" if d in edits and edits[d] != doc_base else ""
+            bg = DOCTOR_COLORS.get(doc_edited, "#e0e0e0") if doc_edited else "#ffffff"
             text_color = "#000000"
-            display_text = f"{d.day}" + (f"\n{doc}" if doc else "")
+            if dark_mode:
+                r = int(bg[1:3],16); g=int(bg[3:5],16); b=int(bg[5:7],16)
+                if 0.2126*r + 0.7152*g + 0.0722*b < 140: text_color="#ffffff"
+            
+            display_text = f"{d.day}\n{doc_edited}{edit_symbol}" if doc_edited else f"{d.day}"
             key = f"cell_{year}_{month}_{d.isoformat()}"
-            with col:
+            with cell_col:
                 html = f"""
                 <div style="
                     border-radius:8px;
@@ -182,25 +190,24 @@ def display_month_calendar_enhanced(year, month, schedule, edits, selected_docto
                     align-items:center;
                     background:{bg};
                     color:{text_color};
-                    border:1px solid #ccc;
-                ">
-                    <div style="font-weight:700">{d.day}</div>
-                    <div style="font-size:12px;white-space:pre-wrap;">{doc if doc else ''}</div>
+                    border:1px solid #ccc;">
+                    <div style="font-weight:700">{display_text}</div>
                 </div>
                 """
                 st.write(html, unsafe_allow_html=True)
-                c1, c2 = st.columns([1,1])
+                c1,c2=st.columns([1,1])
                 if enable_assign:
                     if c1.button("Assign", key=key+"_assign"):
                         if selected_doctor:
-                            st.session_state.edits[d] = selected_doctor
+                            st.session_state.edits[d]=selected_doctor
                             st.experimental_rerun()
+                        else:
+                            st.warning("Select a doctor first.")
                 if c2.button("Clear", key=key+"_clear"):
-                    if d in st.session_state.edits:
-                        del st.session_state.edits[d]
-                    else:
-                        st.session_state.edits[d] = ""
+                    if d in st.session_state.edits: del st.session_state.edits[d]
+                    else: st.session_state.edits[d] = ""
                     st.experimental_rerun()
+
 
 # -------------------------------
 # Streamlit main app
@@ -299,4 +306,5 @@ if "generated_schedule" in st.session_state:
         for (year,month),schedule in sorted(st.session_state.generated_schedule.items()):
             month_edits={d:doc for d,doc in st.session_state.edits.items() if d.year==year and d.month==month}
             display_month_calendar_enhanced(year,month,schedule,month_edits,selected_doctor)
+
 
