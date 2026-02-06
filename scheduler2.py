@@ -190,7 +190,7 @@ with left_col:
             max_value=st.session_state.end_date
         )
         manual_doctor = st.selectbox("Select Doctor", DOCTORS)
-        if st.button("✅ Assign Doctor"):
+        if st.button("✅ Επιλογή Ακτινολόγου"):
             st.session_state.manual_assignments[manual_date] = manual_doctor
             st.session_state.schedule[manual_date] = manual_doctor
             st.session_state.balance = compute_balance(st.session_state.schedule)
@@ -199,18 +199,18 @@ with left_col:
     if st.session_state.balance is not None and not st.session_state.balance.empty:
         st.dataframe(st.session_state.balance,use_container_width=True,height=260)
 
-        if st.button("📄 Export Balance PDF"):
+        if st.button("📄 Εξαγωγή κατάστασης σε PDF"):
             pdf_file = create_balance_pdf(
                 st.session_state.balance,
                 st.session_state.start_date,
                 st.session_state.end_date
             )
             with open(pdf_file,"rb") as f:
-                st.download_button("⬇️ Download Balance PDF", f, file_name=pdf_file)
-        if st.button("🖨️ Export Calendar PDF"):
+                st.download_button("⬇️ Κατέβασε κατάσταση σε PDF", f, file_name=pdf_file)
+        if st.button("🖨️ Εξαγωγή ημερολογίου σε PDF"):
             pdf_file = create_calendar_pdf(st.session_state.schedule)
             with open(pdf_file,"rb") as f:
-                st.download_button("⬇️ Download Calendar PDF", f, file_name=pdf_file)
+                st.download_button("⬇️ Κατέβασε ημερολόγιο σε PDF", f, file_name=pdf_file)
 
 # ----------------------------
 # RIGHT: Initial Week + Schedule Generation
@@ -259,3 +259,4 @@ with right_col:
 
     if st.session_state.schedule:
         display_calendar(st.session_state.schedule)
+
