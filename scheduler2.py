@@ -60,13 +60,11 @@ def compute_balance(schedule):
     return df[["Doctor","Weekdays","Fri","Sat","Sun","Total"]]
 
 # ----------------------------
-# CALENDAR DISPLAY WITH COLOR + CLICKABLE ASSIGN
+# CALENDAR DISPLAY
 # ----------------------------
 def display_calendar(schedule):
     manual_assignments = st.session_state.get("manual_assignments", {})
-    clicked_date = None
     last_month = None
-
     for date in sorted(schedule.keys()):
         month_name = date.strftime("%B %Y")
         if month_name != last_month:
@@ -75,7 +73,6 @@ def display_calendar(schedule):
             headers = st.columns(7)
             for i,d in enumerate(["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]):
                 headers[i].markdown(f"**{d}**")
-
             cal = calendar.Calendar(firstweekday=0)
             weeks = cal.monthdatescalendar(date.year, date.month)
             for week in weeks:
@@ -85,24 +82,13 @@ def display_calendar(schedule):
                         doc = schedule.get(day,"")
                         icon = " ✏️" if day in manual_assignments else ""
                         color = '#%02x%02x%02x' % DOCTOR_COLORS.get(doc,(220,220,220))
-                        with cols[i]:
-                            st.markdown(
-                                f"<div style='background-color:{color}; padding:6px; border-radius:4px; text-align:center'>"
-                                f"<b>{day.day}</b><br>{doc}{icon}</div>",
-                                unsafe_allow_html=True
-                            )
-                            if st.button("🖊️", key=f"assign_{day}"):
-                                clicked_date = day
-
-    # Show assignment selectbox if a day was clicked
-    if clicked_date:
-        st.markdown(f"### Assign Doctor for {clicked_date.strftime('%d/%m/%Y')}")
-        doctor_choice = st.selectbox("Select Doctor", DOCTORS, key=f"assign_select_{clicked_date}")
-        if st.button("✅ Confirm Assignment", key=f"confirm_assign_{clicked_date}"):
-            st.session_state.manual_assignments[clicked_date] = doctor_choice
-            st.session_state.schedule[clicked_date] = doctor_choice
-            st.session_state.balance = compute_balance(st.session_state.schedule)
-            st.success(f"{doctor_choice} assigned to {clicked_date.strftime('%d/%m/%Y')}")
+                        cols[i].markdown(
+                            f"<div style='background-color:{color}; padding:6px; border-radius:4px; text-align:center'>"
+                            f"<b>{day.day}</b><br>{doc}{icon}</div>",
+                            unsafe_allow_html=True
+                        )
+                    else:
+                        cols[i].markdown("")
 
 # ----------------------------
 # PDF EXPORT
@@ -110,17 +96,20 @@ def display_calendar(schedule):
 def create_balance_pdf(df, start_date, end_date, filename="balance_summary.pdf"):
     pdf = FPDF(orientation="L", unit="mm", format="A4")
     pdf.add_page()
-    pdf.set_font("Arial","B",16)
+    pdf.add_font('DejaVu', '', 'fonts/DejaVuSans.ttf', uni=True)
+    pdf.add_font('DejaVu', 'B', 'fonts/DejaVuSans.ttf', uni=True)
+
+    pdf.set_font("DejaVu","B",16)
     pdf.cell(0,10,"Doctor Balance Summary",ln=True,align="C")
-    pdf.set_font("Arial","",12)
+    pdf.set_font("DejaVu","",12)
     pdf.cell(0,8,f"Period: {start_date.strftime('%d/%m/%Y')} – {end_date.strftime('%d/%m/%Y')}",ln=True,align="C")
     pdf.ln(6)
-    col_widths = [50,30,20,20,20,25]  # Weekdays + Fri + Sat + Sun + Total
-    pdf.set_font("Arial","B",12)
+    col_widths = [50,30,20,20,20,25]
+    pdf.set_font("DejaVu","B",12)
     for h,w in zip(df.columns,col_widths):
         pdf.cell(w,8,h,border=1,align="C")
     pdf.ln()
-    pdf.set_font("Arial","",12)
+    pdf.set_font("DejaVu","",12)
     for _, row in df.iterrows():
         for val,w in zip(row,col_widths):
             pdf.cell(w,8,str(val),border=1,align="C")
@@ -130,24 +119,27 @@ def create_balance_pdf(df, start_date, end_date, filename="balance_summary.pdf")
 
 def create_calendar_pdf(schedule, filename="calendar.pdf"):
     pdf = FPDF(orientation="L", unit="mm", format="A4")
-    pdf.set_font("Arial","",12)
+    pdf.add_font('DejaVu', '', 'fonts/DejaVuSans.ttf', uni=True)
+    pdf.add_font('DejaVu', 'B', 'fonts/DejaVuSans.ttf', uni=True)
+
+    pdf.set_font("DejaVu","",12)
     manual_assignments = st.session_state.get("manual_assignments", {})
     last_month = None
     for date in sorted(schedule.keys()):
         month_name = date.strftime("%B %Y")
         if month_name != last_month:
             pdf.add_page()
-            pdf.set_font("Arial","B",16)
+            pdf.set_font("DejaVu","B",16)
             pdf.cell(0,10,month_name,ln=True,align="C")
             pdf.ln(4)
-            pdf.set_font("Arial","B",12)
+            pdf.set_font("DejaVu","B",12)
             col_width = 40
             for wd in ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]:
                 pdf.cell(col_width,8,wd,border=1,align="C")
             pdf.ln()
             cal = calendar.Calendar(firstweekday=0)
             weeks = cal.monthdatescalendar(date.year, date.month)
-            pdf.set_font("Arial","",12)
+            pdf.set_font("DejaVu","",12)
             for week in weeks:
                 for day in week:
                     if day.month == date.month:
@@ -168,7 +160,7 @@ def create_calendar_pdf(schedule, filename="calendar.pdf"):
 st.set_page_config(page_title="📅 Programma Giatron", layout="wide")
 st.title("📅 Programma Giatron – Backwards Rotation")
 
-# Initialize session state
+# Init session state
 if "manual_assignments" not in st.session_state:
     st.session_state.manual_assignments = {}
 for key in ["initial_week","start_date","end_date","schedule","balance"]:
@@ -177,10 +169,13 @@ for key in ["initial_week","start_date","end_date","schedule","balance"]:
 
 left_col, right_col = st.columns([0.35,0.65])
 
-# LEFT: Balance & manual assign
+# ----------------------------
+# LEFT: Balance & Manual Assignment
+# ----------------------------
 with left_col:
     st.subheader("📊 Balance (Range)")
 
+    # Manual assignment section
     if st.session_state.start_date and st.session_state.end_date:
         manual_date = st.date_input(
             "Pick a date to manually assign",
@@ -194,6 +189,7 @@ with left_col:
             st.session_state.balance = compute_balance(st.session_state.schedule)
             st.success(f"{manual_doctor} assigned to {manual_date.strftime('%d/%m/%Y')}")
 
+    # Display balance
     if st.session_state.balance is not None and not st.session_state.balance.empty:
         st.dataframe(st.session_state.balance,use_container_width=True,height=260)
 
@@ -210,11 +206,14 @@ with left_col:
             with open(pdf_file,"rb") as f:
                 st.download_button("⬇️ Download Calendar PDF", f, file_name=pdf_file)
 
-# RIGHT: Initial week and schedule
+# ----------------------------
+# RIGHT: Initial Week + Schedule Generation
+# ----------------------------
 with right_col:
     selected_date = st.date_input("Pick a date in the initial week:", datetime.date.today())
     week_dates = get_week_dates(selected_date)
 
+    # Default initial week order
     default_order = ["Elena","Eva","Maria","Athina","Alexandros","Elia","Christina"]
     initial_week = {}
     cols = st.columns(7)
@@ -252,5 +251,6 @@ with right_col:
         st.session_state.end_date = end_date
         st.session_state.balance = compute_balance(st.session_state.schedule)
 
+    # Display calendar
     if st.session_state.schedule:
         display_calendar(st.session_state.schedule)
