@@ -165,7 +165,7 @@ def create_calendar_pdf(schedule, filename="calendar.pdf"):
 # ----------------------------
 # STREAMLIT UI
 # ----------------------------
-st.set_page_config(page_title="📅 Πρόγραμμα εφημεριών", layout="wide")
+st.set_page_config(page_title="📅 Πρόγραμμα εφημεριών © Γιώργος Μενοίκου,PhD ", layout="wide")
 st.title("📅 Πρόγραμμα Εφημεριών")
 
 # Initialize session state
@@ -216,7 +216,7 @@ with left_col:
 # RIGHT: Initial Week + Schedule Generation
 # ----------------------------
 with right_col:
-    selected_date = st.date_input("Pick a date in the initial week:", datetime.date.today())
+    selected_date = st.date_input("Ημερομηνία έναρξης:", datetime.date.today())
     week_dates = get_week_dates(selected_date)
 
     # Default initial week order
@@ -259,6 +259,7 @@ with right_col:
 
     if st.session_state.schedule:
         display_calendar(st.session_state.schedule)
+
 
 
 
