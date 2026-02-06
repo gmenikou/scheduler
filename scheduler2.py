@@ -76,7 +76,9 @@ def compute_balance(schedule):
 # ----------------------------
 def display_calendar(schedule):
     last_month = None
-    manual_dates = st.session_state.get("manual_dates", set())
+    # normalize manual_dates to datetime.date
+    manual_dates = set(d if isinstance(d, datetime.date) else d.date()
+                       for d in st.session_state.get("manual_dates", set()))
     for date in sorted(schedule.keys()):
         month_name = date.strftime("%B %Y")
         if month_name != last_month:
@@ -163,9 +165,7 @@ with left_col:
     if st.session_state.balance is not None:
         st.dataframe(st.session_state.balance,use_container_width=True,height=260)
 
-        # ----------------------------
         # MANUAL ASSIGNMENT UNDER BALANCE
-        # ----------------------------
         st.markdown("### ✏️ Manual Assignment")
         manual_date = st.date_input(
             "Pick a date to manually assign",
@@ -176,10 +176,11 @@ with left_col:
         manual_doctor = st.selectbox("Select Doctor", DOCTORS, key="manual_doctor_select")
 
         if st.button("✅ Assign Doctor"):
-            st.session_state.schedule[manual_date] = manual_doctor
-            st.session_state.manual_dates.add(manual_date)
+            day_only = manual_date  # st.date_input returns datetime.date
+            st.session_state.schedule[day_only] = manual_doctor
+            st.session_state.manual_dates.add(day_only)
             st.session_state.balance = compute_balance(st.session_state.schedule)
-            st.success(f"{manual_doctor} assigned to {manual_date.strftime('%d/%m/%Y')}")
+            st.success(f"{manual_doctor} assigned to {day_only.strftime('%d/%m/%Y')}")
 
         # PDF export
         if st.button("📄 Export Balance PDF"):
@@ -196,9 +197,7 @@ with right_col:
     selected_date = st.date_input("Pick a date in the initial week:", datetime.date.today())
     week_dates = get_week_dates(selected_date)
 
-    # ----------------------------
     # INITIAL WEEK SELECTBOXES WITH DEFAULT ORDER
-    # ----------------------------
     default_order = ["Elena", "Eva", "Maria", "Athina", "Alexandros", "Elia", "Christina"]
 
     initial_week = {}
@@ -234,6 +233,6 @@ with right_col:
         )
         st.session_state.balance = compute_balance(st.session_state.schedule)
 
-    # ✅ DISPLAY CALENDAR IF SCHEDULE EXISTS
+    # DISPLAY CALENDAR IF SCHEDULE EXISTS
     if st.session_state.schedule is not None:
         display_calendar(st.session_state.schedule)
