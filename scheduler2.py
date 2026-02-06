@@ -7,16 +7,16 @@ from fpdf import FPDF
 # ----------------------------
 # CONSTANTS
 # ----------------------------
-DOCTORS = ["Elena", "Eva", "Maria", "Athina", "Alexandros", "Elia", "Christina"]
+DOCTORS = ["Έλενα", "Εύα", "Μαρία", "Αθηνά", "Αλέξανδρος", "Έλια", "Χριστίνα"]
 
 DOCTOR_COLORS = {
-    "Elena": (255, 200, 200),
-    "Eva": (200, 255, 200),
-    "Maria": (200, 200, 255),
-    "Athina": (255, 255, 200),
-    "Alexandros": (255, 200, 255),
-    "Elia": (200, 255, 255),
-    "Christina": (220, 220, 220)
+    "Έλενα": (255, 200, 200),
+    "Εύα": (200, 255, 200),
+    "Μαρία": (200, 200, 255),
+    "Αθηνά": (255, 255, 200),
+    "Αλέξανδρος": (255, 200, 255),
+    "Έλια": (200, 255, 255),
+    "Χριστίνα": (220, 220, 220)
 }
 
 # ----------------------------
@@ -220,7 +220,7 @@ with right_col:
     week_dates = get_week_dates(selected_date)
 
     # Default initial week order
-    default_order = ["Elena","Eva","Maria","Athina","Alexandros","Elia","Christina"]
+    default_order = ["Έλενα","Εύα","Μαρία","Αθηνά","Αλέξανδρος","Έλια","Χριστίνα"]
     initial_week = {}
     cols = st.columns(7)
     for i,d in enumerate(week_dates):
@@ -259,5 +259,6 @@ with right_col:
 
     if st.session_state.schedule:
         display_calendar(st.session_state.schedule)
+
 
 
