@@ -3,6 +3,7 @@ import datetime
 import calendar
 import pandas as pd
 from fpdf import FPDF
+import os
 
 # ----------------------------
 # 1. CONSTANTS
@@ -33,7 +34,6 @@ def generate_schedule(initial_week, start_date, end_date):
     schedule = {}
     doctor_to_weekday = {doc: i for i, doc in enumerate(initial_week)}
 
-    # First week
     for i, doc in enumerate(initial_week):
         schedule[start_date + datetime.timedelta(days=i)] = doc
 
@@ -65,7 +65,7 @@ def compute_balance(schedule):
         elif wd == 6: counts[doc]["Sun"] += 1
 
     df = pd.DataFrame.from_dict(counts, orient="index").reset_index()
-    df = df.rename(columns={"index": "Doctor"})
+    df = df.rename(columns={"index":"Doctor"})
     df["Weekdays"] = df["Mon"] + df["Tue"] + df["Wed"] + df["Thu"]
     df["Weekend"] = df["Fri"] + df["Sat"] + df["Sun"]
     df["Total"] = df["Weekdays"] + df["Weekend"]
@@ -93,7 +93,7 @@ def display_calendar(schedule):
                 cols = st.columns(7)
                 for i, day in enumerate(week):
                     if day.month == date.month:
-                        doc = schedule.get(day, "")
+                        doc = schedule.get(day,"")
                         color = '#%02x%02x%02x' % DOCTOR_COLORS.get(doc,(220,220,220))
                         cols[i].markdown(
                             f"<div style='background:{color}; padding:6px; border-radius:4px; text-align:center'>"
@@ -104,32 +104,38 @@ def display_calendar(schedule):
                         cols[i].markdown("")
 
 # ----------------------------
-# 6. BALANCE PDF EXPORT
+# 6. BALANCE PDF EXPORT (UTF-8 Safe)
 # ----------------------------
 def create_balance_pdf(df, start_date, end_date, filename="balance_summary.pdf"):
     pdf = FPDF(orientation="L", unit="mm", format="A4")
     pdf.add_page()
-    pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, "Doctor Balance Summary", ln=True, align="C")
 
-    pdf.set_font("Arial", "", 12)
+    # Add DejaVu font for Unicode (Greek, etc.)
+    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+    if not os.path.isfile(font_path):
+        # fallback for local testing
+        font_path = "DejaVuSans.ttf"
+    pdf.add_font("DejaVu","",font_path,uni=True)
+    pdf.set_font("DejaVu","B",16)
+    pdf.cell(0,10,"Doctor Balance Summary",ln=True,align="C")
+
+    pdf.set_font("DejaVu","",12)
     pdf.cell(
-        0, 8,
-        f"Period: {start_date.strftime('%d/%m/%Y')} – {end_date.strftime('%d/%m/%Y')}",
-        ln=True, align="C"
+        0,8,f"Period: {start_date.strftime('%d/%m/%Y')} – {end_date.strftime('%d/%m/%Y')}",
+        ln=True,align="C"
     )
     pdf.ln(6)
 
     col_widths = [40,30,20,20,20,30,25]
 
-    pdf.set_font("Arial","B",12)
-    for h, w in zip(df.columns, col_widths):
+    pdf.set_font("DejaVu","B",12)
+    for h,w in zip(df.columns,col_widths):
         pdf.cell(w,8,h,border=1,align="C")
     pdf.ln()
 
-    pdf.set_font("Arial","",12)
+    pdf.set_font("DejaVu","",12)
     for _, row in df.iterrows():
-        for val, w in zip(row,col_widths):
+        for val,w in zip(row,col_widths):
             pdf.cell(w,8,str(val),border=1,align="C")
         pdf.ln()
 
@@ -169,7 +175,7 @@ with right_col:
 
     initial_week = {}
     cols = st.columns(7)
-    for i, d in enumerate(week_dates):
+    for i,d in enumerate(week_dates):
         with cols[i]:
             initial_week[d] = st.selectbox(d.strftime("%a %d/%m"),DOCTORS,key=f"doc_{d}")
 
@@ -198,3 +204,22 @@ with right_col:
     # ✅ DISPLAY CALENDAR IF SCHEDULE EXISTS
     if st.session_state.schedule is not None:
         display_calendar(st.session_state.schedule)
+
+        # ----------------------------
+        # MANUAL ASSIGNMENT
+        # ----------------------------
+        st.subheader("✏️ Manual Assignment")
+        manual_col1, manual_col2 = st.columns(2)
+        with manual_col1:
+            manual_date = st.date_input(
+                "Pick a date to manually assign",
+                min_value=st.session_state.start_date,
+                max_value=st.session_state.end_date
+            )
+        with manual_col2:
+            manual_doctor = st.selectbox("Select Doctor",DOCTORS)
+
+        if st.button("✅ Assign Doctor"):
+            st.session_state.schedule[manual_date] = manual_doctor
+            st.session_state.balance = compute_balance(st.session_state.schedule)
+            st.success(f"{manual_doctor} assigned to {manual_date.strftime('%d/%m/%Y')}")
