@@ -233,7 +233,7 @@ with right_col:
                 key=f"doc_{d}"
             )
 
-    if st.button("💾 Save Initial Week"):
+    if st.button("💾 Επιλογή Ημερομηνίας Έναρξης"):
         st.session_state.initial_week = [initial_week[d] for d in sorted(initial_week)]
         st.session_state.start_date = week_dates[0]
 
@@ -246,7 +246,7 @@ with right_col:
     with c2:
         end_date = st.date_input("End date",st.session_state.start_date + datetime.timedelta(days=30))
 
-    if st.button("🗓️ Generate Schedule"):
+    if st.button("🗓️ Δημιουργία Προγράμματος"):
         st.session_state.schedule = generate_schedule(
             st.session_state.initial_week,
             start_date,
@@ -259,6 +259,7 @@ with right_col:
 
     if st.session_state.schedule:
         display_calendar(st.session_state.schedule)
+
 
 
 
