@@ -165,8 +165,8 @@ def create_calendar_pdf(schedule, filename="calendar.pdf"):
 # ----------------------------
 # STREAMLIT UI
 # ----------------------------
-st.set_page_config(page_title="📅 Programma Giatron", layout="wide")
-st.title("📅 Programma Giatron – Backwards Rotation")
+st.set_page_config(page_title="📅 Πρόγραμμα εφημεριών", layout="wide")
+st.title("📅 Πρόγραμμα Εφημεριών")
 
 # Initialize session state
 if "manual_assignments" not in st.session_state:
@@ -185,12 +185,12 @@ with left_col:
 
     if st.session_state.start_date and st.session_state.end_date:
         manual_date = st.date_input(
-            "Pick a date to manually assign",
+            "Επιλέξετε ημερομηνία για αλλαγή",
             min_value=st.session_state.start_date,
             max_value=st.session_state.end_date
         )
-        manual_doctor = st.selectbox("Select Doctor", DOCTORS)
-        if st.button("✅ Επιλογή Ακτινολόγου"):
+        manual_doctor = st.selectbox("Επιλογή Ακτινολόγου", DOCTORS)
+        if st.button("✅ Επικύρωση"):
             st.session_state.manual_assignments[manual_date] = manual_doctor
             st.session_state.schedule[manual_date] = manual_doctor
             st.session_state.balance = compute_balance(st.session_state.schedule)
@@ -259,4 +259,5 @@ with right_col:
 
     if st.session_state.schedule:
         display_calendar(st.session_state.schedule)
+
 
