@@ -59,62 +59,36 @@ def generate_schedule(initial_week, start_date, end_date):
     return schedule
 
 # ----------------------------
-# 4. BALANCE TABLE (FULL)
+# 4. BALANCE TABLE (NO SCROLL)
 # ----------------------------
 def compute_balance_fri_sat_sun(schedule):
     counts = {
         doc: {
-            "Monday": 0,
-            "Tuesday": 0,
-            "Wednesday": 0,
-            "Thursday": 0,
-            "Friday": 0,
-            "Saturday": 0,
-            "Sunday": 0,
+            "Mon": 0, "Tue": 0, "Wed": 0, "Thu": 0,
+            "Fri": 0, "Sat": 0, "Sun": 0
         }
         for doc in DOCTORS
     }
 
     for date, doc in schedule.items():
         wd = date.weekday()
-        if wd == 0:
-            counts[doc]["Monday"] += 1
-        elif wd == 1:
-            counts[doc]["Tuesday"] += 1
-        elif wd == 2:
-            counts[doc]["Wednesday"] += 1
-        elif wd == 3:
-            counts[doc]["Thursday"] += 1
-        elif wd == 4:
-            counts[doc]["Friday"] += 1
-        elif wd == 5:
-            counts[doc]["Saturday"] += 1
-        elif wd == 6:
-            counts[doc]["Sunday"] += 1
+        if wd == 0: counts[doc]["Mon"] += 1
+        elif wd == 1: counts[doc]["Tue"] += 1
+        elif wd == 2: counts[doc]["Wed"] += 1
+        elif wd == 3: counts[doc]["Thu"] += 1
+        elif wd == 4: counts[doc]["Fri"] += 1
+        elif wd == 5: counts[doc]["Sat"] += 1
+        elif wd == 6: counts[doc]["Sun"] += 1
 
-    df = pd.DataFrame.from_dict(counts, orient="index")
-    df.index.name = "Doctor"
-    df = df.reset_index()
+    df = pd.DataFrame.from_dict(counts, orient="index").reset_index()
+    df = df.rename(columns={"index": "Doctor"})
 
-    df["Weekdays"] = df["Monday"] + df["Tuesday"] + df["Wednesday"] + df["Thursday"]
-    df["Weekend"] = df["Friday"] + df["Saturday"] + df["Sunday"]
+    df["Weekdays"] = df["Mon"] + df["Tue"] + df["Wed"] + df["Thu"]
+    df["Weekend"] = df["Fri"] + df["Sat"] + df["Sun"]
     df["Total"] = df["Weekdays"] + df["Weekend"]
 
-    df = df.rename(columns={
-        "Monday": "Mon",
-        "Tuesday": "Tue",
-        "Wednesday": "Wed",
-        "Thursday": "Thu",
-        "Friday": "Fri",
-        "Saturday": "Sat",
-        "Sunday": "Sun"
-    })
-
     df = df[
-        ["Doctor",
-         "Mon", "Tue", "Wed", "Thu",
-         "Fri", "Sat", "Sun",
-         "Weekdays", "Weekend", "Total"]
+        ["Doctor", "Weekdays", "Fri", "Sat", "Sun", "Weekend", "Total"]
     ]
 
     return df
@@ -144,23 +118,21 @@ def create_pdf(schedule, filename="schedule_calendar.pdf"):
             for d in days:
                 pdf.cell(col_width, 8, d, border=1, align='C')
             pdf.ln()
-            pdf.set_font("Arial", "", 12)
 
             cal = calendar.Calendar(firstweekday=0)
             weeks = cal.monthdatescalendar(date.year, date.month)
 
+            pdf.set_font("Arial", "", 12)
             for week in weeks:
                 for day in week:
                     if day.month == date.month:
                         doc = schedule.get(day, "")
                         color = DOCTOR_COLORS.get(doc, (220,220,220))
-                        text_color = get_text_color(color)
                         pdf.set_fill_color(*color)
-                        pdf.set_text_color(*text_color)
-                        pdf.cell(col_width, 20, f"{day.day}\n{doc}", border=1, align='C', fill=True)
+                        pdf.cell(col_width, 18, f"{day.day}\n{doc}", border=1, align="C", fill=True)
                     else:
                         pdf.set_fill_color(240,240,240)
-                        pdf.cell(col_width, 20, "", border=1)
+                        pdf.cell(col_width, 18, "", border=1)
                 pdf.ln()
 
     pdf.output(filename)
@@ -177,9 +149,9 @@ def display_calendar(schedule):
             st.markdown(f"## {month_name}")
             last_month = month_name
 
-            header_cols = st.columns(7)
+            headers = st.columns(7)
             for i, d in enumerate(["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]):
-                header_cols[i].markdown(f"**{d}**")
+                headers[i].markdown(f"**{d}**")
 
             cal = calendar.Calendar(firstweekday=0)
             weeks = cal.monthdatescalendar(date.year, date.month)
@@ -191,7 +163,7 @@ def display_calendar(schedule):
                         doc = schedule.get(day, "")
                         color = '#%02x%02x%02x' % DOCTOR_COLORS.get(doc, (220,220,220))
                         cols[i].markdown(
-                            f"<div style='background-color:{color}; padding:6px; border-radius:4px; text-align:center'>"
+                            f"<div style='background:{color}; padding:6px; border-radius:4px; text-align:center'>"
                             f"<b>{day.day}</b><br>{doc}</div>",
                             unsafe_allow_html=True
                         )
@@ -209,36 +181,32 @@ for key in ["initial_week", "start_date", "generated_schedule", "balance_df"]:
         st.session_state[key] = None
 
 if st.button("🔄 Reset All"):
-    for key in ["initial_week", "start_date", "generated_schedule", "balance_df"]:
+    for key in st.session_state.keys():
         st.session_state[key] = None
     st.experimental_rerun()
 
 left_col, right_col = st.columns([0.35, 0.65])
 
-# LEFT: BALANCE
+# LEFT PANEL: BALANCE (NO SCROLL)
 with left_col:
-    st.subheader("📊 Weekend & Weekday Balance")
+    st.subheader("📊 Balance (Range)")
     if st.session_state.balance_df is not None:
         st.dataframe(
             st.session_state.balance_df,
             use_container_width=True,
-            height=800,
+            height=260,
             column_config={
                 "Doctor": st.column_config.TextColumn(width="medium"),
-                "Mon": st.column_config.NumberColumn(width="small"),
-                "Tue": st.column_config.NumberColumn(width="small"),
-                "Wed": st.column_config.NumberColumn(width="small"),
-                "Thu": st.column_config.NumberColumn(width="small"),
+                "Weekdays": st.column_config.NumberColumn(width="small"),
                 "Fri": st.column_config.NumberColumn(width="small"),
                 "Sat": st.column_config.NumberColumn(width="small"),
                 "Sun": st.column_config.NumberColumn(width="small"),
-                "Weekdays": st.column_config.NumberColumn(width="small"),
                 "Weekend": st.column_config.NumberColumn(width="small"),
                 "Total": st.column_config.NumberColumn(width="small"),
             }
         )
 
-# RIGHT: MAIN UI
+# RIGHT PANEL: MAIN UI
 with right_col:
     st.subheader("1️⃣ Select a date in the initial week")
     selected_date = st.date_input("Pick a date (Mon–Sun of initial week):", datetime.date.today())
