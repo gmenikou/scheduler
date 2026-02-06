@@ -51,8 +51,8 @@ def compute_balance(schedule):
     df = pd.DataFrame.from_dict(counts, orient="index").reset_index()
     df.rename(columns={"index":"Doctor"}, inplace=True)
     df["Weekdays"] = df["Mon"] + df["Tue"] + df["Wed"] + df["Thu"]
-    df["Total"] = df["Weekdays"] + df["Weekend"]
-    return df[["Doctor","Weekdays","Fri","Sat","Sun","Weekend","Total"]]
+    df["Total"] = df["Weekdays"] + df["Fri"] + df["Sat"] + df["Sun"]
+    return df[["Doctor","Weekdays","Fri","Sat","Sun","Total"]]
 
 # ----------------------------
 # DISPLAY CALENDAR
@@ -78,7 +78,10 @@ def display_calendar(schedule):
                         doc = schedule.get(day,"")
                         icon = " ✏️" if day in manual_dates else ""
                         color = '#%02x%02x%02x' % DOCTOR_COLORS.get(doc,(220,220,220))
-                        cols[i].markdown(f"<div style='background:{color}; padding:6px; border-radius:4px; text-align:center'><b>{day.day}</b><br>{doc}{icon}</div>", unsafe_allow_html=True)
+                        cols[i].markdown(
+                            f"<div style='background:{color}; padding:6px; border-radius:4px; text-align:center'>"
+                            f"<b>{day.day}</b><br>{doc}{icon}</div>", unsafe_allow_html=True
+                        )
                     else:
                         cols[i].markdown("")
 
@@ -93,7 +96,7 @@ def create_balance_pdf(df, start_date, end_date, filename="balance_summary.pdf")
     pdf.set_font("Arial","",12)
     pdf.cell(0,8,f"Period: {start_date.strftime('%d/%m/%Y')} – {end_date.strftime('%d/%m/%Y')}",ln=True,align="C")
     pdf.ln(6)
-    col_widths = [40,30,20,20,20,30,25]
+    col_widths = [50,30,20,20,20,25]  # Weekdays + Fri + Sat + Sun + Total
     pdf.set_font("Arial","B",12)
     for h,w in zip(df.columns,col_widths):
         pdf.cell(w,8,h,border=1,align="C")
@@ -150,6 +153,7 @@ def create_calendar_pdf(schedule, filename="calendar.pdf"):
 st.set_page_config(page_title="📅 Programma Giatron", layout="wide")
 st.title("📅 Programma Giatron – Backwards Rotation")
 
+# Initialize session state
 for key in ["initial_week","start_date","end_date","schedule","balance","manual_dates"]:
     if key not in st.session_state or st.session_state[key] is None:
         st.session_state[key] = set() if key=="manual_dates" else None
@@ -161,18 +165,29 @@ with left_col:
     st.subheader("📊 Balance (Range)")
     if st.session_state.balance is not None:
         st.dataframe(st.session_state.balance,use_container_width=True,height=260)
+
         st.markdown("### ✏️ Manual Assignment")
-        manual_date = st.date_input("Pick a date to manually assign", min_value=st.session_state.start_date, max_value=st.session_state.end_date)
+        manual_date = st.date_input(
+            "Pick a date to manually assign",
+            min_value=st.session_state.start_date,
+            max_value=st.session_state.end_date
+        )
         manual_doctor = st.selectbox("Select Doctor", DOCTORS)
         if st.button("✅ Assign Doctor"):
             st.session_state.schedule[manual_date] = manual_doctor
             st.session_state.manual_dates.add(manual_date)
             st.session_state.balance = compute_balance(st.session_state.schedule)
             st.success(f"{manual_doctor} assigned to {manual_date.strftime('%d/%m/%Y')}")
+
         if st.button("📄 Export Balance PDF"):
-            pdf_file = create_balance_pdf(st.session_state.balance, st.session_state.start_date, st.session_state.end_date)
+            pdf_file = create_balance_pdf(
+                st.session_state.balance,
+                st.session_state.start_date,
+                st.session_state.end_date
+            )
             with open(pdf_file,"rb") as f:
                 st.download_button("⬇️ Download Balance PDF", f, file_name=pdf_file)
+
         if st.button("🖨️ Export Calendar PDF"):
             pdf_file = create_calendar_pdf(st.session_state.schedule)
             with open(pdf_file,"rb") as f:
@@ -182,28 +197,42 @@ with left_col:
 with right_col:
     selected_date = st.date_input("Pick a date in the initial week:", datetime.date.today())
     week_dates = get_week_dates(selected_date)
+
     default_order = ["Elena","Eva","Maria","Athina","Alexandros","Elia","Christina"]
     initial_week = {}
     cols = st.columns(7)
     for i,d in enumerate(week_dates):
         with cols[i]:
             default_idx = DOCTORS.index(default_order[i%7])
-            initial_week[d] = st.selectbox(d.strftime("%a %d/%m"), DOCTORS, index=default_idx, key=f"doc_{d}")
+            initial_week[d] = st.selectbox(
+                d.strftime("%a %d/%m"),
+                DOCTORS,
+                index=default_idx,
+                key=f"doc_{d}"
+            )
+
     if st.button("💾 Save Initial Week"):
         st.session_state.initial_week = [initial_week[d] for d in sorted(initial_week)]
         st.session_state.start_date = week_dates[0]
+
     if st.session_state.initial_week is None:
         st.stop()
+
     c1,c2 = st.columns(2)
     with c1:
         start_date = st.date_input("Start date",st.session_state.start_date)
     with c2:
         end_date = st.date_input("End date",st.session_state.start_date + datetime.timedelta(days=30))
+
     if st.button("🗓️ Generate Schedule"):
         st.session_state.start_date = start_date
         st.session_state.end_date = end_date
-        st.session_state.schedule = generate_schedule(st.session_state.initial_week, start_date, end_date)
+        st.session_state.schedule = generate_schedule(
+            st.session_state.initial_week,
+            start_date,
+            end_date
+        )
         st.session_state.balance = compute_balance(st.session_state.schedule)
+
     if st.session_state.schedule is not None:
         display_calendar(st.session_state.schedule)
-
