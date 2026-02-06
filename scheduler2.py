@@ -60,12 +60,12 @@ def compute_balance(schedule):
     return df[["Doctor","Weekdays","Fri","Sat","Sun","Total"]]
 
 # ----------------------------
-# CALENDAR DISPLAY WITH CLICKABLE DAYS
+# CALENDAR DISPLAY WITH COLOR + CLICKABLE ASSIGN
 # ----------------------------
-def display_calendar_clickable(schedule):
+def display_calendar(schedule):
     manual_assignments = st.session_state.get("manual_assignments", {})
+    clicked_date = None
     last_month = None
-    assign_date = None
 
     for date in sorted(schedule.keys()):
         month_name = date.strftime("%B %Y")
@@ -75,6 +75,7 @@ def display_calendar_clickable(schedule):
             headers = st.columns(7)
             for i,d in enumerate(["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]):
                 headers[i].markdown(f"**{d}**")
+
             cal = calendar.Calendar(firstweekday=0)
             weeks = cal.monthdatescalendar(date.year, date.month)
             for week in weeks:
@@ -84,23 +85,27 @@ def display_calendar_clickable(schedule):
                         doc = schedule.get(day,"")
                         icon = " ✏️" if day in manual_assignments else ""
                         color = '#%02x%02x%02x' % DOCTOR_COLORS.get(doc,(220,220,220))
-                        if cols[i].button(f"{day.day}\n{doc}{icon}", key=str(day)):
-                            assign_date = day
-                    else:
-                        cols[i].markdown("")
+                        with cols[i]:
+                            st.markdown(
+                                f"<div style='background-color:{color}; padding:6px; border-radius:4px; text-align:center'>"
+                                f"<b>{day.day}</b><br>{doc}{icon}</div>",
+                                unsafe_allow_html=True
+                            )
+                            if st.button("🖊️", key=f"assign_{day}"):
+                                clicked_date = day
 
-    # If a date was clicked, show assignment selectbox
-    if assign_date:
-        st.markdown(f"### Assign Doctor for {assign_date.strftime('%d/%m/%Y')}")
-        doctor_choice = st.selectbox("Select Doctor", DOCTORS, key=f"assign_{assign_date}")
-        if st.button("✅ Confirm Assignment", key=f"confirm_{assign_date}"):
-            st.session_state.manual_assignments[assign_date] = doctor_choice
-            st.session_state.schedule[assign_date] = doctor_choice
+    # Show assignment selectbox if a day was clicked
+    if clicked_date:
+        st.markdown(f"### Assign Doctor for {clicked_date.strftime('%d/%m/%Y')}")
+        doctor_choice = st.selectbox("Select Doctor", DOCTORS, key=f"assign_select_{clicked_date}")
+        if st.button("✅ Confirm Assignment", key=f"confirm_assign_{clicked_date}"):
+            st.session_state.manual_assignments[clicked_date] = doctor_choice
+            st.session_state.schedule[clicked_date] = doctor_choice
             st.session_state.balance = compute_balance(st.session_state.schedule)
-            st.success(f"{doctor_choice} assigned to {assign_date.strftime('%d/%m/%Y')}")
+            st.success(f"{doctor_choice} assigned to {clicked_date.strftime('%d/%m/%Y')}")
 
 # ----------------------------
-# BALANCE PDF EXPORT
+# PDF EXPORT
 # ----------------------------
 def create_balance_pdf(df, start_date, end_date, filename="balance_summary.pdf"):
     pdf = FPDF(orientation="L", unit="mm", format="A4")
@@ -123,9 +128,6 @@ def create_balance_pdf(df, start_date, end_date, filename="balance_summary.pdf")
     pdf.output(filename)
     return filename
 
-# ----------------------------
-# CALENDAR PDF EXPORT
-# ----------------------------
 def create_calendar_pdf(schedule, filename="calendar.pdf"):
     pdf = FPDF(orientation="L", unit="mm", format="A4")
     pdf.set_font("Arial","",12)
@@ -179,7 +181,6 @@ left_col, right_col = st.columns([0.35,0.65])
 with left_col:
     st.subheader("📊 Balance (Range)")
 
-    # Manual assignment UI
     if st.session_state.start_date and st.session_state.end_date:
         manual_date = st.date_input(
             "Pick a date to manually assign",
@@ -193,12 +194,9 @@ with left_col:
             st.session_state.balance = compute_balance(st.session_state.schedule)
             st.success(f"{manual_doctor} assigned to {manual_date.strftime('%d/%m/%Y')}")
 
-    # Show updated balance
-    if st.session_state.balance:
+    if st.session_state.balance is not None and not st.session_state.balance.empty:
         st.dataframe(st.session_state.balance,use_container_width=True,height=260)
 
-    # Export buttons
-    if st.session_state.balance:
         if st.button("📄 Export Balance PDF"):
             pdf_file = create_balance_pdf(
                 st.session_state.balance,
@@ -255,4 +253,4 @@ with right_col:
         st.session_state.balance = compute_balance(st.session_state.schedule)
 
     if st.session_state.schedule:
-        display_calendar_clickable(st.session_state.schedule)
+        display_calendar(st.session_state.schedule)
