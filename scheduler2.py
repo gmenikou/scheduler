@@ -96,8 +96,8 @@ def display_calendar(schedule):
 def create_balance_pdf(df, start_date, end_date, filename="balance_summary.pdf"):
     pdf = FPDF(orientation="L", unit="mm", format="A4")
     pdf.add_page()
-    pdf.add_font('DejaVu', '', 'fonts/DejaVuSans.ttf', uni=True)
-    pdf.add_font('DejaVu', 'B', 'fonts/DejaVuSans.ttf', uni=True)
+    pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
+    pdf.add_font('DejaVu', 'B', 'DejaVuSans.ttf', uni=True)
 
     pdf.set_font("DejaVu","B",16)
     pdf.cell(0,10,"Doctor Balance Summary",ln=True,align="C")
@@ -119,8 +119,8 @@ def create_balance_pdf(df, start_date, end_date, filename="balance_summary.pdf")
 
 def create_calendar_pdf(schedule, filename="calendar.pdf"):
     pdf = FPDF(orientation="L", unit="mm", format="A4")
-    pdf.add_font('DejaVu', '', 'fonts/DejaVuSans.ttf', uni=True)
-    pdf.add_font('DejaVu', 'B', 'fonts/DejaVuSans.ttf', uni=True)
+    pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
+    pdf.add_font('DejaVu', 'B', 'DejaVuSans.ttf', uni=True)
 
     pdf.set_font("DejaVu","",12)
     manual_assignments = st.session_state.get("manual_assignments", {})
