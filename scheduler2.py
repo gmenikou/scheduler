@@ -121,8 +121,8 @@ def create_calendar_pdf(schedule, filename="calendar.pdf"):
     pdf = FPDF(orientation="L", unit="mm", format="A4")
     pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
     pdf.add_font('DejaVu', 'B', 'DejaVuSans.ttf', uni=True)
-
     pdf.set_font("DejaVu","",12)
+
     manual_assignments = st.session_state.get("manual_assignments", {})
     last_month = None
     for date in sorted(schedule.keys()):
@@ -134,22 +134,30 @@ def create_calendar_pdf(schedule, filename="calendar.pdf"):
             pdf.ln(4)
             pdf.set_font("DejaVu","B",12)
             col_width = 40
+            # Weekday headers
             for wd in ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]:
                 pdf.cell(col_width,8,wd,border=1,align="C")
             pdf.ln()
             cal = calendar.Calendar(firstweekday=0)
             weeks = cal.monthdatescalendar(date.year, date.month)
             pdf.set_font("DejaVu","",12)
+            cell_height = 20
             for week in weeks:
-                for day in week:
+                x_start = pdf.get_x()
+                y_start = pdf.get_y()
+                for i, day in enumerate(week):
+                    pdf.set_xy(x_start + i*col_width, y_start)
                     if day.month == date.month:
                         doc = schedule.get(day,"")
                         icon = "✏️" if day in manual_assignments else ""
                         pdf.set_fill_color(*DOCTOR_COLORS.get(doc,(220,220,220)))
-                        pdf.cell(col_width,20,f"{day.day}\n{doc}{icon}",border=1,align="C",fill=True)
+                        # Combine day number and doctor name without extra gap
+                        text = f"{day.day} {icon}\n{doc}"
+                        pdf.multi_cell(col_width, 5, text, border=1, align="C", fill=True)
                     else:
-                        pdf.cell(col_width,20,"",border=1)
-                pdf.ln()
+                        pdf.set_fill_color(240,240,240)
+                        pdf.cell(col_width, cell_height,"",border=1,fill=True)
+                pdf.ln(cell_height)
             last_month = month_name
     pdf.output(filename)
     return filename
@@ -160,7 +168,7 @@ def create_calendar_pdf(schedule, filename="calendar.pdf"):
 st.set_page_config(page_title="📅 Programma Giatron", layout="wide")
 st.title("📅 Programma Giatron – Backwards Rotation")
 
-# Init session state
+# Initialize session state
 if "manual_assignments" not in st.session_state:
     st.session_state.manual_assignments = {}
 for key in ["initial_week","start_date","end_date","schedule","balance"]:
@@ -175,7 +183,6 @@ left_col, right_col = st.columns([0.35,0.65])
 with left_col:
     st.subheader("📊 Balance (Range)")
 
-    # Manual assignment section
     if st.session_state.start_date and st.session_state.end_date:
         manual_date = st.date_input(
             "Pick a date to manually assign",
@@ -189,7 +196,6 @@ with left_col:
             st.session_state.balance = compute_balance(st.session_state.schedule)
             st.success(f"{manual_doctor} assigned to {manual_date.strftime('%d/%m/%Y')}")
 
-    # Display balance
     if st.session_state.balance is not None and not st.session_state.balance.empty:
         st.dataframe(st.session_state.balance,use_container_width=True,height=260)
 
@@ -251,6 +257,5 @@ with right_col:
         st.session_state.end_date = end_date
         st.session_state.balance = compute_balance(st.session_state.schedule)
 
-    # Display calendar
     if st.session_state.schedule:
         display_calendar(st.session_state.schedule)
