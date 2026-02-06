@@ -51,7 +51,6 @@ def compute_balance(schedule):
     df = pd.DataFrame.from_dict(counts, orient="index").reset_index()
     df.rename(columns={"index":"Doctor"}, inplace=True)
     df["Weekdays"] = df["Mon"] + df["Tue"] + df["Wed"] + df["Thu"]
-    df["Weekend"] = df["Fri"] + df["Sat"] + df["Sun"]
     df["Total"] = df["Weekdays"] + df["Weekend"]
     return df[["Doctor","Weekdays","Fri","Sat","Sun","Weekend","Total"]]
 
@@ -207,3 +206,4 @@ with right_col:
         st.session_state.balance = compute_balance(st.session_state.schedule)
     if st.session_state.schedule is not None:
         display_calendar(st.session_state.schedule)
+
