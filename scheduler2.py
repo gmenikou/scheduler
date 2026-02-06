@@ -181,7 +181,7 @@ left_col, right_col = st.columns([0.35,0.65])
 # LEFT: Balance & Manual Assignment
 # ----------------------------
 with left_col:
-    st.subheader("📊 Balance (Range)")
+    st.subheader("📊 Κατάσταση Εφημεριών Εύρους")
 
     if st.session_state.start_date and st.session_state.end_date:
         manual_date = st.date_input(
@@ -259,6 +259,7 @@ with right_col:
 
     if st.session_state.schedule:
         display_calendar(st.session_state.schedule)
+
 
 
 
