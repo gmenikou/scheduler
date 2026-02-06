@@ -76,6 +76,7 @@ def compute_balance(schedule):
 # ----------------------------
 def display_calendar(schedule):
     last_month = None
+    manual_dates = st.session_state.get("manual_dates", set())
     for date in sorted(schedule.keys()):
         month_name = date.strftime("%B %Y")
         if month_name != last_month:
@@ -94,10 +95,11 @@ def display_calendar(schedule):
                 for i, day in enumerate(week):
                     if day.month == date.month:
                         doc = schedule.get(day,"")
+                        icon = " ✏️" if day in manual_dates else ""
                         color = '#%02x%02x%02x' % DOCTOR_COLORS.get(doc,(220,220,220))
                         cols[i].markdown(
                             f"<div style='background:{color}; padding:6px; border-radius:4px; text-align:center'>"
-                            f"<b>{day.day}</b><br>{doc}</div>",
+                            f"<b>{day.day}</b><br>{doc}{icon}</div>",
                             unsafe_allow_html=True
                         )
                     else:
@@ -110,10 +112,8 @@ def create_balance_pdf(df, start_date, end_date, filename="balance_summary.pdf")
     pdf = FPDF(orientation="L", unit="mm", format="A4")
     pdf.add_page()
 
-    # Add DejaVu font for Unicode (Greek, etc.)
     font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
     if not os.path.isfile(font_path):
-        # fallback for local testing
         font_path = "DejaVuSans.ttf"
     pdf.add_font("DejaVu","",font_path,uni=True)
     pdf.set_font("DejaVu","B",16)
@@ -148,17 +148,40 @@ def create_balance_pdf(df, start_date, end_date, filename="balance_summary.pdf")
 st.set_page_config(page_title="📅 Programma Giatron", layout="wide")
 st.title("📅 Programma Giatron – Backwards Rotation")
 
-for key in ["initial_week","start_date","end_date","schedule","balance"]:
+for key in ["initial_week","start_date","end_date","schedule","balance","manual_dates"]:
     if key not in st.session_state:
         st.session_state[key] = None
+if "manual_dates" not in st.session_state:
+    st.session_state.manual_dates = set()
 
 left_col, right_col = st.columns([0.35,0.65])
 
-# LEFT PANEL: BALANCE + PDF
+# LEFT PANEL: BALANCE + MANUAL ASSIGNMENT + PDF
 with left_col:
     st.subheader("📊 Balance (Range)")
+
     if st.session_state.balance is not None:
         st.dataframe(st.session_state.balance,use_container_width=True,height=260)
+
+        # ----------------------------
+        # MANUAL ASSIGNMENT UNDER BALANCE
+        # ----------------------------
+        st.markdown("### ✏️ Manual Assignment")
+        manual_date = st.date_input(
+            "Pick a date to manually assign",
+            min_value=st.session_state.start_date,
+            max_value=st.session_state.end_date,
+            key="manual_date_picker"
+        )
+        manual_doctor = st.selectbox("Select Doctor", DOCTORS, key="manual_doctor_select")
+
+        if st.button("✅ Assign Doctor"):
+            st.session_state.schedule[manual_date] = manual_doctor
+            st.session_state.manual_dates.add(manual_date)
+            st.session_state.balance = compute_balance(st.session_state.schedule)
+            st.success(f"{manual_doctor} assigned to {manual_date.strftime('%d/%m/%Y')}")
+
+        # PDF export
         if st.button("📄 Export Balance PDF"):
             pdf_file = create_balance_pdf(
                 st.session_state.balance,
@@ -173,11 +196,22 @@ with right_col:
     selected_date = st.date_input("Pick a date in the initial week:", datetime.date.today())
     week_dates = get_week_dates(selected_date)
 
+    # ----------------------------
+    # INITIAL WEEK SELECTBOXES WITH DEFAULT ORDER
+    # ----------------------------
+    default_order = ["Elena", "Eva", "Maria", "Athina", "Alexandros", "Elia", "Christina"]
+
     initial_week = {}
     cols = st.columns(7)
     for i,d in enumerate(week_dates):
         with cols[i]:
-            initial_week[d] = st.selectbox(d.strftime("%a %d/%m"),DOCTORS,key=f"doc_{d}")
+            default_idx = DOCTORS.index(default_order[i % len(default_order)])
+            initial_week[d] = st.selectbox(
+                d.strftime("%a %d/%m"),
+                DOCTORS,
+                index=default_idx,
+                key=f"doc_{d}"
+            )
 
     if st.button("💾 Save Initial Week"):
         st.session_state.initial_week = [initial_week[d] for d in sorted(initial_week)]
@@ -195,7 +229,6 @@ with right_col:
     if st.button("🗓️ Generate Schedule"):
         st.session_state.start_date = start_date
         st.session_state.end_date = end_date
-
         st.session_state.schedule = generate_schedule(
             st.session_state.initial_week,start_date,end_date
         )
@@ -204,22 +237,3 @@ with right_col:
     # ✅ DISPLAY CALENDAR IF SCHEDULE EXISTS
     if st.session_state.schedule is not None:
         display_calendar(st.session_state.schedule)
-
-        # ----------------------------
-        # MANUAL ASSIGNMENT
-        # ----------------------------
-        st.subheader("✏️ Manual Assignment")
-        manual_col1, manual_col2 = st.columns(2)
-        with manual_col1:
-            manual_date = st.date_input(
-                "Pick a date to manually assign",
-                min_value=st.session_state.start_date,
-                max_value=st.session_state.end_date
-            )
-        with manual_col2:
-            manual_doctor = st.selectbox("Select Doctor",DOCTORS)
-
-        if st.button("✅ Assign Doctor"):
-            st.session_state.schedule[manual_date] = manual_doctor
-            st.session_state.balance = compute_balance(st.session_state.schedule)
-            st.success(f"{manual_doctor} assigned to {manual_date.strftime('%d/%m/%Y')}")
