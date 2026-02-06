@@ -60,11 +60,13 @@ def compute_balance(schedule):
     return df[["Doctor","Weekdays","Fri","Sat","Sun","Total"]]
 
 # ----------------------------
-# DISPLAY CALENDAR
+# CALENDAR DISPLAY WITH CLICKABLE DAYS
 # ----------------------------
-def display_calendar(schedule):
+def display_calendar_clickable(schedule):
     manual_assignments = st.session_state.get("manual_assignments", {})
     last_month = None
+    assign_date = None
+
     for date in sorted(schedule.keys()):
         month_name = date.strftime("%B %Y")
         if month_name != last_month:
@@ -82,12 +84,20 @@ def display_calendar(schedule):
                         doc = schedule.get(day,"")
                         icon = " ✏️" if day in manual_assignments else ""
                         color = '#%02x%02x%02x' % DOCTOR_COLORS.get(doc,(220,220,220))
-                        cols[i].markdown(
-                            f"<div style='background:{color}; padding:6px; border-radius:4px; text-align:center'>"
-                            f"<b>{day.day}</b><br>{doc}{icon}</div>", unsafe_allow_html=True
-                        )
+                        if cols[i].button(f"{day.day}\n{doc}{icon}", key=str(day)):
+                            assign_date = day
                     else:
                         cols[i].markdown("")
+
+    # If a date was clicked, show assignment selectbox
+    if assign_date:
+        st.markdown(f"### Assign Doctor for {assign_date.strftime('%d/%m/%Y')}")
+        doctor_choice = st.selectbox("Select Doctor", DOCTORS, key=f"assign_{assign_date}")
+        if st.button("✅ Confirm Assignment", key=f"confirm_{assign_date}"):
+            st.session_state.manual_assignments[assign_date] = doctor_choice
+            st.session_state.schedule[assign_date] = doctor_choice
+            st.session_state.balance = compute_balance(st.session_state.schedule)
+            st.success(f"{doctor_choice} assigned to {assign_date.strftime('%d/%m/%Y')}")
 
 # ----------------------------
 # BALANCE PDF EXPORT
@@ -157,19 +167,20 @@ st.set_page_config(page_title="📅 Programma Giatron", layout="wide")
 st.title("📅 Programma Giatron – Backwards Rotation")
 
 # Initialize session state
-for key in ["initial_week","start_date","end_date","schedule","balance","manual_assignments"]:
-    if key not in st.session_state or st.session_state[key] is None:
-        st.session_state[key] = {} if key=="manual_assignments" else None
+if "manual_assignments" not in st.session_state:
+    st.session_state.manual_assignments = {}
+for key in ["initial_week","start_date","end_date","schedule","balance"]:
+    if key not in st.session_state:
+        st.session_state[key] = None
 
 left_col, right_col = st.columns([0.35,0.65])
 
 # LEFT: Balance & manual assign
 with left_col:
     st.subheader("📊 Balance (Range)")
-    if st.session_state.balance is not None:
-        st.dataframe(st.session_state.balance,use_container_width=True,height=260)
 
-        st.markdown("### ✏️ Manual Assignment")
+    # Manual assignment UI
+    if st.session_state.start_date and st.session_state.end_date:
         manual_date = st.date_input(
             "Pick a date to manually assign",
             min_value=st.session_state.start_date,
@@ -182,6 +193,12 @@ with left_col:
             st.session_state.balance = compute_balance(st.session_state.schedule)
             st.success(f"{manual_doctor} assigned to {manual_date.strftime('%d/%m/%Y')}")
 
+    # Show updated balance
+    if st.session_state.balance:
+        st.dataframe(st.session_state.balance,use_container_width=True,height=260)
+
+    # Export buttons
+    if st.session_state.balance:
         if st.button("📄 Export Balance PDF"):
             pdf_file = create_balance_pdf(
                 st.session_state.balance,
@@ -190,7 +207,6 @@ with left_col:
             )
             with open(pdf_file,"rb") as f:
                 st.download_button("⬇️ Download Balance PDF", f, file_name=pdf_file)
-
         if st.button("🖨️ Export Calendar PDF"):
             pdf_file = create_calendar_pdf(st.session_state.schedule)
             with open(pdf_file,"rb") as f:
@@ -239,4 +255,4 @@ with right_col:
         st.session_state.balance = compute_balance(st.session_state.schedule)
 
     if st.session_state.schedule:
-        display_calendar(st.session_state.schedule)
+        display_calendar_clickable(st.session_state.schedule)
