@@ -76,9 +76,14 @@ def compute_balance(schedule):
 # ----------------------------
 def display_calendar(schedule):
     last_month = None
-    # normalize manual_dates to datetime.date
-    manual_dates = set(d if isinstance(d, datetime.date) else d.date()
-                       for d in st.session_state.get("manual_dates", set()))
+
+    # safe manual_dates
+    manual_dates = st.session_state.get("manual_dates")
+    if manual_dates is None:
+        manual_dates = set()
+    else:
+        manual_dates = set(d if isinstance(d, datetime.date) else d.date() for d in manual_dates)
+
     for date in sorted(schedule.keys()):
         month_name = date.strftime("%B %Y")
         if month_name != last_month:
@@ -150,11 +155,13 @@ def create_balance_pdf(df, start_date, end_date, filename="balance_summary.pdf")
 st.set_page_config(page_title="📅 Programma Giatron", layout="wide")
 st.title("📅 Programma Giatron – Backwards Rotation")
 
+# session state defaults
 for key in ["initial_week","start_date","end_date","schedule","balance","manual_dates"]:
-    if key not in st.session_state:
-        st.session_state[key] = None
-if "manual_dates" not in st.session_state:
-    st.session_state.manual_dates = set()
+    if key not in st.session_state or st.session_state[key] is None:
+        if key == "manual_dates":
+            st.session_state[key] = set()
+        else:
+            st.session_state[key] = None
 
 left_col, right_col = st.columns([0.35,0.65])
 
@@ -176,7 +183,7 @@ with left_col:
         manual_doctor = st.selectbox("Select Doctor", DOCTORS, key="manual_doctor_select")
 
         if st.button("✅ Assign Doctor"):
-            day_only = manual_date  # st.date_input returns datetime.date
+            day_only = manual_date  # date object
             st.session_state.schedule[day_only] = manual_doctor
             st.session_state.manual_dates.add(day_only)
             st.session_state.balance = compute_balance(st.session_state.schedule)
