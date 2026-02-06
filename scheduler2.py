@@ -166,7 +166,7 @@ def create_calendar_pdf(schedule, filename="calendar.pdf"):
 # STREAMLIT UI
 # ----------------------------
 st.set_page_config(page_title="📅 Πρόγραμμα εφημεριών © Γιώργος Μενοίκου,PhD ", layout="wide")
-st.title("📅 Πρόγραμμα Εφημεριών")
+st.title("📅 Πρόγραμμα Εφημεριών Ακτινολόγων")
 st.markdown(
     "<span style='font-size:14px; color:gray;'>© Γιώργος Μενοίκου, PhD</span>",
     unsafe_allow_html=True
@@ -263,6 +263,7 @@ with right_col:
 
     if st.session_state.schedule:
         display_calendar(st.session_state.schedule)
+
 
 
 
