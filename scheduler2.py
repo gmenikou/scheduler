@@ -26,9 +26,10 @@ def get_week_dates(any_date):
     monday = any_date - datetime.timedelta(days=any_date.weekday())
     return [monday + datetime.timedelta(days=i) for i in range(7)]
 
-def generate_schedule(initial_week, start_date, end_date):
+def generate_schedule(initial_week, start_date, end_date, manual_assignments=None):
     schedule = {}
     doctor_to_weekday = {doc: i for i, doc in enumerate(initial_week)}
+    # Fill initial week
     for i, doc in enumerate(initial_week):
         schedule[start_date + datetime.timedelta(days=i)] = doc
     current_week_start = start_date + datetime.timedelta(days=7)
@@ -40,6 +41,10 @@ def generate_schedule(initial_week, start_date, end_date):
                 schedule[day] = doc
         doctor_to_weekday = new_map
         current_week_start += datetime.timedelta(days=7)
+    # Inject manual assignments
+    if manual_assignments:
+        for d, doc in manual_assignments.items():
+            schedule[d] = doc
     return schedule
 
 def compute_balance(schedule):
@@ -58,8 +63,7 @@ def compute_balance(schedule):
 # DISPLAY CALENDAR
 # ----------------------------
 def display_calendar(schedule):
-    manual_dates = st.session_state.get("manual_dates", set())
-    manual_dates = set(d if isinstance(d, datetime.date) else d.date() for d in manual_dates)
+    manual_assignments = st.session_state.get("manual_assignments", {})
     last_month = None
     for date in sorted(schedule.keys()):
         month_name = date.strftime("%B %Y")
@@ -76,7 +80,7 @@ def display_calendar(schedule):
                 for i, day in enumerate(week):
                     if day.month == date.month:
                         doc = schedule.get(day,"")
-                        icon = " ✏️" if day in manual_dates else ""
+                        icon = " ✏️" if day in manual_assignments else ""
                         color = '#%02x%02x%02x' % DOCTOR_COLORS.get(doc,(220,220,220))
                         cols[i].markdown(
                             f"<div style='background:{color}; padding:6px; border-radius:4px; text-align:center'>"
@@ -115,8 +119,7 @@ def create_balance_pdf(df, start_date, end_date, filename="balance_summary.pdf")
 def create_calendar_pdf(schedule, filename="calendar.pdf"):
     pdf = FPDF(orientation="L", unit="mm", format="A4")
     pdf.set_font("Arial","",12)
-    manual_dates = st.session_state.get("manual_dates", set())
-    manual_dates = set(d if isinstance(d, datetime.date) else d.date() for d in manual_dates)
+    manual_assignments = st.session_state.get("manual_assignments", {})
     last_month = None
     for date in sorted(schedule.keys()):
         month_name = date.strftime("%B %Y")
@@ -137,7 +140,7 @@ def create_calendar_pdf(schedule, filename="calendar.pdf"):
                 for day in week:
                     if day.month == date.month:
                         doc = schedule.get(day,"")
-                        icon = "✏️" if day in manual_dates else ""
+                        icon = "✏️" if day in manual_assignments else ""
                         pdf.set_fill_color(*DOCTOR_COLORS.get(doc,(220,220,220)))
                         pdf.cell(col_width,20,f"{day.day}\n{doc}{icon}",border=1,align="C",fill=True)
                     else:
@@ -154,9 +157,9 @@ st.set_page_config(page_title="📅 Programma Giatron", layout="wide")
 st.title("📅 Programma Giatron – Backwards Rotation")
 
 # Initialize session state
-for key in ["initial_week","start_date","end_date","schedule","balance","manual_dates"]:
+for key in ["initial_week","start_date","end_date","schedule","balance","manual_assignments"]:
     if key not in st.session_state or st.session_state[key] is None:
-        st.session_state[key] = set() if key=="manual_dates" else None
+        st.session_state[key] = {} if key=="manual_assignments" else None
 
 left_col, right_col = st.columns([0.35,0.65])
 
@@ -174,8 +177,8 @@ with left_col:
         )
         manual_doctor = st.selectbox("Select Doctor", DOCTORS)
         if st.button("✅ Assign Doctor"):
+            st.session_state.manual_assignments[manual_date] = manual_doctor
             st.session_state.schedule[manual_date] = manual_doctor
-            st.session_state.manual_dates.add(manual_date)
             st.session_state.balance = compute_balance(st.session_state.schedule)
             st.success(f"{manual_doctor} assigned to {manual_date.strftime('%d/%m/%Y')}")
 
@@ -225,14 +228,15 @@ with right_col:
         end_date = st.date_input("End date",st.session_state.start_date + datetime.timedelta(days=30))
 
     if st.button("🗓️ Generate Schedule"):
-        st.session_state.start_date = start_date
-        st.session_state.end_date = end_date
         st.session_state.schedule = generate_schedule(
             st.session_state.initial_week,
             start_date,
-            end_date
+            end_date,
+            manual_assignments=st.session_state.manual_assignments
         )
+        st.session_state.start_date = start_date
+        st.session_state.end_date = end_date
         st.session_state.balance = compute_balance(st.session_state.schedule)
 
-    if st.session_state.schedule is not None:
+    if st.session_state.schedule:
         display_calendar(st.session_state.schedule)
