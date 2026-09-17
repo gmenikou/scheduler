@@ -40,8 +40,6 @@ FIXED_HOLIDAYS = [
 # HOLIDAY HELPERS
 # ----------------------------
 def orthodox_easter(year):
-    """Orthodox (Julian-calendar-based) Easter Sunday, returned as a Gregorian date.
-    Valid for years 1900-2099 (standard +13 day Julian->Gregorian offset)."""
     a = year % 4
     b = year % 7
     c = year % 19
@@ -53,7 +51,6 @@ def orthodox_easter(year):
     return julian_easter + datetime.timedelta(days=13)
 
 def get_cyprus_holidays(year):
-    """Returns {date: holiday_name} for one calendar year."""
     holidays = {}
     for month, day, name in FIXED_HOLIDAYS:
         holidays[datetime.date(year, month, day)] = name
@@ -70,15 +67,12 @@ def get_cyprus_holidays(year):
     return holidays
 
 def get_holidays_in_range(start_date, end_date):
-    """Returns {date: holiday_name} for every Cyprus public holiday between
-    start_date and end_date inclusive, across as many years as needed."""
     holidays = {}
     for year in range(start_date.year, end_date.year + 1):
         holidays.update(get_cyprus_holidays(year))
     return {d: name for d, name in holidays.items() if start_date <= d <= end_date}
 
 def get_major_holidays_in_range(start_date, end_date):
-    """Επιστρέφει {date: name} για τις ειδικές αργίες Χριστουγέννων & Πάσχα στο εύρος."""
     target_dates = {}
     for year in range(start_date.year - 1, end_date.year + 2):
         c_dates = [
@@ -115,6 +109,23 @@ def compute_major_holidays_summary(schedule, major_holidays):
         if doc in summary:
             summary[doc]["Count"] += 1
             summary[doc]["Details"].append(f"{d.strftime('%d/%m/%Y')} ({major_holidays[d]})")
+    
+    data = []
+    for doc in DOCTORS:
+        data.append({
+            "Ακτινολόγος": doc,
+            "Σύνολο": summary[doc]["Count"],
+            "Ημερομηνίες & Εορτές": ", ".join(summary[doc]["Details"]) if summary[doc]["Details"] else "Καμία"
+        })
+    return pd.DataFrame(data)
+
+def compute_regular_holidays_summary(schedule, regular_holidays):
+    summary = {doc: {"Count": 0, "Details": []} for doc in DOCTORS}
+    for d in sorted(regular_holidays.keys()):
+        doc = schedule.get(d, "-")
+        if doc in summary:
+            summary[doc]["Count"] += 1
+            summary[doc]["Details"].append(f"{d.strftime('%d/%m/%Y')} ({regular_holidays[d]})")
     
     data = []
     for doc in DOCTORS:
@@ -329,6 +340,37 @@ def create_major_holidays_pdf(df, start_date, end_date, filename="major_holidays
     pdf.output(filename)
     return filename
 
+def create_regular_holidays_pdf(df, start_date, end_date, filename="regular_holidays_summary.pdf"):
+    pdf = FPDF(orientation="L", unit="mm", format="A4")
+    pdf.add_page()
+    pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
+    pdf.add_font('DejaVu', 'B', 'DejaVuSans.ttf', uni=True)
+
+    pdf.set_font("DejaVu", "B", 16)
+    pdf.cell(0, 10, "Κατάσταση Εφημεριών Μικρών Αργιών", ln=True, align="C")
+    pdf.set_font("DejaVu", "", 12)
+    pdf.cell(0, 8, f"Περίοδος: {start_date.strftime('%d/%m/%Y')} – {end_date.strftime('%d/%m/%Y')}", ln=True, align="C")
+    pdf.ln(6)
+    
+    col_widths = [35, 20, 222]
+    pdf.set_font("DejaVu", "B", 11)
+    for h, w in zip(df.columns, col_widths):
+        pdf.cell(w, 8, str(h), border=1, align="C")
+    pdf.ln()
+    
+    pdf.set_font("DejaVu", "", 10)
+    for _, row in df.iterrows():
+        pdf.cell(col_widths[0], 10, str(row["Ακτινολόγος"]), border=1, align="C")
+        pdf.cell(col_widths[1], 10, str(row["Σύνολο"]), border=1, align="C")
+        
+        x_start = pdf.get_x()
+        y_start = pdf.get_y()
+        pdf.multi_cell(col_widths[2], 5, str(row["Ημερομηνίες & Εορτές"]), border=1, align="L")
+        pdf.ln(0)
+        
+    pdf.output(filename)
+    return filename
+
 def create_calendar_pdf(schedule, filename="calendar.pdf"):
     pdf = FPDF(orientation="L", unit="mm", format="A4")
     pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
@@ -468,7 +510,7 @@ with left_col:
 
         major_hols = get_major_holidays_in_range(st.session_state.start_date, st.session_state.end_date)
         if major_hols:
-            with st.expander("🎄🐣 Ανάλυση Εορτών (Χριστούγεννα & Πάσχα)"):
+            with st.expander("🎄🐣 Ανάλυση Μεγάλων Εορτών (Χριστούγεννα & Πάσχα)"):
                 major_df = compute_major_holidays_summary(st.session_state.schedule, major_hols)
                 st.dataframe(major_df, use_container_width=True)
                 
@@ -480,6 +522,23 @@ with left_col:
                     )
                     with open(pdf_hols_file, "rb") as f:
                         st.download_button("⬇️ Κατέβασε αναφορά εορτών σε PDF", f, file_name=pdf_hols_file)
+
+        # Ανάλυση Μικρών Αργιών
+        if st.session_state.holiday_names:
+            regular_hols_dict = {d: n for d, n in st.session_state.holiday_names.items() if d not in major_hols}
+            if regular_hols_dict:
+                with st.expander("🎈 Ανάλυση Μικρών Αργιών"):
+                    regular_df = compute_regular_holidays_summary(st.session_state.schedule, regular_hols_dict)
+                    st.dataframe(regular_df, use_container_width=True)
+                    
+                    if st.button("📄 Εξαγωγή αναφοράς μικρών αργιών σε PDF"):
+                        pdf_reg_file = create_regular_holidays_pdf(
+                            regular_df,
+                            st.session_state.start_date,
+                            st.session_state.end_date
+                        )
+                        with open(pdf_reg_file, "rb") as f:
+                            st.download_button("⬇️ Κατέβασε αναφορά μικρών αργιών σε PDF", f, file_name=pdf_reg_file)
 
         if st.button("📄 Εξαγωγή κατάστασης σε PDF"):
             pdf_file = create_balance_pdf(
@@ -549,7 +608,7 @@ with right_col:
         temp_schedule.update(st.session_state.manual_assignments)
         temp_schedule.update(major_assignments)
 
-        # 2. Κατανομή υπόλοιπων αργιών με ξεχωριστή ουρά
+        # 2. Κατανομή υπόλοιπων (μικρών) αργιών με ξεχωριστή, μόνιμη ουρά
         regular_dates_sorted = sorted(regular_hols.keys())
         regular_assignments, major_conflicts_2 = assign_holiday_duties(
             regular_dates_sorted,
