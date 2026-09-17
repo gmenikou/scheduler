@@ -153,6 +153,13 @@ def _shifts_in_week(doctor, date, schedule, exclude_date=None):
         if doc == doctor and d != exclude_date and _week_monday(d) == wk
     )
 
+def _get_year_major_count(doc, year, current_assignments, major_dict):
+    cnt = 0
+    for dt, assigned_doc in current_assignments.items():
+        if assigned_doc == doc and dt.year == year and dt in major_dict:
+            cnt += 1
+    return cnt
+
 def assign_holiday_duties(holiday_dates_sorted, base_schedule, major_hols_dict=None, manual_assignments=None, max_per_week=2, min_gap_days=3, is_major=False, historical_major_counts=None, historical_specific_counts=None, historical_regular_counts=None):
     manual_assignments = manual_assignments or {}
     working = dict(base_schedule)
@@ -179,7 +186,6 @@ def assign_holiday_duties(holiday_dates_sorted, base_schedule, major_hols_dict=N
                 )
             )
         elif not is_major and historical_regular_counts is not None:
-            # Ισόποση κατανομή και για τις μικρές αργίες βάσει ιστορικού
             sorted_doctors = sorted(
                 DOCTORS,
                 key=lambda doc: (
@@ -194,6 +200,7 @@ def assign_holiday_duties(holiday_dates_sorted, base_schedule, major_hols_dict=N
         skipped = []
         chosen = None
 
+        # 1η Προσπάθεια: Αυστηρός έλεγχος (εάν έχει ήδη 1 μεγάλη αργία στο ίδιο έτος, η 2η+ πρέπει να είναι Μ. Παρασκευή ή Δευτέρα Πάσχα)
         for _ in range(len(queue)):
             candidate = queue.popleft()
             nearby_conflict = _has_nearby_shift(candidate, d, working, max_gap=max_gap)
@@ -201,9 +208,9 @@ def assign_holiday_duties(holiday_dates_sorted, base_schedule, major_hols_dict=N
             weekly_conflict = (week_count + 1) > max_per_week
             
             second_major_violation = False
-            if is_major and historical_major_counts is not None:
-                current_count = historical_major_counts.get(candidate, 0)
-                if current_count >= 1:
+            if is_major:
+                year_count = _get_year_major_count(candidate, d.year, assignments, major_hols_dict)
+                if year_count >= 1:
                     if holiday_name not in ["Μεγάλη Παρασκευή", "Δευτέρα του Πάσχα"]:
                         second_major_violation = True
 
@@ -212,6 +219,7 @@ def assign_holiday_duties(holiday_dates_sorted, base_schedule, major_hols_dict=N
                 break
             skipped.append(candidate)
 
+        # 2η Προσπάθεια: Χαλάρωση κοντινού κενού/εβδομάδας, τηρώντας τον αυστηρό περιορισμό ανά έτος για τις μεγάλες αργίες
         if chosen is None and skipped:
             for _ in range(len(skipped)):
                 candidate = skipped.pop(0)
@@ -219,9 +227,9 @@ def assign_holiday_duties(holiday_dates_sorted, base_schedule, major_hols_dict=N
                 week_count = _shifts_in_week(candidate, d, working, exclude_date=d)
                 
                 second_major_violation = False
-                if is_major and historical_major_counts is not None:
-                    current_count = historical_major_counts.get(candidate, 0)
-                    if current_count >= 1:
+                if is_major:
+                    year_count = _get_year_major_count(candidate, d.year, assignments, major_hols_dict)
+                    if year_count >= 1:
                         if holiday_name not in ["Μεγάλη Παρασκευή", "Δευτέρα του Πάσχα"]:
                             second_major_violation = True
 
@@ -230,6 +238,7 @@ def assign_holiday_duties(holiday_dates_sorted, base_schedule, major_hols_dict=N
                     break
                 skipped.append(candidate)
 
+        # 3η Έσχατη λύση (Απόλυτο αδιέξοδο)
         if chosen is None and skipped:
             chosen = skipped.pop(0)
             conflicts.add(d)
@@ -553,7 +562,7 @@ with left_col:
             if conflicts:
                 st.warning(
                     f"⚠️ Σε {len(conflicts)} αργία(ες) δεν βρέθηκε γιατρός χωρίς σύγκρουση "
-                    f"(κανόνας 3 ημερών / 2 εφημεριών / αυστηρός περιορισμός 2ης μεγάλης αργίας) — ελέγξτε τις παρακάτω."
+                    f"(κανόνας 3 ημερών / 2 εφημεριών / αυστηρός περιορισμός 2ης μεγάλης αργίας ανά έτος) — ελέγξτε τις παρακάτω."
                 )
             with st.expander(f"🎉 Αργίες στο διάστημα ({len(st.session_state.holiday_names)})"):
                 for d in sorted(st.session_state.holiday_names.keys()):
@@ -648,7 +657,7 @@ with right_col:
 
         base_rota = generate_base_rota(st.session_state.initial_week, start_date, end_date)
         
-        # 1. Κατανομή μεγάλων γιορτών με ιστορική εξισορρόπηση
+        # 1. Κατανομή μεγάλων γιορτών με αυστηρό κανόνα 2ης μεγάλης αργίας ανά έτος
         major_dates_sorted = sorted(major_hols.keys())
         major_assignments, major_conflicts_1 = assign_holiday_duties(
             major_dates_sorted,
