@@ -153,7 +153,7 @@ def _shifts_in_week(doctor, date, schedule, exclude_date=None):
         if doc == doctor and d != exclude_date and _week_monday(d) == wk
     )
 
-def assign_holiday_duties(holiday_dates_sorted, base_schedule, major_hols_dict=None, manual_assignments=None, max_per_week=2, min_gap_days=3, is_major=False, historical_major_counts=None, historical_specific_counts=None):
+def assign_holiday_duties(holiday_dates_sorted, base_schedule, major_hols_dict=None, manual_assignments=None, max_per_week=2, min_gap_days=3, is_major=False, historical_major_counts=None, historical_specific_counts=None, historical_regular_counts=None):
     manual_assignments = manual_assignments or {}
     working = dict(base_schedule)
     working.update(manual_assignments)
@@ -175,6 +175,15 @@ def assign_holiday_duties(holiday_dates_sorted, base_schedule, major_hols_dict=N
                 key=lambda doc: (
                     historical_major_counts.get(doc, 0),
                     historical_specific_counts.get(doc, {}).get(holiday_name, 0),
+                    DOCTORS.index(doc)
+                )
+            )
+        elif not is_major and historical_regular_counts is not None:
+            # Ισόποση κατανομή και για τις μικρές αργίες βάσει ιστορικού
+            sorted_doctors = sorted(
+                DOCTORS,
+                key=lambda doc: (
+                    historical_regular_counts.get(doc, 0),
                     DOCTORS.index(doc)
                 )
             )
@@ -235,6 +244,9 @@ def assign_holiday_duties(holiday_dates_sorted, base_schedule, major_hols_dict=N
                     if chosen not in historical_specific_counts:
                         historical_specific_counts[chosen] = {}
                     historical_specific_counts[chosen][holiday_name] = historical_specific_counts[chosen].get(holiday_name, 0) + 1
+            else:
+                if historical_regular_counts is not None:
+                    historical_regular_counts[chosen] = historical_regular_counts.get(chosen, 0) + 1
 
     return assignments, conflicts
 
@@ -483,6 +495,8 @@ if "historical_major_counts" not in st.session_state:
     st.session_state.historical_major_counts = {doc: 0 for doc in DOCTORS}
 if "historical_specific_counts" not in st.session_state:
     st.session_state.historical_specific_counts = {doc: {} for doc in DOCTORS}
+if "historical_regular_counts" not in st.session_state:
+    st.session_state.historical_regular_counts = {doc: 0 for doc in DOCTORS}
 
 for key in ["initial_week", "start_date", "end_date", "schedule", "balance"]:
     if key not in st.session_state:
@@ -634,7 +648,7 @@ with right_col:
 
         base_rota = generate_base_rota(st.session_state.initial_week, start_date, end_date)
         
-        # 1. Κατανομή μεγάλων γιορτών με προτεραιότητα βάσει ιστορικού (συνολικό + ανά είδος)
+        # 1. Κατανομή μεγάλων γιορτών με ιστορική εξισορρόπηση
         major_dates_sorted = sorted(major_hols.keys())
         major_assignments, major_conflicts_1 = assign_holiday_duties(
             major_dates_sorted,
@@ -652,7 +666,7 @@ with right_col:
         temp_schedule.update(st.session_state.manual_assignments)
         temp_schedule.update(major_assignments)
 
-        # 2. Κατανομή υπόλοιπων (μικρών) αργιών
+        # 2. Κατανομή μικρών αργιών με ισόποση κατανομή βάσει ιστορικού
         regular_dates_sorted = sorted(regular_hols.keys())
         regular_assignments, major_conflicts_2 = assign_holiday_duties(
             regular_dates_sorted,
@@ -661,7 +675,8 @@ with right_col:
             manual_assignments=st.session_state.manual_assignments,
             max_per_week=2,
             min_gap_days=3,
-            is_major=False
+            is_major=False,
+            historical_regular_counts=st.session_state.historical_regular_counts
         )
 
         holiday_assignments = {**major_assignments, **regular_assignments}
