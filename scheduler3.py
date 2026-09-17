@@ -423,7 +423,7 @@ with right_col:
     week_dates = get_week_dates(selected_date)
 
     # Default initial week order
-    default_order = ["Έλενα", "Εύα", "Μαρία", "Αθηνά", "Αλέξανδρος", "Έλια", "Χριστίνα"]
+    default_order = DOCTORS
     initial_week = {}
     cols = st.columns(7)
     for i, d in enumerate(week_dates):
