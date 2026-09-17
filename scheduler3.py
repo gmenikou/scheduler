@@ -169,7 +169,6 @@ def assign_holiday_duties(holiday_dates_sorted, base_schedule, major_hols_dict=N
 
         holiday_name = major_hols_dict.get(d, "")
 
-        # Απόλυτα αυστηρή ταξινόμηση βάσει ιστορικού (πρώτα οι λιγότερες συνολικές μεγάλες αργίες, μετά οι λιγότερες στη συγκεκριμένη γιορτή)
         if is_major and historical_major_counts is not None and historical_specific_counts is not None:
             sorted_doctors = sorted(
                 DOCTORS,
@@ -186,7 +185,6 @@ def assign_holiday_duties(holiday_dates_sorted, base_schedule, major_hols_dict=N
         skipped = []
         chosen = None
 
-        # 1η Προσπάθεια: Αυστηρός έλεγχος (κανόνας 2ης μεγάλης αργίας: αποκλειστικά Μ. Παρασκευή ή Δευτέρα Πάσχα)
         for _ in range(len(queue)):
             candidate = queue.popleft()
             nearby_conflict = _has_nearby_shift(candidate, d, working, max_gap=max_gap)
@@ -205,7 +203,6 @@ def assign_holiday_duties(holiday_dates_sorted, base_schedule, major_hols_dict=N
                 break
             skipped.append(candidate)
 
-        # 2η Προσπάθεια: Χαλάρωση κοντινού κενού/εβδομάδας, διατηρώντας τον κανόνα 2ης μεγάλης αργίας
         if chosen is None and skipped:
             for _ in range(len(skipped)):
                 candidate = skipped.pop(0)
@@ -224,7 +221,6 @@ def assign_holiday_duties(holiday_dates_sorted, base_schedule, major_hols_dict=N
                     break
                 skipped.append(candidate)
 
-        # 3η Έσχατη λύση (Απόλυτο αδιέξοδο)
         if chosen is None and skipped:
             chosen = skipped.pop(0)
             conflicts.add(d)
