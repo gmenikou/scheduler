@@ -331,9 +331,6 @@ def create_major_holidays_pdf(df, start_date, end_date, filename="major_holidays
     for _, row in df.iterrows():
         pdf.cell(col_widths[0], 10, str(row["Ακτινολόγος"]), border=1, align="C")
         pdf.cell(col_widths[1], 10, str(row["Σύνολο"]), border=1, align="C")
-        
-        x_start = pdf.get_x()
-        y_start = pdf.get_y()
         pdf.multi_cell(col_widths[2], 5, str(row["Ημερομηνίες & Εορτές"]), border=1, align="L")
         pdf.ln(0)
         
@@ -362,9 +359,6 @@ def create_regular_holidays_pdf(df, start_date, end_date, filename="regular_holi
     for _, row in df.iterrows():
         pdf.cell(col_widths[0], 10, str(row["Ακτινολόγος"]), border=1, align="C")
         pdf.cell(col_widths[1], 10, str(row["Σύνολο"]), border=1, align="C")
-        
-        x_start = pdf.get_x()
-        y_start = pdf.get_y()
         pdf.multi_cell(col_widths[2], 5, str(row["Ημερομηνίες & Εορτές"]), border=1, align="L")
         pdf.ln(0)
         
@@ -471,9 +465,12 @@ with left_col:
 
             st.session_state.manual_assignments[manual_date] = manual_doctor
             st.session_state.schedule[manual_date] = manual_doctor
+            
+            # Υπολογισμός ισσορροπίας βάσει όλων των ορισμένων αργιών (μεγάλων & μικρών)
+            active_holiday_dates = set(st.session_state.holiday_assignments.keys()) if st.session_state.holiday_assignments else set(st.session_state.holiday_names.keys())
             st.session_state.balance = compute_balance(
                 st.session_state.schedule,
-                holiday_dates=set(st.session_state.holiday_names.keys())
+                holiday_dates=active_holiday_dates
             )
 
             holiday_note = ""
@@ -523,7 +520,6 @@ with left_col:
                     with open(pdf_hols_file, "rb") as f:
                         st.download_button("⬇️ Κατέβασε αναφορά εορτών σε PDF", f, file_name=pdf_hols_file)
 
-        # Ανάλυση Μικρών Αργιών
         if st.session_state.holiday_names:
             regular_hols_dict = {d: n for d, n in st.session_state.holiday_names.items() if d not in major_hols}
             if regular_hols_dict:
@@ -635,9 +631,11 @@ with right_col:
         )
         st.session_state.start_date = start_date
         st.session_state.end_date = end_date
+        
+        # Υπολογισμός ισσορροπίας με βάση το σύνολο όλων των αργιών (μεγάλων + μικρών)
         st.session_state.balance = compute_balance(
             st.session_state.schedule,
-            holiday_dates=set(holiday_names.keys())
+            holiday_dates=set(holiday_assignments.keys())
         )
 
     if st.session_state.schedule:
