@@ -160,6 +160,7 @@ def assign_major_holidays_global_rotation_strict(major_hols_dict, base_schedule,
     max_gap = min_gap_days - 1
 
     historical_specific_counts = historical_specific_counts if historical_specific_counts is not None else {doc: {} for doc in DOCTORS}
+    historical_major_counts = historical_major_counts if historical_major_counts is not None else {doc: 0 for doc in DOCTORS}
 
     holidays_by_year = {}
     for d, name in sorted(major_hols_dict.items()):
@@ -196,7 +197,6 @@ def assign_major_holidays_global_rotation_strict(major_hols_dict, base_schedule,
         year = d.year
         ordered_docs = [DOCTORS[(doc_index + i) % len(DOCTORS)] for i in range(len(DOCTORS))]
 
-        # Δίνουμε προτεραιότητα σε όσους ΔΕΝ έχουν ξαναπάνει ΑΥΤΗ ΤΗΝ ΣΥΓΚΕΚΡΙΜΕΝΗ ΑΡΓΙΑ στο παρελθόν (ή την έκαναν πιο παλιά)
         ordered_docs = sorted(
             ordered_docs,
             key=lambda doc: (
@@ -247,20 +247,24 @@ def assign_major_holidays_global_rotation_strict(major_hols_dict, base_schedule,
 
         assignments[d] = chosen
         working[d] = chosen
-        if historical_major_counts is not None:
-            historical_major_counts[chosen] = historical_major_counts.get(chosen, 0) + 1
-        if historical_specific_counts is not None:
-            if chosen not in historical_specific_counts:
-                historical_specific_counts[chosen] = {}
-            historical_specific_counts[chosen][holiday_name] = historical_specific_counts[chosen].get(holiday_name, 0) + 1
+        historical_major_counts[chosen] = historical_major_counts.get(chosen, 0) + 1
+        if chosen not in historical_specific_counts:
+            historical_specific_counts[chosen] = {}
+        historical_specific_counts[chosen][holiday_name] = historical_specific_counts[chosen].get(holiday_name, 0) + 1
 
-    # --- ΒΗΜΑ 2: Ανάθεση των συνδυαστικών/δεύτερων αργιών ανά έτος στους υπόλοιπους 2 γιατρούς ---
+    # --- ΒΗΜΑ 2: Ανάθεση των συνδυαστικών/δεύτερων αργιών ανά έτος με βάση το συνολικό ιστορικό πλήθος ---
     for year, h_list in sorted(holidays_by_year.items()):
         year_xmas_pair = [item for item in h_list if item[1] in xmas_pairable]
         year_easter_pair = [item for item in h_list if item[1] in easter_pairable]
 
         year_assigned_docs = {assigned_doc for dt, assigned_doc in assignments.items() if dt.year == year}
         remaining_docs = [doc for doc in DOCTORS if doc not in year_assigned_docs]
+
+        # Ταξινόμηση των remaining_docs ώστε αυτοί με τις λιγότερες συνολικές μεγάλες αργίες να πάρουν το έξτρα ζευγάρι
+        remaining_docs = sorted(
+            remaining_docs,
+            key=lambda doc: (historical_major_counts.get(doc, 0), DOCTORS.index(doc))
+        )
 
         if len(remaining_docs) >= 2 and len(year_xmas_pair) > 0 and len(year_easter_pair) > 0:
             doc1, doc2 = remaining_docs[0], remaining_docs[1]
@@ -273,12 +277,10 @@ def assign_major_holidays_global_rotation_strict(major_hols_dict, base_schedule,
             for (d, holiday_name), candidate in pairs_to_assign:
                 assignments[d] = candidate
                 working[d] = candidate
-                if historical_major_counts is not None:
-                    historical_major_counts[candidate] = historical_major_counts.get(candidate, 0) + 1
-                if historical_specific_counts is not None:
-                    if candidate not in historical_specific_counts:
-                        historical_specific_counts[candidate] = {}
-                    historical_specific_counts[candidate][holiday_name] = historical_specific_counts[candidate].get(holiday_name, 0) + 1
+                historical_major_counts[candidate] = historical_major_counts.get(candidate, 0) + 1
+                if candidate not in historical_specific_counts:
+                    historical_specific_counts[candidate] = {}
+                historical_specific_counts[candidate][holiday_name] = historical_specific_counts[candidate].get(holiday_name, 0) + 1
         else:
             for d, holiday_name in (year_xmas_pair + year_easter_pair):
                 if d in manual_assignments:
@@ -286,12 +288,10 @@ def assign_major_holidays_global_rotation_strict(major_hols_dict, base_schedule,
                 candidate = remaining_docs[0] if remaining_docs else DOCTORS[0]
                 assignments[d] = candidate
                 working[d] = candidate
-                if historical_major_counts is not None:
-                    historical_major_counts[candidate] = historical_major_counts.get(candidate, 0) + 1
-                if historical_specific_counts is not None:
-                    if candidate not in historical_specific_counts:
-                        historical_specific_counts[candidate] = {}
-                    historical_specific_counts[candidate][holiday_name] = historical_specific_counts[candidate].get(holiday_name, 0) + 1
+                historical_major_counts[candidate] = historical_major_counts.get(candidate, 0) + 1
+                if candidate not in historical_specific_counts:
+                    historical_specific_counts[candidate] = {}
+                historical_specific_counts[candidate][holiday_name] = historical_specific_counts[candidate].get(holiday_name, 0) + 1
 
     return assignments, conflicts
 
