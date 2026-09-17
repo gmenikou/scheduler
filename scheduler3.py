@@ -4,6 +4,7 @@ import calendar
 import pandas as pd
 from fpdf import FPDF
 from collections import deque
+import pickle
 
 # ----------------------------
 # CONSTANTS
@@ -22,7 +23,6 @@ DOCTOR_COLORS = {
 
 WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
-# Fixed-date Cyprus public holidays: (month, day, name)
 FIXED_HOLIDAYS = [
     (1, 1, "Πρωτοχρονιά"),
     (1, 6, "Θεοφάνεια"),
@@ -37,8 +37,21 @@ FIXED_HOLIDAYS = [
 ]
 
 # ----------------------------
-# HOLIDAY HELPERS
+# HELPER FUNCTIONS
 # ----------------------------
+def save_data_for_viewer():
+    """Αποθηκεύει τα δεδομένα σε αρχείο pickle για την εφαρμογή προβολής"""
+    data_to_save = {
+        "schedule": st.session_state.schedule,
+        "balance": st.session_state.balance,
+        "holiday_names": st.session_state.holiday_names,
+        "holiday_conflicts": st.session_state.holiday_conflicts,
+        "start_date": st.session_state.start_date,
+        "end_date": st.session_state.end_date
+    }
+    with open("schedule_data.pkl", "wb") as f:
+        pickle.dump(data_to_save, f)
+
 def orthodox_easter(year):
     a = year % 4
     b = year % 7
@@ -192,9 +205,6 @@ def assign_holiday_duties(holiday_dates_sorted, base_schedule, manual_assignment
 
     return assignments, conflicts
 
-# ----------------------------
-# HELPERS
-# ----------------------------
 def get_week_dates(any_date):
     monday = any_date - datetime.timedelta(days=any_date.weekday())
     return [monday + datetime.timedelta(days=i) for i in range(7)]
@@ -245,9 +255,6 @@ def compute_balance(schedule, holiday_dates=None):
     df["Total"] = df["Weekdays"] + df["Fri"] + df["Sat"] + df["Sun"]
     return df[["Doctor", "Weekdays", "Fri", "Sat", "Sun", "Αργίες", "Total"]]
 
-# ----------------------------
-# CALENDAR DISPLAY
-# ----------------------------
 def display_calendar(schedule):
     manual_assignments = st.session_state.get("manual_assignments", {})
     holiday_names = st.session_state.get("holiday_names", {})
@@ -282,15 +289,12 @@ def display_calendar(schedule):
                     else:
                         cols[i].markdown("")
 
-# ----------------------------
-# PDF EXPORT
-# ----------------------------
+# PDF Functions
 def create_balance_pdf(df, start_date, end_date, filename="balance_summary.pdf"):
     pdf = FPDF(orientation="L", unit="mm", format="A4")
     pdf.add_page()
     pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
     pdf.add_font('DejaVu', 'B', 'DejaVuSans.ttf', uni=True)
-
     pdf.set_font("DejaVu", "B", 16)
     pdf.cell(0, 10, "Doctor Balance Summary", ln=True, align="C")
     pdf.set_font("DejaVu", "", 12)
@@ -314,26 +318,22 @@ def create_major_holidays_pdf(df, start_date, end_date, filename="major_holidays
     pdf.add_page()
     pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
     pdf.add_font('DejaVu', 'B', 'DejaVuSans.ttf', uni=True)
-
     pdf.set_font("DejaVu", "B", 16)
     pdf.cell(0, 10, "Κατάσταση Εφημεριών Χριστουγέννων & Πάσχα", ln=True, align="C")
     pdf.set_font("DejaVu", "", 12)
     pdf.cell(0, 8, f"Περίοδος: {start_date.strftime('%d/%m/%Y')} – {end_date.strftime('%d/%m/%Y')}", ln=True, align="C")
     pdf.ln(6)
-    
     col_widths = [35, 20, 222]
     pdf.set_font("DejaVu", "B", 11)
     for h, w in zip(df.columns, col_widths):
         pdf.cell(w, 8, str(h), border=1, align="C")
     pdf.ln()
-    
     pdf.set_font("DejaVu", "", 10)
     for _, row in df.iterrows():
         pdf.cell(col_widths[0], 10, str(row["Ακτινολόγος"]), border=1, align="C")
         pdf.cell(col_widths[1], 10, str(row["Σύνολο"]), border=1, align="C")
         pdf.multi_cell(col_widths[2], 5, str(row["Ημερομηνίες & Εορτές"]), border=1, align="L")
         pdf.ln(0)
-        
     pdf.output(filename)
     return filename
 
@@ -342,26 +342,22 @@ def create_regular_holidays_pdf(df, start_date, end_date, filename="regular_holi
     pdf.add_page()
     pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
     pdf.add_font('DejaVu', 'B', 'DejaVuSans.ttf', uni=True)
-
     pdf.set_font("DejaVu", "B", 16)
     pdf.cell(0, 10, "Κατάσταση Εφημεριών Μικρών Αργιών", ln=True, align="C")
     pdf.set_font("DejaVu", "", 12)
     pdf.cell(0, 8, f"Περίοδος: {start_date.strftime('%d/%m/%Y')} – {end_date.strftime('%d/%m/%Y')}", ln=True, align="C")
     pdf.ln(6)
-    
     col_widths = [35, 20, 222]
     pdf.set_font("DejaVu", "B", 11)
     for h, w in zip(df.columns, col_widths):
         pdf.cell(w, 8, str(h), border=1, align="C")
     pdf.ln()
-    
     pdf.set_font("DejaVu", "", 10)
     for _, row in df.iterrows():
         pdf.cell(col_widths[0], 10, str(row["Ακτινολόγος"]), border=1, align="C")
         pdf.cell(col_widths[1], 10, str(row["Σύνολο"]), border=1, align="C")
         pdf.multi_cell(col_widths[2], 5, str(row["Ημερομηνίες & Εορτές"]), border=1, align="L")
         pdf.ln(0)
-        
     pdf.output(filename)
     return filename
 
@@ -370,7 +366,6 @@ def create_calendar_pdf(schedule, filename="calendar.pdf"):
     pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
     pdf.add_font('DejaVu', 'B', 'DejaVuSans.ttf', uni=True)
     pdf.set_font("DejaVu", "", 12)
-
     manual_assignments = st.session_state.get("manual_assignments", {})
     holiday_names = st.session_state.get("holiday_names", {})
     holiday_conflicts = st.session_state.get("holiday_conflicts", set())
@@ -416,14 +411,11 @@ def create_calendar_pdf(schedule, filename="calendar.pdf"):
     return filename
 
 # ----------------------------
-# STREAMLIT UI
+# STREAMLIT UI (Admin)
 # ----------------------------
 st.set_page_config(page_title="📅 Πρόγραμμα εφημεριών © Γιώργος Μενοίκου,PhD ", layout="wide")
 st.title("📅 Πρόγραμμα Εφημεριών Ακτινολόγων")
-st.markdown(
-    "<span style='font-size:14px; color:gray;'>© Γιώργος Μενοίκου, PhD</span>",
-    unsafe_allow_html=True
-)
+st.markdown("<span style='font-size:14px; color:gray;'>© Γιώργος Μενοίκου, PhD</span>", unsafe_allow_html=True)
 
 if "manual_assignments" not in st.session_state:
     st.session_state.manual_assignments = {}
@@ -444,9 +436,6 @@ for key in ["initial_week", "start_date", "end_date", "schedule", "balance"]:
 
 left_col, right_col = st.columns([0.35, 0.65])
 
-# ----------------------------
-# LEFT: Balance & Manual Assignment
-# ----------------------------
 with left_col:
     st.subheader("📊 Κατάσταση Εφημεριών Εύρους")
 
@@ -466,41 +455,19 @@ with left_col:
             st.session_state.manual_assignments[manual_date] = manual_doctor
             st.session_state.schedule[manual_date] = manual_doctor
             
-            # Υπολογισμός ισσορροπίας βάσει όλων των ορισμένων αργιών (μεγάλων & μικρών)
             active_holiday_dates = set(st.session_state.holiday_assignments.keys()) if st.session_state.holiday_assignments else set(st.session_state.holiday_names.keys())
             st.session_state.balance = compute_balance(
                 st.session_state.schedule,
                 holiday_dates=active_holiday_dates
             )
+            
+            # Ενημέρωση αρχείου για τον Viewer
+            save_data_for_viewer()
 
             holiday_note = ""
             if manual_date in st.session_state.holiday_names:
                 holiday_note = f" (Αργία: {st.session_state.holiday_names[manual_date]})"
             st.success(f"{manual_doctor} assigned to {manual_date.strftime('%d/%m/%Y')}{holiday_note}")
-
-            if nearby_conflict:
-                st.warning(
-                    f"⚠️ Ο/Η {manual_doctor} έχει ήδη άλλη εφημερία εντός 3 ημερών από τις "
-                    f"{manual_date.strftime('%d/%m/%Y')}. Η ανάθεση έγινε ούτως ή άλλως."
-                )
-            if weekly_conflict:
-                st.warning(
-                    f"⚠️ Ο/Η {manual_doctor} θα έχει πάνω από 2 εφημερίες μέσα στην ίδια εβδομάδα με τις "
-                    f"{manual_date.strftime('%d/%m/%Y')}. Η ανάθεση έγινε ούτως ή άλλως."
-                )
-
-        if st.session_state.holiday_names:
-            conflicts = st.session_state.get("holiday_conflicts", set())
-            if conflicts:
-                st.warning(
-                    f"⚠️ Σε {len(conflicts)} αργία(ες) δεν βρέθηκε γιατρός χωρίς σύγκρουση "
-                    f"(κανόνας 3 ημερών / 2 εφημεριών τη βδομάδα) — ελέγξτε τις παρακάτω."
-                )
-            with st.expander(f"🎉 Αργίες στο διάστημα ({len(st.session_state.holiday_names)})"):
-                for d in sorted(st.session_state.holiday_names.keys()):
-                    doc = st.session_state.schedule.get(d, "") if st.session_state.schedule else ""
-                    flag = " ⚠️" if d in conflicts else ""
-                    st.markdown(f"- **{d.strftime('%d/%m/%Y')}** — {st.session_state.holiday_names[d]}: {doc}{flag}")
 
     if st.session_state.balance is not None and not st.session_state.balance.empty:
         st.dataframe(st.session_state.balance, use_container_width=True, height=260)
@@ -510,13 +477,8 @@ with left_col:
             with st.expander("🎄🐣 Ανάλυση Μεγάλων Εορτών (Χριστούγεννα & Πάσχα)"):
                 major_df = compute_major_holidays_summary(st.session_state.schedule, major_hols)
                 st.dataframe(major_df, use_container_width=True)
-                
                 if st.button("📄 Εξαγωγή αναφοράς Χριστουγέννων/Πάσχα σε PDF"):
-                    pdf_hols_file = create_major_holidays_pdf(
-                        major_df,
-                        st.session_state.start_date,
-                        st.session_state.end_date
-                    )
+                    pdf_hols_file = create_major_holidays_pdf(major_df, st.session_state.start_date, st.session_state.end_date)
                     with open(pdf_hols_file, "rb") as f:
                         st.download_button("⬇️ Κατέβασε αναφορά εορτών σε PDF", f, file_name=pdf_hols_file)
 
@@ -526,22 +488,13 @@ with left_col:
                 with st.expander("🎈 Ανάλυση Μικρών Αργιών"):
                     regular_df = compute_regular_holidays_summary(st.session_state.schedule, regular_hols_dict)
                     st.dataframe(regular_df, use_container_width=True)
-                    
                     if st.button("📄 Εξαγωγή αναφοράς μικρών αργιών σε PDF"):
-                        pdf_reg_file = create_regular_holidays_pdf(
-                            regular_df,
-                            st.session_state.start_date,
-                            st.session_state.end_date
-                        )
+                        pdf_reg_file = create_regular_holidays_pdf(regular_df, st.session_state.start_date, st.session_state.end_date)
                         with open(pdf_reg_file, "rb") as f:
                             st.download_button("⬇️ Κατέβασε αναφορά μικρών αργιών σε PDF", f, file_name=pdf_reg_file)
 
         if st.button("📄 Εξαγωγή κατάστασης σε PDF"):
-            pdf_file = create_balance_pdf(
-                st.session_state.balance,
-                st.session_state.start_date,
-                st.session_state.end_date
-            )
+            pdf_file = create_balance_pdf(st.session_state.balance, st.session_state.start_date, st.session_state.end_date)
             with open(pdf_file, "rb") as f:
                 st.download_button("⬇️ Κατέβασε κατάσταση σε PDF", f, file_name=pdf_file)
         if st.button("🖨️ Εξαγωγή ημερολογίου σε PDF"):
@@ -549,9 +502,6 @@ with left_col:
             with open(pdf_file, "rb") as f:
                 st.download_button("⬇️ Κατέβασε ημερολόγιο σε PDF", f, file_name=pdf_file)
 
-# ----------------------------
-# RIGHT: Initial Week + Schedule Generation
-# ----------------------------
 with right_col:
     selected_date = st.date_input("Ημερομηνία έναρξης:", datetime.date.today())
     week_dates = get_week_dates(selected_date)
@@ -562,12 +512,7 @@ with right_col:
     for i, d in enumerate(week_dates):
         with cols[i]:
             default_idx = DOCTORS.index(default_order[i % 7])
-            initial_week[d] = st.selectbox(
-                d.strftime("%a %d/%m"),
-                DOCTORS,
-                index=default_idx,
-                key=f"doc_{d}"
-            )
+            initial_week[d] = st.selectbox(d.strftime("%a %d/%m"), DOCTORS, index=default_idx, key=f"doc_{d}")
 
     if st.button("💾 Επιλογή Ημερομηνίας Έναρξης"):
         st.session_state.initial_week = [initial_week[d] for d in sorted(initial_week)]
@@ -589,30 +534,20 @@ with right_col:
 
         base_rota = generate_base_rota(st.session_state.initial_week, start_date, end_date)
         
-        # 1. Κατανομή μεγάλων γιορτών (Χριστούγεννα/Πάσχα) με ξεχωριστή, μόνιμη ουρά
         major_dates_sorted = sorted(major_hols.keys())
         major_assignments, major_conflicts_1 = assign_holiday_duties(
-            major_dates_sorted,
-            base_rota,
-            manual_assignments=st.session_state.manual_assignments,
-            max_per_week=2,
-            min_gap_days=3,
-            custom_queue=st.session_state.major_holiday_queue
+            major_dates_sorted, base_rota, manual_assignments=st.session_state.manual_assignments,
+            max_per_week=2, min_gap_days=3, custom_queue=st.session_state.major_holiday_queue
         )
 
         temp_schedule = dict(base_rota)
         temp_schedule.update(st.session_state.manual_assignments)
         temp_schedule.update(major_assignments)
 
-        # 2. Κατανομή υπόλοιπων (μικρών) αργιών με ξεχωριστή, μόνιμη ουρά
         regular_dates_sorted = sorted(regular_hols.keys())
         regular_assignments, major_conflicts_2 = assign_holiday_duties(
-            regular_dates_sorted,
-            temp_schedule,
-            manual_assignments=st.session_state.manual_assignments,
-            max_per_week=2,
-            min_gap_days=3,
-            custom_queue=st.session_state.regular_holiday_queue
+            regular_dates_sorted, temp_schedule, manual_assignments=st.session_state.manual_assignments,
+            max_per_week=2, min_gap_days=3, custom_queue=st.session_state.regular_holiday_queue
         )
 
         holiday_assignments = {**major_assignments, **regular_assignments}
@@ -623,20 +558,20 @@ with right_col:
         st.session_state.holiday_conflicts = holiday_conflicts
 
         st.session_state.schedule = generate_schedule(
-            st.session_state.initial_week,
-            start_date,
-            end_date,
-            holiday_assignments=holiday_assignments,
-            manual_assignments=st.session_state.manual_assignments
+            st.session_state.initial_week, start_date, end_date,
+            holiday_assignments=holiday_assignments, manual_assignments=st.session_state.manual_assignments
         )
         st.session_state.start_date = start_date
         st.session_state.end_date = end_date
         
-        # Υπολογισμός ισσορροπίας με βάση το σύνολο όλων των αργιών (μεγάλων + μικρών)
         st.session_state.balance = compute_balance(
             st.session_state.schedule,
             holiday_dates=set(holiday_assignments.keys())
         )
+        
+        # Αυτόματη αποθήκευση δεδομένων για τον Viewer
+        save_data_for_viewer()
+        st.success("Το πρόγραμμα δημιουργήθηκε και αποθηκεύτηκε επιτυχώς!")
 
     if st.session_state.schedule:
         display_calendar(st.session_state.schedule)
