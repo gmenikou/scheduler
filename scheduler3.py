@@ -153,14 +153,152 @@ def _shifts_in_week(doctor, date, schedule, exclude_date=None):
         if doc == doctor and d != exclude_date and _week_monday(d) == wk
     )
 
-def _get_year_major_count(doc, year, current_assignments, major_dict):
-    cnt = 0
-    for dt, assigned_doc in current_assignments.items():
-        if assigned_doc == doc and dt.year == year and dt in major_dict:
-            cnt += 1
-    return cnt
+def assign_major_holidays_by_year(major_hols_dict, base_schedule, manual_assignments, max_per_week=2, min_gap_days=3, historical_major_counts=None, historical_specific_counts=None):
+    working = dict(base_schedule)
+    working.update(manual_assignments)
+    assignments = {}
+    conflicts = set()
+    max_gap = min_gap_days - 1
 
-def assign_holiday_duties(holiday_dates_sorted, base_schedule, major_hols_dict=None, manual_assignments=None, max_per_week=2, min_gap_days=3, is_major=False, historical_major_counts=None, historical_specific_counts=None, historical_regular_counts=None):
+    # Ομαδοποίηση των 9 μεγάλων αργιών ανά έτος
+    holidays_by_year = {}
+    for d, name in major_hols_dict.items():
+        if d in manual_assignments:
+            assignments[d] = manual_assignments[d]
+            working[d] = manual_assignments[d]
+            continue
+        year = d.year
+        if year not in holidays_by_year:
+            holidays_by_year[year] = []
+        holidays_by_year[year].append((d, name))
+
+    for year, h_list in sorted(holidays_by_year.items()):
+        # Διαχωρισμός: 1) Μ. Παρασκευή & Δευτέρα Πάσχα (οι 2 αποκλειστικές δευτερεύουσες αργίες)
+        # 2) Οι υπόλοιπες 7 βασικές αργίες του έτους
+        secondary_candidates = [item for item in h_list if item[1] in ["Μεγάλη Παρασκευή", "Δευτέρα του Πάσχα"]]
+        primary_candidates = [item for item in h_list if item[1] not in ["Μεγάλη Παρασκευή", "Δευτέρα του Πάσχα"]]
+
+        year_assigned_docs = set()
+
+        # ΣΤΑΔΙΟ Α: Δίνουμε πρώτα τις 7 βασικές αργίες ώστε να πάρει ακριβώς 1 ο καθένας
+        for d, holiday_name in primary_candidates:
+            # Ταξινόμηση γιατρών με βάση το συνολικό ιστορικό και όσους ΔΕΝ έχουν πάρει βασική αργία φέτος
+            sorted_doctors = sorted(
+                DOCTORS,
+                key=lambda doc: (
+                    1 if doc in year_assigned_docs else 0,
+                    historical_major_counts.get(doc, 0) if historical_major_counts is not None else 0,
+                    DOCTORS.index(doc)
+                )
+            )
+
+            chosen = None
+            skipped = []
+            queue = deque(sorted_doctors)
+
+            # 1η Προσπάθεια: Αυστηρός έλεγχος (χωρίς διπλή βασική αργία στον ίδιο γιατρό φέτος & χωρίς κοντινά κενά/εβδομάδα)
+            for _ in range(len(queue)):
+                candidate = queue.popleft()
+                if candidate in year_assigned_docs:
+                    skipped.append(candidate)
+                    continue
+                
+                nearby_conflict = _has_nearby_shift(candidate, d, working, max_gap=max_gap)
+                week_count = _shifts_in_week(candidate, d, working, exclude_date=d)
+                weekly_conflict = (week_count + 1) > max_per_week
+
+                if not nearby_conflict and not weekly_conflict:
+                    chosen = candidate
+                    break
+                skipped.append(candidate)
+
+            # 2η Προσπάθεια: Χαλάρωση κοντινού κενού/εβδομάδας (αλλά ποτέ διπλή βασική αργία στον ίδιο)
+            if chosen is None and skipped:
+                for _ in range(len(skipped)):
+                    candidate = skipped.pop(0)
+                    if candidate in year_assigned_docs:
+                        continue
+                    nearby_conflict = _has_nearby_shift(candidate, d, working, max_gap=max_gap)
+                    week_count = _shifts_in_week(candidate, d, working, exclude_date=d)
+
+                    if not nearby_conflict and (week_count + 1) <= max_per_week:
+                        chosen = candidate
+                        break
+
+            # 3η Έσχατη λύση (αν υπάρχει αδιέξοδο)
+            if chosen is None:
+                for candidate in sorted_doctors:
+                    if candidate not in year_assigned_docs:
+                        chosen = candidate
+                        conflicts.add(d)
+                        break
+                if chosen is None:
+                    chosen = sorted_doctors[0]
+                    conflicts.add(d)
+
+            assignments[d] = chosen
+            working[d] = chosen
+            year_assigned_docs.add(chosen)
+            if historical_major_counts is not None:
+                historical_major_counts[chosen] = historical_major_counts.get(chosen, 0) + 1
+            if historical_specific_counts is not None:
+                if chosen not in historical_specific_counts:
+                    historical_specific_counts[chosen] = {}
+                historical_specific_counts[chosen][holiday_name] = historical_specific_counts[chosen].get(holiday_name, 0) + 1
+
+        # ΣΤΑΔΙΟ Β: Δίνουμε τις 2 υπόλοιπες αργίες (Μ. Παρασκευή / Δευτέρα Πάσχα) στους 2 γιατρούς που θα κάνουν δεύτερη αργία φέτος
+        for d, holiday_name in secondary_candidates:
+            # Προτεραιότητα σε όσους έχουν πάρει τις λιγότερες συνολικές μεγάλες αργίες στο ιστορικό
+            sorted_doctors = sorted(
+                DOCTORS,
+                key=lambda doc: (
+                    historical_major_counts.get(doc, 0) if historical_major_counts is not None else 0,
+                    DOCTORS.index(doc)
+                )
+            )
+
+            chosen = None
+            skipped = []
+            queue = deque(sorted_doctors)
+
+            for _ in range(len(queue)):
+                candidate = queue.popleft()
+                nearby_conflict = _has_nearby_shift(candidate, d, working, max_gap=max_gap)
+                week_count = _shifts_in_week(candidate, d, working, exclude_date=d)
+                weekly_conflict = (week_count + 1) > max_per_week
+
+                if not nearby_conflict and not weekly_conflict:
+                    chosen = candidate
+                    break
+                skipped.append(candidate)
+
+            if chosen is None and skipped:
+                for _ in range(len(skipped)):
+                    candidate = skipped.pop(0)
+                    nearby_conflict = _has_nearby_shift(candidate, d, working, max_gap=max_gap)
+                    week_count = _shifts_in_week(candidate, d, working, exclude_date=d)
+
+                    if not nearby_conflict and (week_count + 1) <= max_per_week:
+                        chosen = candidate
+                        break
+
+            if chosen is None:
+                chosen = sorted_doctors[0]
+                conflicts.add(d)
+
+            assignments[d] = chosen
+            working[d] = chosen
+            year_assigned_docs.add(chosen)
+            if historical_major_counts is not None:
+                historical_major_counts[chosen] = historical_major_counts.get(chosen, 0) + 1
+            if historical_specific_counts is not None:
+                if chosen not in historical_specific_counts:
+                    historical_specific_counts[chosen] = {}
+                historical_specific_counts[chosen][holiday_name] = historical_specific_counts[chosen].get(holiday_name, 0) + 1
+
+    return assignments, conflicts
+
+def assign_regular_holidays(holiday_dates_sorted, base_schedule, manual_assignments=None, max_per_week=2, min_gap_days=3, historical_regular_counts=None):
     manual_assignments = manual_assignments or {}
     working = dict(base_schedule)
     working.update(manual_assignments)
@@ -168,89 +306,45 @@ def assign_holiday_duties(holiday_dates_sorted, base_schedule, major_hols_dict=N
     assignments = {}
     conflicts = set()
     max_gap = min_gap_days - 1
-    major_hols_dict = major_hols_dict or {}
 
     for d in holiday_dates_sorted:
         if d in manual_assignments:
             continue
 
-        holiday_name = major_hols_dict.get(d, "")
-
-        if is_major and historical_major_counts is not None and historical_specific_counts is not None:
-            # Ακριβής έλεγχος 9 μεγάλων αργιών ανά έτος:
-            # Αν η μέρα είναι Μεγάλη Παρασκευή ή Δευτέρα Πάσχα, προτεραιότητα σε όσους έχουν ήδη 1 μεγάλη αργία φέτος
-            if holiday_name in ["Μεγάλη Παρασκευή", "Δευτέρα του Πάσχα"]:
-                sorted_doctors = sorted(
-                    DOCTORS,
-                    key=lambda doc: (
-                        0 if _get_year_major_count(doc, d.year, assignments, major_hols_dict) == 1 else 1,
-                        historical_major_counts.get(doc, 0),
-                        DOCTORS.index(doc)
-                    )
-                )
-            else:
-                sorted_doctors = sorted(
-                    DOCTORS,
-                    key=lambda doc: (
-                        _get_year_major_count(doc, d.year, assignments, major_hols_dict),
-                        historical_major_counts.get(doc, 0),
-                        DOCTORS.index(doc)
-                    )
-                )
-        elif not is_major and historical_regular_counts is not None:
-            sorted_doctors = sorted(
-                DOCTORS,
-                key=lambda doc: (
-                    historical_regular_counts.get(doc, 0),
-                    DOCTORS.index(doc)
-                )
+        sorted_doctors = sorted(
+            DOCTORS,
+            key=lambda doc: (
+                historical_regular_counts.get(doc, 0) if historical_regular_counts is not None else 0,
+                DOCTORS.index(doc)
             )
-        else:
-            sorted_doctors = list(DOCTORS)
+        )
 
         queue = deque(sorted_doctors)
         skipped = []
         chosen = None
 
-        # 1η Προσπάθεια: Αυστηρός έλεγχος (μέχρι 2 μεγάλες αργίες ανά έτος, η 2η αποκλειστικά Μ. Παρασκευή ή Δευτέρα Πάσχα)
         for _ in range(len(queue)):
             candidate = queue.popleft()
             nearby_conflict = _has_nearby_shift(candidate, d, working, max_gap=max_gap)
             week_count = _shifts_in_week(candidate, d, working, exclude_date=d)
             weekly_conflict = (week_count + 1) > max_per_week
-            
-            second_major_violation = False
-            if is_major:
-                year_count = _get_year_major_count(candidate, d.year, assignments, major_hols_dict)
-                if year_count >= 1:
-                    if holiday_name not in ["Μεγάλη Παρασκευή", "Δευτέρα του Πάσχα"]:
-                        second_major_violation = True
 
-            if not nearby_conflict and not weekly_conflict and not second_major_violation:
+            if not nearby_conflict and not weekly_conflict:
                 chosen = candidate
                 break
             skipped.append(candidate)
 
-        # 2η Προσπάθεια: Χαλάρωση κοντινού κενού/εβδομάδας, τηρώντας αυστηρά τον κανόνα των 9 μεγάλων αργιών
         if chosen is None and skipped:
             for _ in range(len(skipped)):
                 candidate = skipped.pop(0)
                 nearby_conflict = _has_nearby_shift(candidate, d, working, max_gap=max_gap)
                 week_count = _shifts_in_week(candidate, d, working, exclude_date=d)
-                
-                second_major_violation = False
-                if is_major:
-                    year_count = _get_year_major_count(candidate, d.year, assignments, major_hols_dict)
-                    if year_count >= 1:
-                        if holiday_name not in ["Μεγάλη Παρασκευή", "Δευτέρα του Πάσχα"]:
-                            second_major_violation = True
 
-                if not nearby_conflict and (week_count + 1) <= max_per_week and not second_major_violation:
+                if not nearby_conflict and (week_count + 1) <= max_per_week:
                     chosen = candidate
                     break
                 skipped.append(candidate)
 
-        # 3η Έσχατη λύση (Αν υπάρχει απόλυτο αδιέξοδο)
         if chosen is None and skipped:
             chosen = skipped.pop(0)
             conflicts.add(d)
@@ -258,16 +352,8 @@ def assign_holiday_duties(holiday_dates_sorted, base_schedule, major_hols_dict=N
         if chosen is not None:
             assignments[d] = chosen
             working[d] = chosen
-            if is_major:
-                if historical_major_counts is not None:
-                    historical_major_counts[chosen] = historical_major_counts.get(chosen, 0) + 1
-                if historical_specific_counts is not None:
-                    if chosen not in historical_specific_counts:
-                        historical_specific_counts[chosen] = {}
-                    historical_specific_counts[chosen][holiday_name] = historical_specific_counts[chosen].get(holiday_name, 0) + 1
-            else:
-                if historical_regular_counts is not None:
-                    historical_regular_counts[chosen] = historical_regular_counts.get(chosen, 0) + 1
+            if historical_regular_counts is not None:
+                historical_regular_counts[chosen] = historical_regular_counts.get(chosen, 0) + 1
 
     return assignments, conflicts
 
@@ -573,8 +659,7 @@ with left_col:
             conflicts = st.session_state.get("holiday_conflicts", set())
             if conflicts:
                 st.warning(
-                    f"⚠️ Σε {len(conflicts)} αργία(ες) δεν βρέθηκε γιατρός χωρίς σύγκρουση "
-                    f"(κανόνας 3 ημερών / 2 εφημεριών / αυστηρός περιορισμός 9 μεγάλων αργιών) — ελέγξτε τις παρακάτω."
+                    f"⚠️ Σε {len(conflicts)} αργία(ες) δεν βρέθηκε γιατρός χωρίς σύγκρουση — ελέγξτε τις παρακάτω."
                 )
             with st.expander(f"🎉 Αργίες στο διάστημα ({len(st.session_state.holiday_names)})"):
                 for d in sorted(st.session_state.holiday_names.keys()):
@@ -669,16 +754,13 @@ with right_col:
 
         base_rota = generate_base_rota(st.session_state.initial_week, start_date, end_date)
         
-        # 1. Κατανομή των 9 μεγάλων γιορτών με προτεραιότητα στη Μεγάλη Παρασκευή / Δευτέρα Πάσχα για τη 2η αργία
-        major_dates_sorted = sorted(major_hols.keys())
-        major_assignments, major_conflicts_1 = assign_holiday_duties(
-            major_dates_sorted,
+        # 1. Κατανομή των 9 μεγάλων εορτών σε 2 στάδια (7 βασικές -> 2 δευτερεύουσες)
+        major_assignments, major_conflicts_1 = assign_major_holidays_by_year(
+            major_hols,
             base_rota,
-            major_hols_dict=major_hols,
             manual_assignments=st.session_state.manual_assignments,
             max_per_week=2,
             min_gap_days=3,
-            is_major=True,
             historical_major_counts=st.session_state.historical_major_counts,
             historical_specific_counts=st.session_state.historical_specific_counts
         )
@@ -689,14 +771,12 @@ with right_col:
 
         # 2. Κατανομή μικρών αργιών
         regular_dates_sorted = sorted(regular_hols.keys())
-        regular_assignments, major_conflicts_2 = assign_holiday_duties(
+        regular_assignments, major_conflicts_2 = assign_regular_holidays(
             regular_dates_sorted,
             temp_schedule,
-            major_hols_dict=regular_hols,
             manual_assignments=st.session_state.manual_assignments,
             max_per_week=2,
             min_gap_days=3,
-            is_major=False,
             historical_regular_counts=st.session_state.historical_regular_counts
         )
 
