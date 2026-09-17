@@ -22,7 +22,6 @@ DOCTOR_COLORS = {
 
 WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
-# Fixed-date Cyprus public holidays: (month, day, name)
 FIXED_HOLIDAYS = [
     (1, 1, "Πρωτοχρονιά"),
     (1, 6, "Θεοφάνεια"),
@@ -153,56 +152,57 @@ def _shifts_in_week(doctor, date, schedule, exclude_date=None):
         if doc == doctor and d != exclude_date and _week_monday(d) == wk
     )
 
-def assign_major_holidays_global_range(major_hols_dict, base_schedule, manual_assignments, max_per_week=2, min_gap_days=3, historical_major_counts=None, historical_specific_counts=None):
+def assign_major_holidays_global_rotation_strict(major_hols_dict, base_schedule, manual_assignments, max_per_week=2, min_gap_days=3, historical_major_counts=None, historical_specific_counts=None):
     working = dict(base_schedule)
     working.update(manual_assignments)
     assignments = {}
     conflicts = set()
     max_gap = min_gap_days - 1
 
-    # Διαχωρισμός σε ΟΛΟΚΛΗΡΟ ΤΟ ΕΥΡΟΣ:
-    # 1) Όλες οι βασικές αργίες (7 ανά έτος) χρονολογικά
-    # 2) Όλες οι δευτερεύουσες αργίες (Μ. Παρασκευή, Δευτέρα Πάσχα) χρονολογικά
-    primary_list = []
-    secondary_list = []
-
+    # Ομαδοποίηση των αργιών ανά έτος
+    holidays_by_year = {}
     for d, name in sorted(major_hols_dict.items()):
         if d in manual_assignments:
             assignments[d] = manual_assignments[d]
             working[d] = manual_assignments[d]
             continue
-        if name in ["Μεγάλη Παρασκευή", "Δευτέρα του Πάσχα"]:
-            secondary_list.append((d, name))
-        else:
-            primary_list.append((d, name))
+        year_key = d.year if (d.month != 1 or d.day != 1) else d.year - 1 # (Για την Πρωτοχρονιά ανήκει στο προηγούμενο εορταστικό σετ, ή απλά d.year)
+        # Ας ομαδοποιήσουμε με βάση το ημερολογιακό έτος
+        y_group = d.year
+        if y_group not in holidays_by_year:
+            holidays_by_year[y_group] = []
+        holidays_by_year[y_group].append((d, name))
 
-    # Βοηθητική συνάρτηση γιατρών ανά έτος για τον έλεγχο διπλής βασικής αργίας
-    def _get_year_primary_count(doc, year):
+    standalone_names = ["Χριστούγεννα", "Παραμονή Πρωτοχρονιάς", "Πρωτοχρονιά", "Κυριακή του Πάσχα", "Δευτέρα του Πάσχα"]
+    xmas_pairable = ["Παραμονή Χριστουγέννων", "Δεύτερη μέρα Χριστουγέννων"]
+    easter_pairable = ["Μεγάλη Παρασκευή", "Μεγάλο Σάββατο"]
+
+    # Συγκεντρώνουμε ΟΛΕΣ τις standalone αργίες χρονολογικά για όλο το εύρος, 
+    # ώστε να τρέξει μια ενιαία, αδιάκοπη κυκλική ρότα (global queue) για ΟΛΑ τα χρόνια!
+    all_standalone = []
+    for year, h_list in sorted(holidays_by_year.items()):
+        for d, name in h_list:
+            if name in standalone_names:
+                all_standalone.append((d, name))
+
+    # --- ΒΗΜΑ 1: Παγκόσμια κυκλική ρότα για ΟΛΕΣ τις κύριες (standalone) αργίες όλου του εύρους ---
+    doc_index = 0
+    # Dictionary για να ελέγχουμε ποιες κύριες αργίες πήρε ο κάθε γιατρός ανά έτος (για να μην πάρει την ίδια το ίδιο έτος, αν και είναι διαφορετικές)
+    def _get_year_standalone_count(doc, year):
         cnt = 0
         for dt, assigned_doc in assignments.items():
-            if assigned_doc == doc and dt.year == year and major_hols_dict.get(dt, "") not in ["Μεγάλη Παρασκευή", "Δευτέρα του Πάσχα"]:
+            if assigned_doc == doc and dt.year == year and major_hols_dict.get(dt, "") in standalone_names:
                 cnt += 1
         return cnt
 
-    # --- ΠΕΡΑΣΜΑ 1: Όλες οι 7 βασικές αργίες ενιαία για όλο το εύρος ---
-    for d, holiday_name in primary_list:
+    for d, holiday_name in all_standalone:
         year = d.year
-        sorted_doctors = sorted(
-            DOCTORS,
-            key=lambda doc: (
-                _get_year_primary_count(doc, year),
-                historical_major_counts.get(doc, 0) if historical_major_counts is not None else 0,
-                DOCTORS.index(doc)
-            )
-        )
+        ordered_docs = [DOCTORS[(doc_index + i) % len(DOCTORS)] for i in range(len(DOCTORS))]
 
         chosen = None
         skipped = []
-        queue = deque(sorted_doctors)
-
-        for _ in range(len(queue)):
-            candidate = queue.popleft()
-            if _get_year_primary_count(candidate, year) >= 1:
+        for candidate in ordered_docs:
+            if _get_year_standalone_count(candidate, year) >= 1:
                 skipped.append(candidate)
                 continue
 
@@ -212,30 +212,32 @@ def assign_major_holidays_global_range(major_hols_dict, base_schedule, manual_as
 
             if not nearby_conflict and not weekly_conflict:
                 chosen = candidate
+                doc_index = (DOCTORS.index(candidate) + 1) % len(DOCTORS)
                 break
             skipped.append(candidate)
 
         if chosen is None and skipped:
-            for _ in range(len(skipped)):
-                candidate = skipped.pop(0)
-                if _get_year_primary_count(candidate, year) >= 1:
+            for candidate in skipped:
+                if _get_year_standalone_count(candidate, year) >= 1:
                     continue
                 nearby_conflict = _has_nearby_shift(candidate, d, working, max_gap=max_gap)
                 week_count = _shifts_in_week(candidate, d, working, exclude_date=d)
-
                 if not nearby_conflict and (week_count + 1) <= max_per_week:
                     chosen = candidate
+                    doc_index = (DOCTORS.index(candidate) + 1) % len(DOCTORS)
                     break
 
         if chosen is None:
-            for candidate in sorted_doctors:
-                if _get_year_primary_count(candidate, year) < 1:
+            for candidate in ordered_docs:
+                if _get_year_standalone_count(candidate, year) < 1:
                     chosen = candidate
                     conflicts.add(d)
+                    doc_index = (DOCTORS.index(candidate) + 1) % len(DOCTORS)
                     break
             if chosen is None:
-                chosen = sorted_doctors[0]
+                chosen = DOCTORS[doc_index % len(DOCTORS)]
                 conflicts.add(d)
+                doc_index = (doc_index + 1) % len(DOCTORS)
 
         assignments[d] = chosen
         working[d] = chosen
@@ -246,54 +248,46 @@ def assign_major_holidays_global_range(major_hols_dict, base_schedule, manual_as
                 historical_specific_counts[chosen] = {}
             historical_specific_counts[chosen][holiday_name] = historical_specific_counts[chosen].get(holiday_name, 0) + 1
 
-    # --- ΠΕΡΑΣΜΑ 2: Όλες οι 2 δευτερεύουσες αργίες (Μ. Παρασκευή, Δευτέρα Πάσχα) ενιαία για όλο το εύρος ---
-    for d, holiday_name in secondary_list:
-        sorted_doctors = sorted(
-            DOCTORS,
-            key=lambda doc: (
-                historical_major_counts.get(doc, 0) if historical_major_counts is not None else 0,
-                DOCTORS.index(doc)
-            )
-        )
+    # --- ΒΗΜΑ 2: Ανάθεση των συνδυαστικών/δεύτερων αργιών ανά έτος στους υπόλοιπους 2 γιατρούς ---
+    for year, h_list in sorted(holidays_by_year.items()):
+        year_xmas_pair = [item for item in h_list if item[1] in xmas_pairable]
+        year_easter_pair = [item for item in h_list if item[1] in easter_pairable]
 
-        chosen = None
-        skipped = []
-        queue = deque(sorted_doctors)
+        # Βρίσκουμε ποιοι γιατροί είναι ήδη πιασμένοι από τις standalone σε αυτό το έτος
+        year_assigned_docs = {assigned_doc for dt, assigned_doc in assignments.items() if dt.year == year}
+        remaining_docs = [doc for doc in DOCTORS if doc not in year_assigned_docs]
 
-        for _ in range(len(queue)):
-            candidate = queue.popleft()
-            nearby_conflict = _has_nearby_shift(candidate, d, working, max_gap=max_gap)
-            week_count = _shifts_in_week(candidate, d, working, exclude_date=d)
-            weekly_conflict = (week_count + 1) > max_per_week
-
-            if not nearby_conflict and not weekly_conflict:
-                chosen = candidate
-                break
-            skipped.append(candidate)
-
-        if chosen is None and skipped:
-            for _ in range(len(skipped)):
-                candidate = skipped.pop(0)
-                nearby_conflict = _has_nearby_shift(candidate, d, working, max_gap=max_gap)
-                week_count = _shifts_in_week(candidate, d, working, exclude_date=d)
-
-                if not nearby_conflict and (week_count + 1) <= max_per_week:
-                    chosen = candidate
-                    break
-                skipped.append(candidate)
-
-        if chosen is None:
-            chosen = sorted_doctors[0]
-            conflicts.add(d)
-
-        assignments[d] = chosen
-        working[d] = chosen
-        if historical_major_counts is not None:
-            historical_major_counts[chosen] = historical_major_counts.get(chosen, 0) + 1
-        if historical_specific_counts is not None:
-            if chosen not in historical_specific_counts:
-                historical_specific_counts[chosen] = {}
-            historical_specific_counts[chosen][holiday_name] = historical_specific_counts[chosen].get(holiday_name, 0) + 1
+        if len(remaining_docs) >= 2 and len(year_xmas_pair) > 0 and len(year_easter_pair) > 0:
+            doc1, doc2 = remaining_docs[0], remaining_docs[1]
+            pairs_to_assign = [
+                (year_xmas_pair[0], doc1),
+                (year_easter_pair[0], doc1),
+                (year_xmas_pair[1] if len(year_xmas_pair) > 1 else year_xmas_pair[0], doc2),
+                (year_easter_pair[1] if len(year_easter_pair) > 1 else year_easter_pair[0], doc2),
+            ]
+            for (d, holiday_name), candidate in pairs_to_assign:
+                assignments[d] = candidate
+                working[d] = candidate
+                if historical_major_counts is not None:
+                    historical_major_counts[candidate] = historical_major_counts.get(candidate, 0) + 1
+                if historical_specific_counts is not None:
+                    if candidate not in historical_specific_counts:
+                        historical_specific_counts[candidate] = {}
+                    historical_specific_counts[candidate][holiday_name] = historical_specific_counts[candidate].get(holiday_name, 0) + 1
+        else:
+            # Fallback
+            for d, holiday_name in (year_xmas_pair + year_easter_pair):
+                if d in manual_assignments:
+                    continue
+                candidate = remaining_docs[0] if remaining_docs else DOCTORS[0]
+                assignments[d] = candidate
+                working[d] = candidate
+                if historical_major_counts is not None:
+                    historical_major_counts[candidate] = historical_major_counts.get(candidate, 0) + 1
+                if historical_specific_counts is not None:
+                    if candidate not in historical_specific_counts:
+                        historical_specific_counts[candidate] = {}
+                    historical_specific_counts[candidate][holiday_name] = historical_specific_counts[candidate].get(holiday_name, 0) + 1
 
     return assignments, conflicts
 
@@ -753,8 +747,8 @@ with right_col:
 
         base_rota = generate_base_rota(st.session_state.initial_week, start_date, end_date)
         
-        # 1. Ενιαία κατανομή των 9 μεγάλων εορτών για ολόκληρο το εύρος (7 βασικές -> 2 δευτερεύουσες)
-        major_assignments, major_conflicts_1 = assign_major_holidays_global_range(
+        # 1. Ενιαία παγκόσμια ρότα για ΟΛΕΣ τις κύριες standalone αργίες όλου του εύρους + μετά οι συνδυαστικές
+        major_assignments, major_conflicts_1 = assign_major_holidays_global_rotation_strict(
             major_hols,
             base_rota,
             manual_assignments=st.session_state.manual_assignments,
