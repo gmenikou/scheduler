@@ -184,7 +184,6 @@ def assign_major_holidays_global_rotation_strict(major_hols_dict, base_schedule,
             if name in standalone_names:
                 all_standalone.append((d, name))
 
-    # --- ΒΗΜΑ 1: Παγκόσμια κυκλική ρότα για ΟΛΕΣ τις κύριες (standalone) αργίες με shuffle στις ισοβαθμίες ---
     doc_index = 0
 
     def _get_year_standalone_count(doc, year):
@@ -198,7 +197,6 @@ def assign_major_holidays_global_rotation_strict(major_hols_dict, base_schedule,
         year = d.year
         ordered_docs = [DOCTORS[(doc_index + i) % len(DOCTORS)] for i in range(len(DOCTORS))]
 
-        # Ομαδοποίηση και τυχαία ανακατάταξη (shuffle) σε ισοβαθμίες ιστορικού
         counts_dict = {}
         for doc in ordered_docs:
             cnt = historical_specific_counts.get(doc, {}).get(holiday_name, 0)
@@ -259,7 +257,6 @@ def assign_major_holidays_global_rotation_strict(major_hols_dict, base_schedule,
             historical_specific_counts[chosen] = {}
         historical_specific_counts[chosen][holiday_name] = historical_specific_counts[chosen].get(holiday_name, 0) + 1
 
-    # --- ΒΗΜΑ 2: Ανάθεση συνδυαστικών αργιών με shuffle στις ισοβαθμίες συνολικού ιστορικού ---
     for year, h_list in sorted(holidays_by_year.items()):
         year_xmas_pair = [item for item in h_list if item[1] in xmas_pairable]
         year_easter_pair = [item for item in h_list if item[1] in easter_pairable]
@@ -267,7 +264,6 @@ def assign_major_holidays_global_rotation_strict(major_hols_dict, base_schedule,
         year_assigned_docs = {assigned_doc for dt, assigned_doc in assignments.items() if dt.year == year}
         remaining_docs = [doc for doc in DOCTORS if doc not in year_assigned_docs]
 
-        # Ομαδοποίηση και shuffle για απόλυτη ισορροπία στις ισοβαθμίες συνολικών αργιών
         major_counts_dict = {}
         for doc in remaining_docs:
             cnt = historical_major_counts.get(doc, 0)
@@ -323,7 +319,6 @@ def assign_regular_holidays(holiday_dates_sorted, base_schedule, manual_assignme
         if d in manual_assignments:
             continue
 
-        # Shuffle και στις κανονικές αργίες σε ισοβαθμίες ιστορικού
         counts_dict = {}
         for doc in DOCTORS:
             cnt = historical_regular_counts.get(doc, 0) if historical_regular_counts is not None else 0
@@ -766,6 +761,11 @@ with right_col:
         end_date = st.date_input("End date", st.session_state.start_date + datetime.timedelta(days=30))
 
     if st.button("🗓️ Δημιουργία Προγράμματος"):
+        # Μηδενισμός ιστορικού για να μην προστίθενται παλιές μετρήσεις
+        st.session_state.historical_major_counts = {doc: 0 for doc in DOCTORS}
+        st.session_state.historical_specific_counts = {doc: {} for doc in DOCTORS}
+        st.session_state.historical_regular_counts = {doc: 0 for doc in DOCTORS}
+
         holiday_names = get_holidays_in_range(start_date, end_date)
         major_hols = get_major_holidays_in_range(start_date, end_date)
         regular_hols = {d: n for d, n in holiday_names.items() if d not in major_hols}
