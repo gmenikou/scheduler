@@ -177,14 +177,26 @@ def assign_holiday_duties(holiday_dates_sorted, base_schedule, major_hols_dict=N
         holiday_name = major_hols_dict.get(d, "")
 
         if is_major and historical_major_counts is not None and historical_specific_counts is not None:
-            sorted_doctors = sorted(
-                DOCTORS,
-                key=lambda doc: (
-                    historical_major_counts.get(doc, 0),
-                    historical_specific_counts.get(doc, {}).get(holiday_name, 0),
-                    DOCTORS.index(doc)
+            # Ακριβής έλεγχος 9 μεγάλων αργιών ανά έτος:
+            # Αν η μέρα είναι Μεγάλη Παρασκευή ή Δευτέρα Πάσχα, προτεραιότητα σε όσους έχουν ήδη 1 μεγάλη αργία φέτος
+            if holiday_name in ["Μεγάλη Παρασκευή", "Δευτέρα του Πάσχα"]:
+                sorted_doctors = sorted(
+                    DOCTORS,
+                    key=lambda doc: (
+                        0 if _get_year_major_count(doc, d.year, assignments, major_hols_dict) == 1 else 1,
+                        historical_major_counts.get(doc, 0),
+                        DOCTORS.index(doc)
+                    )
                 )
-            )
+            else:
+                sorted_doctors = sorted(
+                    DOCTORS,
+                    key=lambda doc: (
+                        _get_year_major_count(doc, d.year, assignments, major_hols_dict),
+                        historical_major_counts.get(doc, 0),
+                        DOCTORS.index(doc)
+                    )
+                )
         elif not is_major and historical_regular_counts is not None:
             sorted_doctors = sorted(
                 DOCTORS,
@@ -200,7 +212,7 @@ def assign_holiday_duties(holiday_dates_sorted, base_schedule, major_hols_dict=N
         skipped = []
         chosen = None
 
-        # 1η Προσπάθεια: Αυστηρός έλεγχος (εάν έχει ήδη 1 μεγάλη αργία στο ίδιο έτος, η 2η+ πρέπει να είναι Μ. Παρασκευή ή Δευτέρα Πάσχα)
+        # 1η Προσπάθεια: Αυστηρός έλεγχος (μέχρι 2 μεγάλες αργίες ανά έτος, η 2η αποκλειστικά Μ. Παρασκευή ή Δευτέρα Πάσχα)
         for _ in range(len(queue)):
             candidate = queue.popleft()
             nearby_conflict = _has_nearby_shift(candidate, d, working, max_gap=max_gap)
@@ -219,7 +231,7 @@ def assign_holiday_duties(holiday_dates_sorted, base_schedule, major_hols_dict=N
                 break
             skipped.append(candidate)
 
-        # 2η Προσπάθεια: Χαλάρωση κοντινού κενού/εβδομάδας, τηρώντας τον αυστηρό περιορισμό ανά έτος για τις μεγάλες αργίες
+        # 2η Προσπάθεια: Χαλάρωση κοντινού κενού/εβδομάδας, τηρώντας αυστηρά τον κανόνα των 9 μεγάλων αργιών
         if chosen is None and skipped:
             for _ in range(len(skipped)):
                 candidate = skipped.pop(0)
@@ -238,7 +250,7 @@ def assign_holiday_duties(holiday_dates_sorted, base_schedule, major_hols_dict=N
                     break
                 skipped.append(candidate)
 
-        # 3η Έσχατη λύση (Απόλυτο αδιέξοδο)
+        # 3η Έσχατη λύση (Αν υπάρχει απόλυτο αδιέξοδο)
         if chosen is None and skipped:
             chosen = skipped.pop(0)
             conflicts.add(d)
@@ -383,7 +395,7 @@ def create_major_holidays_pdf(df, start_date, end_date, filename="major_holidays
     pdf.add_font('DejaVu', 'B', 'DejaVuSans.ttf', uni=True)
 
     pdf.set_font("DejaVu", "B", 16)
-    pdf.cell(0, 10, "Κατάσταση Εφημεριών Χριστουγέννων & Πάσχα", ln=True, align="C")
+    pdf.cell(0, 10, "Κατάσταση Εφημεριών 9 Μεγάλων Εορτών", ln=True, align="C")
     pdf.set_font("DejaVu", "", 12)
     pdf.cell(0, 8, f"Περίοδος: {start_date.strftime('%d/%m/%Y')} – {end_date.strftime('%d/%m/%Y')}", ln=True, align="C")
     pdf.ln(6)
@@ -562,7 +574,7 @@ with left_col:
             if conflicts:
                 st.warning(
                     f"⚠️ Σε {len(conflicts)} αργία(ες) δεν βρέθηκε γιατρός χωρίς σύγκρουση "
-                    f"(κανόνας 3 ημερών / 2 εφημεριών / αυστηρός περιορισμός 2ης μεγάλης αργίας ανά έτος) — ελέγξτε τις παρακάτω."
+                    f"(κανόνας 3 ημερών / 2 εφημεριών / αυστηρός περιορισμός 9 μεγάλων αργιών) — ελέγξτε τις παρακάτω."
                 )
             with st.expander(f"🎉 Αργίες στο διάστημα ({len(st.session_state.holiday_names)})"):
                 for d in sorted(st.session_state.holiday_names.keys()):
@@ -575,11 +587,11 @@ with left_col:
 
         major_hols = get_major_holidays_in_range(st.session_state.start_date, st.session_state.end_date)
         if major_hols:
-            with st.expander("🎄🐣 Ανάλυση Μεγάλων Εορτών (Χριστούγεννα & Πάσχα)"):
+            with st.expander("🎄🐣 Ανάλυση 9 Μεγάλων Εορτών"):
                 major_df = compute_major_holidays_summary(st.session_state.schedule, major_hols)
                 st.dataframe(major_df, use_container_width=True)
                 
-                if st.button("📄 Εξαγωγή αναφοράς Χριστουγέννων/Πάσχα σε PDF"):
+                if st.button("📄 Εξαγωγή αναφοράς 9 μεγάλων εορτών σε PDF"):
                     pdf_hols_file = create_major_holidays_pdf(
                         major_df,
                         st.session_state.start_date,
@@ -657,7 +669,7 @@ with right_col:
 
         base_rota = generate_base_rota(st.session_state.initial_week, start_date, end_date)
         
-        # 1. Κατανομή μεγάλων γιορτών με αυστηρό κανόνα 2ης μεγάλης αργίας ανά έτος
+        # 1. Κατανομή των 9 μεγάλων γιορτών με προτεραιότητα στη Μεγάλη Παρασκευή / Δευτέρα Πάσχα για τη 2η αργία
         major_dates_sorted = sorted(major_hols.keys())
         major_assignments, major_conflicts_1 = assign_holiday_duties(
             major_dates_sorted,
@@ -675,7 +687,7 @@ with right_col:
         temp_schedule.update(st.session_state.manual_assignments)
         temp_schedule.update(major_assignments)
 
-        # 2. Κατανομή μικρών αργιών με ισόποση κατανομή βάσει ιστορικού
+        # 2. Κατανομή μικρών αργιών
         regular_dates_sorted = sorted(regular_hols.keys())
         regular_assignments, major_conflicts_2 = assign_holiday_duties(
             regular_dates_sorted,
