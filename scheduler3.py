@@ -59,6 +59,7 @@ def get_cyprus_holidays(year):
     movable = {
         easter - datetime.timedelta(days=48): "Καθαρά Δευτέρα",
         easter - datetime.timedelta(days=2): "Μεγάλη Παρασκευή",
+        easter - datetime.timedelta(days=1): "Μεγάλο Σάββατο",
         easter: "Κυριακή του Πάσχα",
         easter + datetime.timedelta(days=1): "Δευτέρα του Πάσχα",
         easter + datetime.timedelta(days=50): "Δευτέρα Αγίου Πνεύματος",
@@ -75,6 +76,7 @@ def get_holidays_in_range(start_date, end_date):
 def get_major_holidays_in_range(start_date, end_date):
     target_dates = {}
     for year in range(start_date.year, end_date.year + 1):
+        # Προσθήκη Παραμονής Χριστουγέννων (24/12) και Παραμονής Πρωτοχρονιάς (31/12)
         c_dates = [
             (datetime.date(year, 12, 24), "Παραμονή Χριστουγέννων"),
             (datetime.date(year, 12, 25), "Χριστούγεννα"),
@@ -88,6 +90,7 @@ def get_major_holidays_in_range(start_date, end_date):
         
         try:
             easter = orthodox_easter(year)
+            # Προσθήκη Μεγάλου Σαββάτου στις μεγάλες αργίες του Πάσχα
             e_dates = [
                 (easter - datetime.timedelta(days=2), "Μεγάλη Παρασκευή"),
                 (easter - datetime.timedelta(days=1), "Μεγάλο Σάββατο"),
@@ -168,11 +171,8 @@ def assign_holiday_duties(holiday_dates_sorted, base_schedule, major_hols_dict=N
 
         holiday_name = major_hols_dict.get(d, "")
 
-        # Ταξινόμηση γιατρών με βάση το μακροπρόθεσμο ιστορικό ώστε να εξισορροπούνται οι μεγάλες αργίες
+        # Ταξινόμηση βάσει ιστορικού (ειδικού ανά γιορτή και συνολικού)
         if is_major and historical_major_counts is not None and historical_specific_counts is not None:
-            # Πρωτεύον κριτήριο: Λιγότερες εμφανίσεις στη συγκεκριμένη γιορτή (π.χ. Χριστούγεννα), 
-            # Δευτερεύον κριτήριο: Λιγότερες συνολικές μεγάλες αργίες, 
-            # Τριτεύον κριτήριο: Σειρά στον πίνακα DOCTORS
             sorted_doctors = sorted(
                 DOCTORS,
                 key=lambda doc: (
@@ -188,14 +188,13 @@ def assign_holiday_duties(holiday_dates_sorted, base_schedule, major_hols_dict=N
         skipped = []
         chosen = None
 
-        # 1η Προσπάθεια: Αυστηρή τήρηση όλων των κανόνων
+        # 1η Προσπάθεια: Αυστηρός έλεγχος (κανόνας 2ης μεγάλης αργίας: αποκλειστικά Μ. Παρασκευή ή Δευτέρα Πάσχα)
         for _ in range(len(queue)):
             candidate = queue.popleft()
             nearby_conflict = _has_nearby_shift(candidate, d, working, max_gap=max_gap)
             week_count = _shifts_in_week(candidate, d, working, exclude_date=d)
             weekly_conflict = (week_count + 1) > max_per_week
             
-            # Αυστηρός κανόνας 2ης μεγάλης αργίας στην ίδια περίοδο
             second_major_violation = False
             if is_major and historical_major_counts is not None:
                 current_count = historical_major_counts.get(candidate, 0)
@@ -208,7 +207,7 @@ def assign_holiday_duties(holiday_dates_sorted, base_schedule, major_hols_dict=N
                 break
             skipped.append(candidate)
 
-        # 2η Προσπάθεια: Χαλάρωση κοντινού κενού/εβδομάδας αν υπάρχει αδιέξοδο, διατηρώντας όμως τον κανόνα 2ης μεγάλης αργίας
+        # 2η Προσπάθεια: Χαλάρωση κοντινού κενού/εβδομάδας, διατηρώντας όμως τον κανόνα 2ης μεγάλης αργίας
         if chosen is None and skipped:
             for _ in range(len(skipped)):
                 candidate = skipped.pop(0)
@@ -641,7 +640,7 @@ with right_col:
 
         base_rota = generate_base_rota(st.session_state.initial_week, start_date, end_date)
         
-        # 1. Κατανομή μεγάλων γιορτών με αυστηρή μακροπρόθεσμη εξισορρόπηση ανά είδος και συνολικά
+        # 1. Κατανομή μεγάλων γιορτών με τις 9 μεγάλες αργίες και τις προϋποθέσεις εξισορρόπησης
         major_dates_sorted = sorted(major_hols.keys())
         major_assignments, major_conflicts_1 = assign_holiday_duties(
             major_dates_sorted,
