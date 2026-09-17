@@ -4,6 +4,7 @@ import calendar
 import pandas as pd
 from fpdf import FPDF
 from collections import deque
+import random
 
 # ----------------------------
 # CONSTANTS
@@ -16,7 +17,7 @@ DOCTOR_COLORS = {
     "Μαρία": (200, 200, 255),
     "Αθηνά": (255, 255, 200),
     "Αλέξανδρος": (255, 200, 255),
-    "Έλια": (200, 255, 255),
+    "Έλια": (200, 200, 255),
     "Χριστίνα": (220, 220, 220)
 }
 
@@ -183,7 +184,7 @@ def assign_major_holidays_global_rotation_strict(major_hols_dict, base_schedule,
             if name in standalone_names:
                 all_standalone.append((d, name))
 
-    # --- ΒΗΜΑ 1: Παγκόσμια κυκλική ρότα για ΟΛΕΣ τις κύριες (standalone) αργίες χρονολογικά ---
+    # --- ΒΗΜΑ 1: Παγκόσμια κυκλική ρότα για ΟΛΕΣ τις κύριες (standalone) αργίες με shuffle στις ισοβαθμίες ---
     doc_index = 0
 
     def _get_year_standalone_count(doc, year):
@@ -197,13 +198,19 @@ def assign_major_holidays_global_rotation_strict(major_hols_dict, base_schedule,
         year = d.year
         ordered_docs = [DOCTORS[(doc_index + i) % len(DOCTORS)] for i in range(len(DOCTORS))]
 
-        ordered_docs = sorted(
-            ordered_docs,
-            key=lambda doc: (
-                historical_specific_counts.get(doc, {}).get(holiday_name, 0),
-                DOCTORS.index(doc)
-            )
-        )
+        # Ομαδοποίηση και τυχαία ανακατάταξη (shuffle) σε ισοβαθμίες ιστορικού
+        counts_dict = {}
+        for doc in ordered_docs:
+            cnt = historical_specific_counts.get(doc, {}).get(holiday_name, 0)
+            if cnt not in counts_dict:
+                counts_dict[cnt] = []
+            counts_dict[cnt].append(doc)
+
+        ordered_docs = []
+        for cnt in sorted(counts_dict.keys()):
+            group = counts_dict[cnt]
+            random.shuffle(group)
+            ordered_docs.extend(group)
 
         chosen = None
         skipped = []
@@ -252,7 +259,7 @@ def assign_major_holidays_global_rotation_strict(major_hols_dict, base_schedule,
             historical_specific_counts[chosen] = {}
         historical_specific_counts[chosen][holiday_name] = historical_specific_counts[chosen].get(holiday_name, 0) + 1
 
-    # --- ΒΗΜΑ 2: Ανάθεση των συνδυαστικών/δεύτερων αργιών ανά έτος με βάση το συνολικό ιστορικό πλήθος ---
+    # --- ΒΗΜΑ 2: Ανάθεση συνδυαστικών αργιών με shuffle στις ισοβαθμίες συνολικού ιστορικού ---
     for year, h_list in sorted(holidays_by_year.items()):
         year_xmas_pair = [item for item in h_list if item[1] in xmas_pairable]
         year_easter_pair = [item for item in h_list if item[1] in easter_pairable]
@@ -260,11 +267,19 @@ def assign_major_holidays_global_rotation_strict(major_hols_dict, base_schedule,
         year_assigned_docs = {assigned_doc for dt, assigned_doc in assignments.items() if dt.year == year}
         remaining_docs = [doc for doc in DOCTORS if doc not in year_assigned_docs]
 
-        # Ταξινόμηση των remaining_docs ώστε αυτοί με τις λιγότερες συνολικές μεγάλες αργίες να πάρουν το έξτρα ζευγάρι
-        remaining_docs = sorted(
-            remaining_docs,
-            key=lambda doc: (historical_major_counts.get(doc, 0), DOCTORS.index(doc))
-        )
+        # Ομαδοποίηση και shuffle για απόλυτη ισορροπία στις ισοβαθμίες συνολικών αργιών
+        major_counts_dict = {}
+        for doc in remaining_docs:
+            cnt = historical_major_counts.get(doc, 0)
+            if cnt not in major_counts_dict:
+                major_counts_dict[cnt] = []
+            major_counts_dict[cnt].append(doc)
+
+        remaining_docs = []
+        for cnt in sorted(major_counts_dict.keys()):
+            group = major_counts_dict[cnt]
+            random.shuffle(group)
+            remaining_docs.extend(group)
 
         if len(remaining_docs) >= 2 and len(year_xmas_pair) > 0 and len(year_easter_pair) > 0:
             doc1, doc2 = remaining_docs[0], remaining_docs[1]
@@ -308,13 +323,19 @@ def assign_regular_holidays(holiday_dates_sorted, base_schedule, manual_assignme
         if d in manual_assignments:
             continue
 
-        sorted_doctors = sorted(
-            DOCTORS,
-            key=lambda doc: (
-                historical_regular_counts.get(doc, 0) if historical_regular_counts is not None else 0,
-                DOCTORS.index(doc)
-            )
-        )
+        # Shuffle και στις κανονικές αργίες σε ισοβαθμίες ιστορικού
+        counts_dict = {}
+        for doc in DOCTORS:
+            cnt = historical_regular_counts.get(doc, 0) if historical_regular_counts is not None else 0
+            if cnt not in counts_dict:
+                counts_dict[cnt] = []
+            counts_dict[cnt].append(doc)
+
+        sorted_doctors = []
+        for cnt in sorted(counts_dict.keys()):
+            group = counts_dict[cnt]
+            random.shuffle(group)
+            sorted_doctors.extend(group)
 
         queue = deque(sorted_doctors)
         skipped = []
