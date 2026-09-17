@@ -288,6 +288,58 @@ def assign_major_holidays_global_rotation_strict(major_hols_dict, base_schedule,
                     continue
                 _record(d, holiday_name, chosen)
 
+    # ---- Πέρασμα εξισορρόπησης: μετακίνηση μεμονωμένων εορτών από τον "πλεονάζοντα"
+    # στον "ελλειμματικό" γιατρό, όσο αυτό είναι ασφαλές, ώστε να μειωθεί η τελική
+    # διαφορά συνόλου. Δεν πειράζει manual_assignments ούτε ζευγαρωτές εορτές
+    # (αυτές μένουν μαζί ως μπλοκ).
+    max_rebalance_passes = 500
+    for _ in range(max_rebalance_passes):
+        if not historical_major_counts:
+            break
+        max_doc = max(historical_major_counts, key=historical_major_counts.get)
+        min_doc = min(historical_major_counts, key=historical_major_counts.get)
+        if historical_major_counts[max_doc] - historical_major_counts[min_doc] <= 1:
+            break
+
+        candidate_dates = [
+            d for d, doc in assignments.items()
+            if doc == max_doc
+            and d not in manual_assignments
+            and major_hols_dict.get(d) in standalone_names
+        ]
+        random.shuffle(candidate_dates)
+
+        swapped = False
+        for d in candidate_dates:
+            year = d.year
+            if _get_year_standalone_count(min_doc, year) >= 1:
+                continue
+
+            temp_working = dict(working)
+            del temp_working[d]
+            nearby_conflict = _has_nearby_shift(min_doc, d, temp_working, max_gap=max_gap)
+            week_count = _shifts_in_week(min_doc, d, temp_working, exclude_date=d)
+            weekly_conflict = (week_count + 1) > max_per_week
+            if nearby_conflict or weekly_conflict:
+                continue
+
+            holiday_name = major_hols_dict[d]
+            assignments[d] = min_doc
+            working[d] = min_doc
+            historical_major_counts[max_doc] -= 1
+            historical_major_counts[min_doc] = historical_major_counts.get(min_doc, 0) + 1
+            if historical_specific_counts.get(max_doc, {}).get(holiday_name, 0) > 0:
+                historical_specific_counts[max_doc][holiday_name] -= 1
+            historical_specific_counts.setdefault(min_doc, {})
+            historical_specific_counts[min_doc][holiday_name] = historical_specific_counts[min_doc].get(holiday_name, 0) + 1
+            swapped = True
+            break
+
+        if not swapped:
+            # Δεν βρέθηκε ασφαλής ανταλλαγή για αυτό το ζεύγος max/min· σταματάμε
+            # για να αποφύγουμε άπειρο βρόχο.
+            break
+
     return assignments, conflicts
 
 def assign_regular_holidays(holiday_dates_sorted, base_schedule, manual_assignments=None, max_per_week=2, min_gap_days=3, historical_regular_counts=None):
