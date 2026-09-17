@@ -176,13 +176,14 @@ def assign_holiday_duties(holiday_dates_sorted, base_schedule, major_hols_dict=N
         chosen = None
         holiday_name = major_hols_dict.get(d, "")
 
+        # 1η Προσπάθεια: Τήρηση όλων των κανόνων αυστηρά (συμπεριλαμβανομένου του κανόνα 2ης μεγάλης αργίας)
         for _ in range(len(queue)):
             candidate = queue.popleft()
             nearby_conflict = _has_nearby_shift(candidate, d, working, max_gap=max_gap)
             week_count = _shifts_in_week(candidate, d, working, exclude_date=d)
             weekly_conflict = (week_count + 1) > max_per_week
             
-            # Κανόνας: Αν ο γιατρός έχει ήδη >= 1 μεγάλη αργία, η 2η+ μπορεί να είναι ΜΟΝΟ Μεγάλη Παρασκευή ή Δευτέρα του Πάσχα
+            # Αυστηρός κανόνας 2ης μεγάλης αργίας
             second_major_violation = False
             if is_major and historical_major_counts is not None:
                 current_count = historical_major_counts.get(candidate, 0)
@@ -196,17 +197,26 @@ def assign_holiday_duties(holiday_dates_sorted, base_schedule, major_hols_dict=N
                 break
             skipped.append(candidate)
 
-        # Αν δεν βρέθηκε γιατρός λόγω του περιορισμού της 2ης μεγάλης αργίας, χαλαρώνουμε τον περιορισμό για να μη μείνει κενή η μέρα
+        # 2η Προσπάθεια (Αν δεν βρέθηκε λόγω σύγκρουσης ημερών/εβδομάδας, διατηρώντας όμως τον κανόνα της 2ης μεγάλης αργίας αν γίνεται)
         if chosen is None and skipped:
             for _ in range(len(skipped)):
                 candidate = skipped.pop(0)
                 nearby_conflict = _has_nearby_shift(candidate, d, working, max_gap=max_gap)
                 week_count = _shifts_in_week(candidate, d, working, exclude_date=d)
-                if not nearby_conflict and (week_count + 1) <= max_per_week:
+                
+                second_major_violation = False
+                if is_major and historical_major_counts is not None:
+                    current_count = historical_major_counts.get(candidate, 0)
+                    if current_count >= 1:
+                        if holiday_name not in ["Μεγάλη Παρασκευή", "Δευτέρα του Πάσχα"]:
+                            second_major_violation = True
+
+                if not nearby_conflict and (week_count + 1) <= max_per_week and not second_major_violation:
                     chosen = candidate
                     break
                 skipped.append(candidate)
 
+        # 3η Έσχατη λύση (Αν υπάρχει απόλυτο αδιέξοδο, παίρνει αυτόν με το λιγότερο φόρτο τηρώντας μόνο το κοντινό κενό)
         if chosen is None and skipped:
             chosen = skipped.pop(0)
             conflicts.add(d)
@@ -522,7 +532,7 @@ with left_col:
             if conflicts:
                 st.warning(
                     f"⚠️ Σε {len(conflicts)} αργία(ες) δεν βρέθηκε γιατρός χωρίς σύγκρουση "
-                    f"(κανόνας 3 ημερών / 2 εφημεριών / περιορισμός 2ης μεγάλης αργίας) — ελέγξτε τις παρακάτω."
+                    f"(κανόνας 3 ημερών / 2 εφημεριών / αυστηρός περιορισμός 2ης μεγάλης αργίας) — ελέγξτε τις παρακάτω."
                 )
             with st.expander(f"🎉 Αργίες στο διάστημα ({len(st.session_state.holiday_names)})"):
                 for d in sorted(st.session_state.holiday_names.keys()):
@@ -617,7 +627,7 @@ with right_col:
 
         base_rota = generate_base_rota(st.session_state.initial_week, start_date, end_date)
         
-        # 1. Κατανομή μεγάλων γιορτών με αυστηρό κανόνα 2ης μεγάλης αργίας (Μ. Παρασκευή ή Δευτέρα Πάσχα)
+        # 1. Κατανομή μεγάλων γιορτών με αυστηρότατο περιορισμό 2ης μεγάλης αργίας
         major_dates_sorted = sorted(major_hols.keys())
         major_assignments, major_conflicts_1 = assign_holiday_duties(
             major_dates_sorted,
@@ -634,7 +644,7 @@ with right_col:
         temp_schedule.update(st.session_state.manual_assignments)
         temp_schedule.update(major_assignments)
 
-        # 2. Κατανομή υπόλοιπων (μικρών) αργιών με σταθερή κυκλική ουρά
+        # 2. Κατανομή υπόλοιπων (μικρών) αργιών
         regular_dates_sorted = sorted(regular_hols.keys())
         regular_assignments, major_conflicts_2 = assign_holiday_duties(
             regular_dates_sorted,
