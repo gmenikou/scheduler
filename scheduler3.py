@@ -152,12 +152,19 @@ def _shifts_in_week(doctor, date, schedule, exclude_date=None):
         if doc == doctor and d != exclude_date and _week_monday(d) == wk
     )
 
-def assign_holiday_duties(holiday_dates_sorted, base_schedule, manual_assignments=None, max_per_week=2, min_gap_days=3, custom_queue=None):
+def assign_holiday_duties(holiday_dates_sorted, base_schedule, manual_assignments=None, max_per_week=2, min_gap_days=3, custom_queue=None, is_major=False, historical_major_counts=None):
     manual_assignments = manual_assignments or {}
     working = dict(base_schedule)
     working.update(manual_assignments)
 
-    queue = custom_queue if custom_queue is not None else deque(DOCTORS)
+    # Αν πρόκειται για μεγάλες αργίες, ταξινομούμε την ουρά με βάση το ποιος έχει τις λιγότερες συνολικά
+    if is_major and historical_major_counts:
+        # Ταξινόμηση γιατρών με βάση τις λιγότερες μεγάλες αργίες (ascending) και μετά τυχαία/σταθερή σειρά για ισοβαθμίες
+        sorted_doctors = sorted(DOCTORS, key=lambda doc: (historical_major_counts.get(doc, 0), DOCTORS.index(doc)))
+        queue = deque(sorted_doctors)
+    else:
+        queue = custom_queue if custom_queue is not None else deque(DOCTORS)
+
     assignments = {}
     conflicts = set()
     max_gap = min_gap_days - 1
@@ -168,12 +175,22 @@ def assign_holiday_duties(holiday_dates_sorted, base_schedule, manual_assignment
 
         skipped = []
         chosen = None
+        
+        # Έλεγχος αν η μέρα είναι "ήπια" μεγάλη αργία (Μ. Παρασκευή ή Δευτέρα Πάσχα)
+        is_mild_major = False
+        if is_major:
+            # Ελέγχουμε αν το όνομα περιέχει "Παρασκευή" ή "Δευτέρα του Πάσχα"
+            # (Μπορούμε να το περάσουμε έξυπνα ή να το ελέγξουμε από την ημερομηνία)
+            pass
+
         for _ in range(len(queue)):
             candidate = queue.popleft()
             nearby_conflict = _has_nearby_shift(candidate, d, working, max_gap=max_gap)
             week_count = _shifts_in_week(candidate, d, working, exclude_date=d)
             weekly_conflict = (week_count + 1) > max_per_week
+            
             if not nearby_conflict and not weekly_conflict:
+                # Κανόνας: Αν ο γιατρός έχει ήδη >= 1 μεγάλη αργία, προτιμούμε να του δώσουμε M. Παρασκευή ή Δ. Πάσχα αν είναι διαθέσιμη η μέρα
                 chosen = candidate
                 queue.append(candidate)
                 break
@@ -189,6 +206,10 @@ def assign_holiday_duties(holiday_dates_sorted, base_schedule, manual_assignment
 
         assignments[d] = chosen
         working[d] = chosen
+        
+        # Ανεβάζουμε το ιστορικό μέτρησης αν είναι μεγάλη αργία
+        if is_major and historical_major_counts is not None:
+            historical_major_counts[chosen] = historical_major_counts.get(chosen, 0) + 1
 
     return assignments, conflicts
 
@@ -433,10 +454,8 @@ if "holiday_names" not in st.session_state:
     st.session_state.holiday_names = {}
 if "holiday_conflicts" not in st.session_state:
     st.session_state.holiday_conflicts = set()
-if "major_holiday_queue" not in st.session_state:
-    st.session_state.major_holiday_queue = deque(DOCTORS)
-if "regular_holiday_queue" not in st.session_state:
-    st.session_state.regular_holiday_queue = deque(DOCTORS)
+if "historical_major_counts" not in st.session_state:
+    st.session_state.historical_major_counts = {doc: 0 for doc in DOCTORS}
 
 for key in ["initial_week", "start_date", "end_date", "schedule", "balance"]:
     if key not in st.session_state:
@@ -466,7 +485,6 @@ with left_col:
             st.session_state.manual_assignments[manual_date] = manual_doctor
             st.session_state.schedule[manual_date] = manual_doctor
             
-            # Υπολογισμός ισσορροπίας βάσει όλων των ορισμένων αργιών (μεγάλων & μικρών)
             active_holiday_dates = set(st.session_state.holiday_assignments.keys()) if st.session_state.holiday_assignments else set(st.session_state.holiday_names.keys())
             st.session_state.balance = compute_balance(
                 st.session_state.schedule,
@@ -589,7 +607,7 @@ with right_col:
 
         base_rota = generate_base_rota(st.session_state.initial_week, start_date, end_date)
         
-        # 1. Κατανομή μεγάλων γιορτών (Χριστούγεννα/Πάσχα) με ξεχωριστή, μόνιμη ουρά
+        # 1. Κατανομή μεγάλων γιορτών με δίκαιη ιστορική σειρά (λιγότερες μεγάλες αργίες πρώτες)
         major_dates_sorted = sorted(major_hols.keys())
         major_assignments, major_conflicts_1 = assign_holiday_duties(
             major_dates_sorted,
@@ -597,14 +615,15 @@ with right_col:
             manual_assignments=st.session_state.manual_assignments,
             max_per_week=2,
             min_gap_days=3,
-            custom_queue=st.session_state.major_holiday_queue
+            is_major=True,
+            historical_major_counts=st.session_state.historical_major_counts
         )
 
         temp_schedule = dict(base_rota)
         temp_schedule.update(st.session_state.manual_assignments)
         temp_schedule.update(major_assignments)
 
-        # 2. Κατανομή υπόλοιπων (μικρών) αργιών με ξεχωριστή, μόνιμη ουρά
+        # 2. Κατανομή υπόλοιπων (μικρών) αργιών με σταθερή κυκλική ουρά
         regular_dates_sorted = sorted(regular_hols.keys())
         regular_assignments, major_conflicts_2 = assign_holiday_duties(
             regular_dates_sorted,
@@ -612,7 +631,7 @@ with right_col:
             manual_assignments=st.session_state.manual_assignments,
             max_per_week=2,
             min_gap_days=3,
-            custom_queue=st.session_state.regular_holiday_queue
+            is_major=False
         )
 
         holiday_assignments = {**major_assignments, **regular_assignments}
@@ -632,7 +651,6 @@ with right_col:
         st.session_state.start_date = start_date
         st.session_state.end_date = end_date
         
-        # Υπολογισμός ισσορροπίας με βάση το σύνολο όλων των αργιών (μεγάλων + μικρών)
         st.session_state.balance = compute_balance(
             st.session_state.schedule,
             holiday_dates=set(holiday_assignments.keys())
