@@ -3,7 +3,6 @@ import datetime
 import calendar
 import pandas as pd
 from fpdf import FPDF
-from collections import deque
 import random
 
 # ----------------------------
@@ -153,7 +152,18 @@ def _shifts_in_week(doctor, date, schedule, exclude_date=None):
         if doc == doctor and d != exclude_date and _week_monday(d) == wk
     )
 
-def assign_major_holidays_global_rotation_strict(major_hols_dict, base_schedule, manual_assignments, max_per_week=2, min_gap_days=3, historical_major_counts=None, historical_specific_counts=None):
+# ----------------------------
+# UPDATED EQUALIZING HOLIDAY ASSIGNMENTS
+# ----------------------------
+def assign_major_holidays_global_rotation_strict(
+    major_hols_dict, 
+    base_schedule, 
+    manual_assignments, 
+    max_per_week=2, 
+    min_gap_days=3, 
+    historical_major_counts=None, 
+    historical_specific_counts=None
+):
     working = dict(base_schedule)
     working.update(manual_assignments)
     assignments = {}
@@ -184,31 +194,26 @@ def assign_major_holidays_global_rotation_strict(major_hols_dict, base_schedule,
             if name in standalone_names:
                 all_standalone.append((d, name))
 
-    doc_index = 0
-
     def _get_year_standalone_count(doc, year):
-        cnt = 0
-        for dt, assigned_doc in assignments.items():
-            if assigned_doc == doc and dt.year == year and major_hols_dict.get(dt, "") in standalone_names:
-                cnt += 1
-        return cnt
+        return sum(
+            1 for dt, assigned_doc in assignments.items()
+            if assigned_doc == doc and dt.year == year and major_hols_dict.get(dt, "") in standalone_names
+        )
+
+    def _get_doc_total_shifts(doc):
+        return sum(1 for d, assigned_doc in working.items() if assigned_doc == doc)
 
     for d, holiday_name in all_standalone:
         year = d.year
-        ordered_docs = [DOCTORS[(doc_index + i) % len(DOCTORS)] for i in range(len(DOCTORS))]
-
-        counts_dict = {}
-        for doc in ordered_docs:
-            cnt = historical_specific_counts.get(doc, {}).get(holiday_name, 0)
-            if cnt not in counts_dict:
-                counts_dict[cnt] = []
-            counts_dict[cnt].append(doc)
-
-        ordered_docs = []
-        for cnt in sorted(counts_dict.keys()):
-            group = counts_dict[cnt]
-            random.shuffle(group)
-            ordered_docs.extend(group)
+        
+        ordered_docs = sorted(
+            DOCTORS, 
+            key=lambda doc: (
+                _get_doc_total_shifts(doc), 
+                historical_specific_counts.get(doc, {}).get(holiday_name, 0),
+                historical_major_counts.get(doc, 0)
+            )
+        )
 
         chosen = None
         skipped = []
@@ -223,7 +228,6 @@ def assign_major_holidays_global_rotation_strict(major_hols_dict, base_schedule,
 
             if not nearby_conflict and not weekly_conflict:
                 chosen = candidate
-                doc_index = (DOCTORS.index(candidate) + 1) % len(DOCTORS)
                 break
             skipped.append(candidate)
 
@@ -235,7 +239,6 @@ def assign_major_holidays_global_rotation_strict(major_hols_dict, base_schedule,
                 week_count = _shifts_in_week(candidate, d, working, exclude_date=d)
                 if not nearby_conflict and (week_count + 1) <= max_per_week:
                     chosen = candidate
-                    doc_index = (DOCTORS.index(candidate) + 1) % len(DOCTORS)
                     break
 
         if chosen is None:
@@ -243,12 +246,10 @@ def assign_major_holidays_global_rotation_strict(major_hols_dict, base_schedule,
                 if _get_year_standalone_count(candidate, year) < 1:
                     chosen = candidate
                     conflicts.add(d)
-                    doc_index = (DOCTORS.index(candidate) + 1) % len(DOCTORS)
                     break
             if chosen is None:
-                chosen = DOCTORS[doc_index % len(DOCTORS)]
+                chosen = ordered_docs[0]
                 conflicts.add(d)
-                doc_index = (doc_index + 1) % len(DOCTORS)
 
         assignments[d] = chosen
         working[d] = chosen
@@ -262,20 +263,11 @@ def assign_major_holidays_global_rotation_strict(major_hols_dict, base_schedule,
         year_easter_pair = [item for item in h_list if item[1] in easter_pairable]
 
         year_assigned_docs = {assigned_doc for dt, assigned_doc in assignments.items() if dt.year == year}
-        remaining_docs = [doc for doc in DOCTORS if doc not in year_assigned_docs]
-
-        major_counts_dict = {}
-        for doc in remaining_docs:
-            cnt = historical_major_counts.get(doc, 0)
-            if cnt not in major_counts_dict:
-                major_counts_dict[cnt] = []
-            major_counts_dict[cnt].append(doc)
-
-        remaining_docs = []
-        for cnt in sorted(major_counts_dict.keys()):
-            group = major_counts_dict[cnt]
-            random.shuffle(group)
-            remaining_docs.extend(group)
+        
+        remaining_docs = sorted(
+            [doc for doc in DOCTORS if doc not in year_assigned_docs],
+            key=lambda doc: (_get_doc_total_shifts(doc), historical_major_counts.get(doc, 0))
+        )
 
         if len(remaining_docs) >= 2 and len(year_xmas_pair) > 0 and len(year_easter_pair) > 0:
             doc1, doc2 = remaining_docs[0], remaining_docs[1]
@@ -306,7 +298,14 @@ def assign_major_holidays_global_rotation_strict(major_hols_dict, base_schedule,
 
     return assignments, conflicts
 
-def assign_regular_holidays(holiday_dates_sorted, base_schedule, manual_assignments=None, max_per_week=2, min_gap_days=3, historical_regular_counts=None):
+def assign_regular_holidays(
+    holiday_dates_sorted, 
+    base_schedule, 
+    manual_assignments=None, 
+    max_per_week=2, 
+    min_gap_days=3, 
+    historical_regular_counts=None
+):
     manual_assignments = manual_assignments or {}
     working = dict(base_schedule)
     working.update(manual_assignments)
@@ -315,29 +314,25 @@ def assign_regular_holidays(holiday_dates_sorted, base_schedule, manual_assignme
     conflicts = set()
     max_gap = min_gap_days - 1
 
+    def _get_doc_total_shifts(doc):
+        return sum(1 for d, assigned_doc in working.items() if assigned_doc == doc)
+
     for d in holiday_dates_sorted:
         if d in manual_assignments:
             continue
 
-        counts_dict = {}
-        for doc in DOCTORS:
-            cnt = historical_regular_counts.get(doc, 0) if historical_regular_counts is not None else 0
-            if cnt not in counts_dict:
-                counts_dict[cnt] = []
-            counts_dict[cnt].append(doc)
+        sorted_doctors = sorted(
+            DOCTORS,
+            key=lambda doc: (
+                _get_doc_total_shifts(doc),
+                historical_regular_counts.get(doc, 0) if historical_regular_counts else 0
+            )
+        )
 
-        sorted_doctors = []
-        for cnt in sorted(counts_dict.keys()):
-            group = counts_dict[cnt]
-            random.shuffle(group)
-            sorted_doctors.extend(group)
-
-        queue = deque(sorted_doctors)
-        skipped = []
         chosen = None
+        skipped = []
 
-        for _ in range(len(queue)):
-            candidate = queue.popleft()
+        for candidate in sorted_doctors:
             nearby_conflict = _has_nearby_shift(candidate, d, working, max_gap=max_gap)
             week_count = _shifts_in_week(candidate, d, working, exclude_date=d)
             weekly_conflict = (week_count + 1) > max_per_week
@@ -348,18 +343,16 @@ def assign_regular_holidays(holiday_dates_sorted, base_schedule, manual_assignme
             skipped.append(candidate)
 
         if chosen is None and skipped:
-            for _ in range(len(skipped)):
-                candidate = skipped.pop(0)
+            for candidate in skipped:
                 nearby_conflict = _has_nearby_shift(candidate, d, working, max_gap=max_gap)
                 week_count = _shifts_in_week(candidate, d, working, exclude_date=d)
 
                 if not nearby_conflict and (week_count + 1) <= max_per_week:
                     chosen = candidate
                     break
-                skipped.append(candidate)
 
         if chosen is None and skipped:
-            chosen = skipped.pop(0)
+            chosen = skipped[0]
             conflicts.add(d)
 
         if chosen is not None:
@@ -371,7 +364,7 @@ def assign_regular_holidays(holiday_dates_sorted, base_schedule, manual_assignme
     return assignments, conflicts
 
 # ----------------------------
-# HELPERS
+# ROUTINE SCHEDULE HELPERS
 # ----------------------------
 def get_week_dates(any_date):
     monday = any_date - datetime.timedelta(days=any_date.weekday())
@@ -731,92 +724,96 @@ with left_col:
 # RIGHT: Initial Week + Schedule Generation
 # ----------------------------
 with right_col:
+    st.subheader("⚙️ Παράμετροι & Δημιουργία Προγράμματος")
     selected_date = st.date_input("Ημερομηνία έναρξης:", datetime.date.today())
     week_dates = get_week_dates(selected_date)
 
-    default_order = DOCTORS
-    initial_week = {}
+    st.markdown("**Επιλέξτε την αρχική σειρά για την πρώτη εβδομάδα:**")
+    initial_week_selection = []
     cols = st.columns(7)
     for i, d in enumerate(week_dates):
         with cols[i]:
-            default_idx = DOCTORS.index(default_order[i % 7])
-            initial_week[d] = st.selectbox(
-                d.strftime("%a %d/%m"),
+            st.caption(f"{WEEKDAY_LABELS[i]} ({d.strftime('%d/%m')})")
+            doc = st.selectbox(
+                f"Day {i+1}",
                 DOCTORS,
-                index=default_idx,
-                key=f"doc_{d}"
+                index=i % len(DOCTORS),
+                key=f"init_day_{i}",
+                label_visibility="collapsed"
             )
+            initial_week_selection.append(doc)
 
-    if st.button("💾 Επιλογή Ημερομηνίας Έναρξης"):
-        st.session_state.initial_week = [initial_week[d] for d in sorted(initial_week)]
-        st.session_state.start_date = week_dates[0]
+    duration_weeks = st.slider("Διάρκεια προγράμματος (εβδομάδες):", min_value=1, max_value=52, value=12)
 
-    if st.session_state.initial_week is None:
-        st.stop()
+    if st.button("🚀 Δημιουργία Πρόγραμματος", type="primary"):
+        start_date = week_dates[0]
+        end_date = start_date + datetime.timedelta(days=(duration_weeks * 7) - 1)
 
-    c1, c2 = st.columns(2)
-    with c1:
-        start_date = st.date_input("Start date", st.session_state.start_date)
-    with c2:
-        end_date = st.date_input("End date", st.session_state.start_date + datetime.timedelta(days=30))
+        st.session_state.start_date = start_date
+        st.session_state.end_date = end_date
+        st.session_state.initial_week = initial_week_selection
 
-    if st.button("🗓️ Δημιουργία Προγράμματος"):
-        # Μηδενισμός ιστορικού για να μην προστίθενται παλιές μετρήσεις
-        st.session_state.historical_major_counts = {doc: 0 for doc in DOCTORS}
-        st.session_state.historical_specific_counts = {doc: {} for doc in DOCTORS}
-        st.session_state.historical_regular_counts = {doc: 0 for doc in DOCTORS}
+        # Get all Cyprus holidays in range
+        holidays_in_range = get_holidays_in_range(start_date, end_date)
+        st.session_state.holiday_names = holidays_in_range
 
-        holiday_names = get_holidays_in_range(start_date, end_date)
+        # Generate base cyclic schedule
+        base_schedule = generate_base_rota(initial_week_selection, start_date, end_date)
+
+        # Identify Major and Regular Holidays
         major_hols = get_major_holidays_in_range(start_date, end_date)
-        regular_hols = {d: n for d, n in holiday_names.items() if d not in major_hols}
+        regular_hols = {d: n for d, n in holidays_in_range.items() if d not in major_hols}
 
-        base_rota = generate_base_rota(st.session_state.initial_week, start_date, end_date)
-        
-        major_assignments, major_conflicts_1 = assign_major_holidays_global_rotation_strict(
+        # 1. Assign Major Holidays dynamically sorted by current total shifts
+        major_assignments, major_conflicts = assign_major_holidays_global_rotation_strict(
             major_hols,
-            base_rota,
-            manual_assignments=st.session_state.manual_assignments,
+            base_schedule,
+            st.session_state.manual_assignments,
             max_per_week=2,
             min_gap_days=3,
             historical_major_counts=st.session_state.historical_major_counts,
             historical_specific_counts=st.session_state.historical_specific_counts
         )
 
-        temp_schedule = dict(base_rota)
-        temp_schedule.update(st.session_state.manual_assignments)
-        temp_schedule.update(major_assignments)
-
-        regular_dates_sorted = sorted(regular_hols.keys())
-        regular_assignments, major_conflicts_2 = assign_regular_holidays(
-            regular_dates_sorted,
-            temp_schedule,
+        # 2. Assign Regular Holidays dynamically sorted by current total shifts
+        sorted_reg_dates = sorted(regular_hols.keys())
+        combined_working = dict(base_schedule)
+        combined_working.update(major_assignments)
+        
+        regular_assignments, regular_conflicts = assign_regular_holidays(
+            sorted_reg_dates,
+            combined_working,
             manual_assignments=st.session_state.manual_assignments,
             max_per_week=2,
             min_gap_days=3,
             historical_regular_counts=st.session_state.historical_regular_counts
         )
 
-        holiday_assignments = {**major_assignments, **regular_assignments}
-        holiday_conflicts = major_conflicts_1.union(major_conflicts_2)
+        # Merge holiday assignments
+        all_holiday_assignments = {}
+        all_holiday_assignments.update(major_assignments)
+        all_holiday_assignments.update(regular_assignments)
+        st.session_state.holiday_assignments = all_holiday_assignments
+        st.session_state.holiday_conflicts = major_conflicts.union(regular_conflicts)
 
-        st.session_state.holiday_names = holiday_names
-        st.session_state.holiday_assignments = holiday_assignments
-        st.session_state.holiday_conflicts = holiday_conflicts
-
-        st.session_state.schedule = generate_schedule(
-            st.session_state.initial_week,
+        # Final Schedule Generation
+        final_schedule = generate_schedule(
+            initial_week_selection,
             start_date,
             end_date,
-            holiday_assignments=holiday_assignments,
+            holiday_assignments=all_holiday_assignments,
             manual_assignments=st.session_state.manual_assignments
         )
-        st.session_state.start_date = start_date
-        st.session_state.end_date = end_date
-        
-        st.session_state.balance = compute_balance(
-            st.session_state.schedule,
-            holiday_dates=set(holiday_assignments.keys())
-        )
+        st.session_state.schedule = final_schedule
 
+        # Compute Balance
+        st.session_state.balance = compute_balance(
+            final_schedule,
+            holiday_dates=set(holidays_in_range.keys())
+        )
+        st.rerun()
+
+    # Render Calendar Display if Schedule Exists
     if st.session_state.schedule:
+        st.divider()
         display_calendar(st.session_state.schedule)
