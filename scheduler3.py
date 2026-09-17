@@ -159,15 +159,14 @@ def assign_major_holidays_global_rotation_strict(major_hols_dict, base_schedule,
     conflicts = set()
     max_gap = min_gap_days - 1
 
-    # Ομαδοποίηση των αργιών ανά έτος
+    historical_specific_counts = historical_specific_counts if historical_specific_counts is not None else {doc: {} for doc in DOCTORS}
+
     holidays_by_year = {}
     for d, name in sorted(major_hols_dict.items()):
         if d in manual_assignments:
             assignments[d] = manual_assignments[d]
             working[d] = manual_assignments[d]
             continue
-        year_key = d.year if (d.month != 1 or d.day != 1) else d.year - 1 # (Για την Πρωτοχρονιά ανήκει στο προηγούμενο εορταστικό σετ, ή απλά d.year)
-        # Ας ομαδοποιήσουμε με βάση το ημερολογιακό έτος
         y_group = d.year
         if y_group not in holidays_by_year:
             holidays_by_year[y_group] = []
@@ -177,17 +176,15 @@ def assign_major_holidays_global_rotation_strict(major_hols_dict, base_schedule,
     xmas_pairable = ["Παραμονή Χριστουγέννων", "Δεύτερη μέρα Χριστουγέννων"]
     easter_pairable = ["Μεγάλη Παρασκευή", "Μεγάλο Σάββατο"]
 
-    # Συγκεντρώνουμε ΟΛΕΣ τις standalone αργίες χρονολογικά για όλο το εύρος, 
-    # ώστε να τρέξει μια ενιαία, αδιάκοπη κυκλική ρότα (global queue) για ΟΛΑ τα χρόνια!
     all_standalone = []
     for year, h_list in sorted(holidays_by_year.items()):
         for d, name in h_list:
             if name in standalone_names:
                 all_standalone.append((d, name))
 
-    # --- ΒΗΜΑ 1: Παγκόσμια κυκλική ρότα για ΟΛΕΣ τις κύριες (standalone) αργίες όλου του εύρους ---
+    # --- ΒΗΜΑ 1: Παγκόσμια κυκλική ρότα για ΟΛΕΣ τις κύριες (standalone) αργίες χρονολογικά ---
     doc_index = 0
-    # Dictionary για να ελέγχουμε ποιες κύριες αργίες πήρε ο κάθε γιατρός ανά έτος (για να μην πάρει την ίδια το ίδιο έτος, αν και είναι διαφορετικές)
+
     def _get_year_standalone_count(doc, year):
         cnt = 0
         for dt, assigned_doc in assignments.items():
@@ -198,6 +195,15 @@ def assign_major_holidays_global_rotation_strict(major_hols_dict, base_schedule,
     for d, holiday_name in all_standalone:
         year = d.year
         ordered_docs = [DOCTORS[(doc_index + i) % len(DOCTORS)] for i in range(len(DOCTORS))]
+
+        # Δίνουμε προτεραιότητα σε όσους ΔΕΝ έχουν ξαναπάνει ΑΥΤΗ ΤΗΝ ΣΥΓΚΕΚΡΙΜΕΝΗ ΑΡΓΙΑ στο παρελθόν (ή την έκαναν πιο παλιά)
+        ordered_docs = sorted(
+            ordered_docs,
+            key=lambda doc: (
+                historical_specific_counts.get(doc, {}).get(holiday_name, 0),
+                DOCTORS.index(doc)
+            )
+        )
 
         chosen = None
         skipped = []
@@ -253,7 +259,6 @@ def assign_major_holidays_global_rotation_strict(major_hols_dict, base_schedule,
         year_xmas_pair = [item for item in h_list if item[1] in xmas_pairable]
         year_easter_pair = [item for item in h_list if item[1] in easter_pairable]
 
-        # Βρίσκουμε ποιοι γιατροί είναι ήδη πιασμένοι από τις standalone σε αυτό το έτος
         year_assigned_docs = {assigned_doc for dt, assigned_doc in assignments.items() if dt.year == year}
         remaining_docs = [doc for doc in DOCTORS if doc not in year_assigned_docs]
 
@@ -275,7 +280,6 @@ def assign_major_holidays_global_rotation_strict(major_hols_dict, base_schedule,
                         historical_specific_counts[candidate] = {}
                     historical_specific_counts[candidate][holiday_name] = historical_specific_counts[candidate].get(holiday_name, 0) + 1
         else:
-            # Fallback
             for d, holiday_name in (year_xmas_pair + year_easter_pair):
                 if d in manual_assignments:
                     continue
@@ -747,7 +751,6 @@ with right_col:
 
         base_rota = generate_base_rota(st.session_state.initial_week, start_date, end_date)
         
-        # 1. Ενιαία παγκόσμια ρότα για ΟΛΕΣ τις κύριες standalone αργίες όλου του εύρους + μετά οι συνδυαστικές
         major_assignments, major_conflicts_1 = assign_major_holidays_global_rotation_strict(
             major_hols,
             base_rota,
@@ -762,7 +765,6 @@ with right_col:
         temp_schedule.update(st.session_state.manual_assignments)
         temp_schedule.update(major_assignments)
 
-        # 2. Κατανομή μικρών αργιών
         regular_dates_sorted = sorted(regular_hols.keys())
         regular_assignments, major_conflicts_2 = assign_regular_holidays(
             regular_dates_sorted,
