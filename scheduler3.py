@@ -15,7 +15,7 @@ DOCTOR_COLORS = {
     "Μαρία": (200, 200, 255),
     "Αθηνά": (255, 255, 200),
     "Αλέξανδρος": (255, 200, 255),
-    "Έλια": (200, 255, 255),
+    "Έλια": (200, 200, 255),
     "Χριστίνα": (220, 220, 220)
 }
 
@@ -74,28 +74,29 @@ def get_holidays_in_range(start_date, end_date):
     return {d: name for d, name in holidays.items() if start_date <= d <= end_date}
 
 # ----------------------------
-# CORRECT ROTATION PATTERN (TRUE CONTINUOUS SHIFT)
+# TRUE +5 DAYS SHIFT PATTERN
 # ----------------------------
-def generate_5day_step_schedule(initial_doctors, start_date, end_date, manual_assignments=None):
+def generate_true_5day_step_schedule(initial_doctors, start_date, end_date, manual_assignments=None):
     """
-    Δημιουργεί συνεχή κυκλική εναλλαγή (1 γιατρός ανά ημέρα).
-    Επειδή οι γιατροί είναι 7, ο κάθε γιατρός θα εφημερεύει
-    κάθε 7 ημέρες στη σειρά του ημερολογίου, αλλά η μέρα της εβδομάδας
-    θα αλλάζει συνεχώς αν αλλάξει ο κύκλος!
+    Δημιουργεί το πρόγραμμα όπου κάθε επόμενη εφημερία προχωράει ακριβώς κατά +5 ημέρες
+    (ή ισοδύναμα με βήτα 5 στη λίστα των γιατρών ανά ημερολογιακή μέρα).
     """
     schedule = {}
     manual_assignments = manual_assignments or {}
     total_days = (end_date - start_date).days + 1
     num_docs = len(initial_doctors)
     
+    # Μετατοπίζουμε τον δείκτη των γιατρών κατά +5 θέσεις (που είναι το ίδιο με το -2 modulo 7)
+    # για κάθε επόμενη μέρα που περνάει στο ημερολόγιο.
     for day_offset in range(total_days):
         current_date = start_date + datetime.timedelta(days=day_offset)
         
         if current_date in manual_assignments:
             schedule[current_date] = manual_assignments[current_date]
         else:
-            # Απλή, καθημερινή κυκλική εναλλαγή των 7 γιατρών
-            doc_idx = day_offset % num_docs
+            # Το (day_offset * 5) εξασφαλίζει ότι οι μέρες εναλλάσσονται συνεχώς 
+            # (+5 μέρες απόσταση ανάμεσα στις εφημερίες του ίδιου γιατρού)
+            doc_idx = (day_offset * 5) % num_docs
             schedule[current_date] = initial_doctors[doc_idx]
             
     return schedule
@@ -122,7 +123,6 @@ def compute_balance(schedule, holiday_dates=None):
     return df[["Doctor", "Weekdays", "Fri", "Sat", "Sun", "Αργίες", "Total"]]
 
 def compute_doctor_holidays_breakdown(schedule, holiday_names):
-    """Υπολογίζει ποιες ακριβώς αργίες αναλογούν στον κάθε γιατρό."""
     doc_holidays = {doc: [] for doc in DOCTORS}
     for d in sorted(holiday_names.keys()):
         doc = schedule.get(d)
@@ -351,7 +351,7 @@ with right_col:
         holiday_names = get_holidays_in_range(start_date, end_date)
         st.session_state.holiday_names = holiday_names
 
-        st.session_state.schedule = generate_5day_step_schedule(
+        st.session_state.schedule = generate_true_5day_step_schedule(
             selected_doctors,
             start_date,
             end_date,
