@@ -129,13 +129,12 @@ def assign_major_holidays_by_rotation(start_year, end_year, manual_assignments=N
         c_26 = datetime.date(year, 12, 26)    # Δεύτερη μέρα Χριστουγέννων
         c_31 = datetime.date(year, 12, 31)    # Παραμονή Πρωτοχρονιάς
 
-        # 7 Διακριτά πακέτα εορτών (1 για κάθε γιατρό)
         holiday_packages = [
             [c_24, easter_sat], # Πακέτο 0: 24/12 & Μ. Σάββατο
             [c_25],             # Πακέτο 1: 25/12
             [c_26, easter_fri], # Πακέτο 2: 26/12 & Μ. Παρασκευή
             [c_31],             # Πακέτο 3: 31/12
-            [c_01],             # Πακέτο 4: 01/01 (Πρωτοχρονιά)
+            [c_01],             # Πακέτο 4: 01/01
             [easter_sun],       # Πακέτο 5: Κυριακή Πάσχα
             [easter_mon]        # Πακέτο 6: Δευτέρα Πάσχα
         ]
@@ -171,12 +170,13 @@ def _shifts_in_week(doctor, date, schedule, exclude_date=None):
         if doc == doctor and d != exclude_date and _week_monday(d) == wk
     )
 
-def assign_regular_holidays(regular_dates_sorted, base_schedule, manual_assignments=None, max_per_week=2, min_gap_days=3, custom_queue=None):
+def assign_regular_holidays(regular_dates_sorted, base_schedule, manual_assignments=None, max_per_week=2, min_gap_days=3):
     manual_assignments = manual_assignments or {}
     working = dict(base_schedule)
     working.update(manual_assignments)
 
-    queue = deque(custom_queue) if custom_queue is not None else deque(DOCTORS)
+    # Φρέσκια ουρά σε κάθε εκτέλεση για ισοκατανομή
+    queue = deque(DOCTORS)
     assignments = {}
     conflicts = set()
     max_gap = min_gap_days - 1
@@ -210,7 +210,7 @@ def assign_regular_holidays(regular_dates_sorted, base_schedule, manual_assignme
         assignments[d] = chosen
         working[d] = chosen
 
-    return assignments, conflicts, queue
+    return assignments, conflicts
 
 def generate_base_rota(initial_week, start_date, end_date):
     schedule = {}
@@ -494,8 +494,6 @@ if "holiday_names" not in st.session_state:
     st.session_state.holiday_names = {}
 if "holiday_conflicts" not in st.session_state:
     st.session_state.holiday_conflicts = set()
-if "regular_holiday_queue" not in st.session_state:
-    st.session_state.regular_holiday_queue = deque(DOCTORS)
 
 for key in ["initial_week", "start_date", "end_date", "schedule", "balance"]:
     if key not in st.session_state:
@@ -654,13 +652,11 @@ with right_col:
         )
 
         regular_dates_sorted = sorted(regular_hols.keys())
-        regular_assignments, regular_conflicts, updated_regular_q = assign_regular_holidays(
+        regular_assignments, regular_conflicts = assign_regular_holidays(
             regular_dates_sorted,
             base_rota,
-            manual_assignments=st.session_state.manual_assignments,
-            custom_queue=st.session_state.regular_holiday_queue
+            manual_assignments=st.session_state.manual_assignments
         )
-        st.session_state.regular_holiday_queue = updated_regular_q
 
         holiday_assignments = {**major_assignments, **regular_assignments}
 
