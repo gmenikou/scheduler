@@ -188,7 +188,7 @@ def assign_regular_holidays(regular_dates_sorted, base_schedule, manual_assignme
             holiday_counts[assigned] += 1
             continue
 
-        # Ταξινόμηση γιατρών με βάση ποιος έχει τις λιγότερες αργίες μέχρι στιγμής
+        # Ταξινόμηση γιατρών: προηγείται όποιος έχει τις λιγότερες αργίες
         sorted_doctors = sorted(DOCTORS, key=lambda doc: (holiday_counts[doc], DOCTORS.index(doc)))
         
         chosen = None
@@ -202,7 +202,7 @@ def assign_regular_holidays(regular_dates_sorted, base_schedule, manual_assignme
                 break
 
         if chosen is None:
-            # Αν όλοι έχουν σύγκρουση, δίνουμε στον γιατρό με τις λιγότερες αργίες
+            # Σε περίπτωση σύγκρουσης, επιλέγουμε τον γιατρό με τις λιγότερες αργίες
             chosen = sorted_doctors[0]
             conflicts.add(d)
 
@@ -544,6 +544,8 @@ with left_col:
                     f"⚠️ Ο/Η {manual_doctor} θα έχει πάνω από 2 εφημερίες μέσα στην ίδια εβδομάδα με τις "
                     f"{manual_date.strftime('%d/%m/%Y')}. Η ανάθεση έγινε ούτως ή άλλως."
                 )
+            
+            st.rerun()  # Ακαριαία ανανέωση της οθόνης μετά τη χειροκίνητη αλλαγή
 
         if st.session_state.holiday_names:
             conflicts = st.session_state.get("holiday_conflicts", set())
@@ -628,6 +630,7 @@ with right_col:
     if st.button("💾 Επιλογή Ημερομηνίας Έναρξης"):
         st.session_state.initial_week = [initial_week[d] for d in sorted(initial_week)]
         st.session_state.start_date = week_dates[0]
+        st.rerun()
 
     if st.session_state.initial_week is None:
         st.stop()
@@ -679,6 +682,8 @@ with right_col:
             st.session_state.schedule,
             holiday_dates=set(holiday_assignments.keys())
         )
+
+        st.rerun()  # Ακαριαία ανανέωση της οθόνης με το 1ο πάτημα
 
     if st.session_state.schedule:
         display_calendar(st.session_state.schedule)
