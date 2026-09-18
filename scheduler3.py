@@ -44,14 +44,14 @@ def _week_monday(date):
     return date - datetime.timedelta(days=date.weekday())
 
 def _has_nearby_shift(doctor, date, schedule, max_gap=2):
-    """Ελέγχει αν υπάρχει εφημερία σε απόσταση +-3 ημερών (max_gap=2 σημαίνει διαφορά ημερών <= 2, δηλαδή < 3 μέρες κενό)."""
+    """Ελέγχει αν υπάρχει εφημερία σε απόσταση +-3 ημερών."""
     for d, doc in schedule.items():
         if doc == doctor and d != date and abs((d - date).days) <= max_gap:
             return True
     return False
 
 def _shifts_in_week(doctor, date, schedule, exclude_date=None):
-    """Υπολογίζει πόσες εφημερίες έχει ο γιατρός στη συγκεκριμένη εβδομάδα (Δευτέρα-Κυριακή)."""
+    """Υπολογίζει πόσες εφημερίες έχει ο γιατρός στη συγκεκριμένη εβδομάδα."""
     wk = _week_monday(date)
     return sum(
         1 for d, doc in schedule.items()
@@ -201,13 +201,11 @@ def assign_regular_holidays(regular_dates_sorted, current_schedule, manual_assig
         
         chosen = None
         for candidate in sorted_doctors:
-            # Αυστηρός έλεγχος κανόνων
             if is_valid_assignment(candidate, d, working, exclude_date=d):
                 chosen = candidate
                 break
 
         if chosen is None:
-            # Αν υπάρχει σύγκρουση, επιλέγουμε τον γιατρό με τις λιγότερες αργίες και καταγράφουμε τη σύγκρουση
             chosen = sorted_doctors[0]
             conflicts.add(d)
 
@@ -238,8 +236,12 @@ def generate_schedule_with_swaps(initial_week, start_date, end_date, holiday_ass
 
     all_dates = sorted(schedule.keys())
 
-    # Εφαρμογή αργιών με έξυπνες ανταλλαγές (swaps) που σέβονται τους 2 κανόνες
+    # Εφαρμογή αργιών με έξυπνες ανταλλαγές (swaps)
     for h_date in sorted(holiday_assignments.keys()):
+        # ΔΙΟΡΘΩΣΗ KEYERROR: Έλεγχος αν η αργία ανήκει στο εύρος ημερομηνιών
+        if h_date not in schedule:
+            continue
+
         b_doctor = holiday_assignments[h_date]
         a_doctor = schedule[h_date]
 
@@ -250,20 +252,17 @@ def generate_schedule_with_swaps(initial_week, start_date, end_date, holiday_ass
         schedule[h_date] = b_doctor
 
         # Προσπάθεια επιστροφής της χαμένης εφημερίας στον γιατρό A
-        swapped = False
         for future_date in all_dates:
             if future_date > h_date:
                 if (schedule[future_date] == b_doctor and 
                     future_date not in holiday_assignments and 
                     future_date not in manual_assignments):
                     
-                    # Έλεγχος αν ο A μπορεί να πάρει την βάρδια της future_date χωρίς να σπάει τους κανόνες
                     temp_schedule = dict(schedule)
                     temp_schedule[future_date] = a_doctor
                     
                     if is_valid_assignment(a_doctor, future_date, temp_schedule, exclude_date=future_date):
                         schedule[future_date] = a_doctor
-                        swapped = True
                         break
 
     # Εφαρμογή των χειροκίνητων αλλαγών (overrides)
@@ -536,7 +535,6 @@ with left_col:
         if st.button("✅ Επικύρωση"):
             current_schedule = dict(st.session_state.schedule) if st.session_state.schedule else {}
             
-            # Έλεγχος των κανόνων κατά τη χειροκίνητη εισαγωγή
             nearby_conflict = _has_nearby_shift(manual_doctor, manual_date, current_schedule, max_gap=2)
             weekly_conflict = (_shifts_in_week(manual_doctor, manual_date, current_schedule, exclude_date=manual_date) + 1) > 2
 
