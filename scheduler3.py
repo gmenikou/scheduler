@@ -74,27 +74,34 @@ def get_holidays_in_range(start_date, end_date):
     return {d: name for d, name in holidays.items() if start_date <= d <= end_date}
 
 # ----------------------------
-# PURE ROTA GENERATION (NO RULES AT ALL)
+# STRICT 5-DAY ROTATION PATTERN
 # ----------------------------
-def generate_pure_rota(initial_week, start_date, end_date, manual_assignments=None):
-    """Repeats initial_week endlessly without modifying for holidays or gaps."""
+def generate_5day_step_schedule(initial_week, start_date, end_date, manual_assignments=None):
+    """
+    Δημιουργεί το πρόγραμμα όπου ο κάθε γιατρός εφημερεύει ανά 5 ημέρες
+    (Κυριακή -> Παρασκευή -> Τετάρτη -> Δευτέρα -> Σάββατο -> Πέμπτη -> Τρίτη).
+    """
     schedule = {}
     manual_assignments = manual_assignments or {}
     total_days = (end_date - start_date).days + 1
     
+    num_docs = len(initial_week)
+    
     for day_offset in range(total_days):
         current_date = start_date + datetime.timedelta(days=day_offset)
-        doc_index = day_offset % len(initial_week)
-        schedule[current_date] = initial_week[doc_index]
         
-    for m_date, m_doc in manual_assignments.items():
-        if m_date in schedule:
-            schedule[m_date] = m_doc
+        # Αν υπάρχει χειροκίνητη αλλαγή από τον χρήστη
+        if current_date in manual_assignments:
+            schedule[current_date] = manual_assignments[current_date]
+        else:
+            # Με βήμα 5 ημερών στο κυκλικό 7ήμερο pattern
+            doc_idx = (day_offset * 5) % num_docs
+            schedule[current_date] = initial_week[doc_idx]
             
     return schedule
 
 # ----------------------------
-# BALANCE & REPORTING
+# BALANCE & HOLIDAYS REPORTING
 # ----------------------------
 def compute_balance(schedule, holiday_dates=None):
     holiday_dates = holiday_dates or set()
@@ -113,6 +120,23 @@ def compute_balance(schedule, holiday_dates=None):
     df["Αργίες"] = df["Doctor"].map(holiday_counts)
     df["Total"] = df["Weekdays"] + df["Fri"] + df["Sat"] + df["Sun"]
     return df[["Doctor", "Weekdays", "Fri", "Sat", "Sun", "Αργίες", "Total"]]
+
+def compute_doctor_holidays_breakdown(schedule, holiday_names):
+    doc_holidays = {doc: [] for doc in DOCTORS}
+    for d in sorted(holiday_names.keys()):
+        doc = schedule.get(d)
+        if doc in doc_holidays:
+            doc_holidays[doc].append(f"{d.strftime('%d/%m/%Y')} ({holiday_names[d]})")
+            
+    data = []
+    for doc in DOCTORS:
+        h_list = doc_holidays[doc]
+        data.append({
+            "Ακτινολόγος": doc,
+            "Πλήθος Αργιών": len(h_list),
+            "Αργίες που του/της Αναλογούν": ", ".join(h_list) if h_list else "Καμία"
+        })
+    return pd.DataFrame(data)
 
 # ----------------------------
 # DISPLAY & PDF HELPERS
@@ -241,10 +265,10 @@ for key in ["initial_week", "start_date", "end_date", "schedule", "balance"]:
     if key not in st.session_state:
         st.session_state[key] = None
 
-left_col, right_col = st.columns([0.35, 0.65])
+left_col, right_col = st.columns([0.40, 0.60])
 
 # ----------------------------
-# LEFT: Balance & Manual Overrides
+# LEFT: Balance & Holiday Breakdown
 # ----------------------------
 with left_col:
     st.subheader("📊 Κατάσταση Εφημεριών Εύρους")
@@ -259,7 +283,7 @@ with left_col:
         if st.button("✅ Επικύρωση"):
             st.session_state.manual_assignments[manual_date] = manual_doctor
             st.session_state.schedule[manual_date] = manual_doctor
-            
+
             st.session_state.balance = compute_balance(
                 st.session_state.schedule,
                 holiday_dates=set(st.session_state.holiday_names.keys())
@@ -272,14 +296,19 @@ with left_col:
             
             st.rerun()
 
-        if st.session_state.holiday_names:
-            with st.expander(f"🎉 Αργίες στο διάστημα ({len(st.session_state.holiday_names)})"):
-                for d in sorted(st.session_state.holiday_names.keys()):
-                    doc = st.session_state.schedule.get(d, "") if st.session_state.schedule else ""
-                    st.markdown(f"- **{d.strftime('%d/%m/%Y')}** — {st.session_state.holiday_names[d]}: {doc}")
-
     if st.session_state.balance is not None and not st.session_state.balance.empty:
         st.dataframe(st.session_state.balance, use_container_width=True, height=260)
+
+        # ----------------------------
+        # ΑΝΑΛΥΣΗ ΑΡΓΙΩΝ ΑΝΑ ΓΙΑΤΡΟ
+        # ----------------------------
+        if st.session_state.holiday_names:
+            st.subheader("🎉 Αναλογία Αργιών ανά Γιατρό")
+            hols_df = compute_doctor_holidays_breakdown(
+                st.session_state.schedule, 
+                st.session_state.holiday_names
+            )
+            st.dataframe(hols_df, use_container_width=True)
 
         if st.button("📄 Εξαγωγή κατάστασης σε PDF"):
             pdf_file = create_balance_pdf(
@@ -332,7 +361,7 @@ with right_col:
         holiday_names = get_holidays_in_range(start_date, end_date)
         st.session_state.holiday_names = holiday_names
 
-        st.session_state.schedule = generate_pure_rota(
+        st.session_state.schedule = generate_5day_step_schedule(
             st.session_state.initial_week,
             start_date,
             end_date,
