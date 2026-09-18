@@ -21,9 +21,8 @@ DOCTOR_COLORS = {
 }
 
 WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-ROTATION_BASE_YEAR = 2026  # Σταθερό έτος βάσης για τη 7ετία
+ROTATION_BASE_YEAR = 2026
 
-# Fixed-date Cyprus public holidays: (month, day, name)
 FIXED_HOLIDAYS = [
     (1, 1, "Πρωτοχρονιά"),
     (1, 6, "Θεοφάνεια"),
@@ -79,19 +78,17 @@ def get_holidays_in_range(start_date, end_date):
 def get_major_holidays_in_range(start_date, end_date):
     target_dates = {}
     for year in range(start_date.year, end_date.year + 1):
-        # 5 Κύριες Αργίες Χριστούγεννων & Πρωτοχρονιάς (συμπεριλαμβάνεται η 24/12)
         c_dates = [
+            (datetime.date(year, 1, 1), "Πρωτοχρονιά"),
             (datetime.date(year, 12, 24), "Παραμονή Χριστουγέννων"),
             (datetime.date(year, 12, 25), "Χριστούγεννα"),
             (datetime.date(year, 12, 26), "Δεύτερη μέρα Χριστουγέννων"),
             (datetime.date(year, 12, 31), "Παραμονή Πρωτοχρονιάς"),
-            (datetime.date(year, 1, 1), "Πρωτοχρονιά"),
         ]
         for d, name in c_dates:
             if start_date <= d <= end_date:
                 target_dates[d] = name
         
-        # 4 Κύριες Αργίες Πάσχα
         try:
             easter = orthodox_easter(year)
             e_dates = [
@@ -112,9 +109,6 @@ def get_major_holidays_in_range(start_date, end_date):
 # ROTATION & ASSIGNMENT LOGIC
 # ----------------------------
 def assign_major_holidays_by_rotation(start_year, end_year, manual_assignments=None):
-    """
-    Αναθέτει τις 9 κύριες αργίες βάσει των 7 ετήσιων πακέτων με 7ετή Rota Rotation.
-    """
     manual_assignments = manual_assignments or {}
     assignments = {}
     doctors_list = list(DOCTORS)
@@ -129,20 +123,21 @@ def assign_major_holidays_by_rotation(start_year, end_year, manual_assignments=N
         except Exception:
             continue
 
-        c_24 = datetime.date(year, 12, 24)
-        c_25 = datetime.date(year, 12, 25)
-        c_26 = datetime.date(year, 12, 26)
-        c_31 = datetime.date(year, 12, 31)
-        c_01 = datetime.date(year + 1, 1, 1)
+        c_01 = datetime.date(year, 1, 1)      # Πρωτοχρονιά
+        c_24 = datetime.date(year, 12, 24)    # Παραμονή Χριστουγέννων
+        c_25 = datetime.date(year, 12, 25)    # Χριστούγεννα
+        c_26 = datetime.date(year, 12, 26)    # Δεύτερη μέρα Χριστουγέννων
+        c_31 = datetime.date(year, 12, 31)    # Παραμονή Πρωτοχρονιάς
 
+        # 7 Διακριτά πακέτα εορτών (1 για κάθε γιατρό)
         holiday_packages = [
-            [c_24, easter_sat], # Πακέτο 0: 24/12 + Μ. Σάββατο
+            [c_24, easter_sat], # Πακέτο 0: 24/12 & Μ. Σάββατο
             [c_25],             # Πακέτο 1: 25/12
-            [c_26, easter_fri], # Πακέτο 2: 26/12 + Μ. Παρασκευή
+            [c_26, easter_fri], # Πακέτο 2: 26/12 & Μ. Παρασκευή
             [c_31],             # Πακέτο 3: 31/12
-            [c_01],             # Πακέτο 4: 01/01
-            [easter_sun],       # Πακέτο 5: Κυριακή του Πάσχα
-            [easter_mon]        # Πακέτο 6: Δευτέρα του Πάσχα
+            [c_01],             # Πακέτο 4: 01/01 (Πρωτοχρονιά)
+            [easter_sun],       # Πακέτο 5: Κυριακή Πάσχα
+            [easter_mon]        # Πακέτο 6: Δευτέρα Πάσχα
         ]
 
         year_offset = (year - ROTATION_BASE_YEAR) % 7
@@ -152,10 +147,11 @@ def assign_major_holidays_by_rotation(start_year, end_year, manual_assignments=N
             assigned_doc = doctors_list[doc_idx]
 
             for d in pkg_dates:
-                if d in manual_assignments:
-                    assignments[d] = manual_assignments[d]
-                else:
-                    assignments[d] = assigned_doc
+                if start_year <= d.year <= end_year:
+                    if d in manual_assignments:
+                        assignments[d] = manual_assignments[d]
+                    else:
+                        assignments[d] = assigned_doc
 
     return assignments
 
@@ -176,9 +172,6 @@ def _shifts_in_week(doctor, date, schedule, exclude_date=None):
     )
 
 def assign_regular_holidays(regular_dates_sorted, base_schedule, manual_assignments=None, max_per_week=2, min_gap_days=3, custom_queue=None):
-    """
-    Αναθέτει τις μικρές αργίες χρησιμοποιώντας την κυκλική ουρά.
-    """
     manual_assignments = manual_assignments or {}
     working = dict(base_schedule)
     working.update(manual_assignments)
@@ -234,10 +227,6 @@ def generate_base_rota(initial_week, start_date, end_date):
     return schedule
 
 def generate_schedule_with_swaps(initial_week, start_date, end_date, holiday_assignments, manual_assignments):
-    """
-    Δημιουργεί το τελικό πρόγραμμα με Swap:
-    Ο Α (που είχε βάρδια) παίρνει την επόμενη κανονική βάρδια του Β (που πήρε την αργία).
-    """
     schedule = generate_base_rota(initial_week, start_date, end_date)
     manual_assignments = manual_assignments or {}
     holiday_assignments = holiday_assignments or {}
@@ -247,9 +236,7 @@ def generate_schedule_with_swaps(initial_week, start_date, end_date, holiday_ass
     for h_date, b_doctor in holiday_assignments.items():
         if h_date not in schedule:
             continue
-
         a_doctor = schedule[h_date]
-
         if a_doctor == b_doctor:
             continue
 
@@ -660,14 +647,12 @@ with right_col:
 
         base_rota = generate_base_rota(st.session_state.initial_week, start_date, end_date)
         
-        # 1. Μεγάλες Εορτές: Rota Rotation 7-ετίας με τα 7 Πακέτα
         major_assignments = assign_major_holidays_by_rotation(
             start_date.year,
             end_date.year,
             manual_assignments=st.session_state.manual_assignments
         )
 
-        # 2. Μικρές Αργίες: Κυκλική Ουρά
         regular_dates_sorted = sorted(regular_hols.keys())
         regular_assignments, regular_conflicts, updated_regular_q = assign_regular_holidays(
             regular_dates_sorted,
@@ -683,7 +668,6 @@ with right_col:
         st.session_state.holiday_assignments = holiday_assignments
         st.session_state.holiday_conflicts = regular_conflicts
 
-        # 3. Παραγωγή με Swap
         st.session_state.schedule = generate_schedule_with_swaps(
             st.session_state.initial_week,
             start_date,
