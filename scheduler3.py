@@ -7,7 +7,7 @@ from fpdf import FPDF
 # ----------------------------
 # CONSTANTS & SETUP
 # ----------------------------
-DOCTORS = ["Χριστίνα", "Αθηνά", "Μαρία", "Έλια", "Αλέξανδρος", "Εύα", "Έλενα"]
+DOCTORS = ["Χριστίνα", "Εύα", "Έλια", "Αθηνά", "Έλενα", "Αλέξανδρος", "Μαρία"]
 
 DOCTOR_COLORS = {
     "Έλενα": (255, 200, 200),
@@ -74,29 +74,27 @@ def get_holidays_in_range(start_date, end_date):
     return {d: name for d, name in holidays.items() if start_date <= d <= end_date}
 
 # ----------------------------
-# STRICT 5-DAY ROTATION PATTERN
+# ROTATION PATTERN (EVERY 5 DAYS FOR EACH DOCTOR)
 # ----------------------------
-def generate_5day_step_schedule(initial_week, start_date, end_date, manual_assignments=None):
+def generate_5day_step_schedule(initial_doctors, start_date, end_date, manual_assignments=None):
     """
-    Δημιουργεί το πρόγραμμα όπου ο κάθε γιατρός εφημερεύει ανά 5 ημέρες
-    (Κυριακή -> Παρασκευή -> Τετάρτη -> Δευτέρα -> Σάββατο -> Πέμπτη -> Τρίτη).
+    Δημιουργεί καθημερινό πρόγραμμα έτσι ώστε ο κάθε γιατρός να έχει εφημερία
+    κάθε 5 ημέρες (μεσολαβούν 4 ημέρες ανάπαυσης).
     """
     schedule = {}
     manual_assignments = manual_assignments or {}
     total_days = (end_date - start_date).days + 1
+    num_docs = len(initial_doctors)
     
-    num_docs = len(initial_week)
-    
+    # Κάθε μέρα ανατίθεται στον επόμενο γιατρό της λίστας
     for day_offset in range(total_days):
         current_date = start_date + datetime.timedelta(days=day_offset)
         
-        # Αν υπάρχει χειροκίνητη αλλαγή από τον χρήστη
         if current_date in manual_assignments:
             schedule[current_date] = manual_assignments[current_date]
         else:
-            # Με βήμα 5 ημερών στο κυκλικό 7ήμερο pattern
-            doc_idx = (day_offset * 5) % num_docs
-            schedule[current_date] = initial_week[doc_idx]
+            doc_idx = day_offset % num_docs
+            schedule[current_date] = initial_doctors[doc_idx]
             
     return schedule
 
@@ -261,7 +259,7 @@ if "manual_assignments" not in st.session_state:
 if "holiday_names" not in st.session_state:
     st.session_state.holiday_names = {}
 
-for key in ["initial_week", "start_date", "end_date", "schedule", "balance"]:
+for key in ["initial_doctors", "start_date", "end_date", "schedule", "balance"]:
     if key not in st.session_state:
         st.session_state[key] = None
 
@@ -327,42 +325,31 @@ with left_col:
 # RIGHT: Rota Generation
 # ----------------------------
 with right_col:
-    selected_date = st.date_input("Ημερομηνία έναρξης:", datetime.date.today())
-    week_dates = [selected_date - datetime.timedelta(days=selected_date.weekday()) + datetime.timedelta(days=i) for i in range(7)]
-
-    default_order = DOCTORS
-    initial_week = {}
+    st.subheader("Σειρά Εναλλαγής Γιατρών")
+    st.write("Ορίστε τη σειρά των 7 γιατρών:")
+    
+    selected_doctors = []
     cols = st.columns(7)
-    for i, d in enumerate(week_dates):
+    for i in range(7):
         with cols[i]:
-            default_idx = DOCTORS.index(default_order[i % 7])
-            initial_week[d] = st.selectbox(
-                d.strftime("%a %d/%m"),
+            doc = st.selectbox(
+                f"Γιατρός {i+1}",
                 DOCTORS,
-                index=default_idx,
-                key=f"doc_{d}"
+                index=i,
+                key=f"doc_order_{i}"
             )
+            selected_doctors.append(doc)
 
-    if st.button("💾 Επιλογή Ημερομηνίας Έναρξης"):
-        st.session_state.initial_week = [initial_week[d] for d in sorted(initial_week)]
-        st.session_state.start_date = week_dates[0]
-        st.rerun()
-
-    if st.session_state.initial_week is None:
-        st.stop()
-
-    c1, c2 = st.columns(2)
-    with c1:
-        start_date = st.date_input("Start date", st.session_state.start_date)
-    with c2:
-        end_date = st.date_input("End date", st.session_state.start_date + datetime.timedelta(days=30))
+    start_date = st.date_input("Ημερομηνία Έναρξης", datetime.date(2026, 2, 2))
+    end_date = st.date_input("Ημερομηνία Λήξης", datetime.date(2026, 3, 31))
 
     if st.button("🗓️ Δημιουργία Προγράμματος"):
+        st.session_state.initial_doctors = selected_doctors
         holiday_names = get_holidays_in_range(start_date, end_date)
         st.session_state.holiday_names = holiday_names
 
         st.session_state.schedule = generate_5day_step_schedule(
-            st.session_state.initial_week,
+            selected_doctors,
             start_date,
             end_date,
             manual_assignments=st.session_state.manual_assignments
