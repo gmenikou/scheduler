@@ -175,40 +175,40 @@ def assign_regular_holidays(regular_dates_sorted, base_schedule, manual_assignme
     working = dict(base_schedule)
     working.update(manual_assignments)
 
-    # Φρέσκια ουρά σε κάθε εκτέλεση για ισοκατανομή
-    queue = deque(DOCTORS)
     assignments = {}
     conflicts = set()
     max_gap = min_gap_days - 1
+    
+    # Μετρητής μικρών αργιών ανά γιατρό για απόλυτη ισοκατανομή
+    holiday_counts = {doc: 0 for doc in DOCTORS}
 
     for d in regular_dates_sorted:
         if d in manual_assignments:
+            assigned = manual_assignments[d]
+            holiday_counts[assigned] += 1
             continue
 
-        skipped = []
+        # Ταξινόμηση γιατρών με βάση ποιος έχει τις λιγότερες αργίες μέχρι στιγμής
+        sorted_doctors = sorted(DOCTORS, key=lambda doc: (holiday_counts[doc], DOCTORS.index(doc)))
+        
         chosen = None
-        for _ in range(len(queue)):
-            candidate = queue.popleft()
+        for candidate in sorted_doctors:
             nearby_conflict = _has_nearby_shift(candidate, d, working, max_gap=max_gap)
             week_count = _shifts_in_week(candidate, d, working, exclude_date=d)
             weekly_conflict = (week_count + 1) > max_per_week
             
             if not nearby_conflict and not weekly_conflict:
                 chosen = candidate
-                queue.append(candidate)
                 break
-            skipped.append(candidate)
 
         if chosen is None:
-            chosen = skipped.pop(0) if skipped else DOCTORS[0]
-            queue.append(chosen)
+            # Αν όλοι έχουν σύγκρουση, δίνουμε στον γιατρό με τις λιγότερες αργίες
+            chosen = sorted_doctors[0]
             conflicts.add(d)
-
-        for s in reversed(skipped):
-            queue.appendleft(s)
 
         assignments[d] = chosen
         working[d] = chosen
+        holiday_counts[chosen] += 1
 
     return assignments, conflicts
 
