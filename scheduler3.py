@@ -6,7 +6,7 @@ from fpdf import FPDF
 from collections import deque
 
 # ----------------------------
-# CONSTANTS
+# CONSTANTS & SETUP
 # ----------------------------
 DOCTORS = ["Χριστίνα", "Αθηνά", "Μαρία", "Έλια", "Αλέξανδρος", "Εύα", "Έλενα"]
 
@@ -21,6 +21,7 @@ DOCTOR_COLORS = {
 }
 
 WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+ROTATION_BASE_YEAR = 2026  # Σταθερό έτος βάσης για τη 7ετία
 
 # Fixed-date Cyprus public holidays: (month, day, name)
 FIXED_HOLIDAYS = [
@@ -102,6 +103,186 @@ def get_major_holidays_in_range(start_date, end_date):
             
     return dict(sorted(target_dates.items()))
 
+# ----------------------------
+# ROTATION & ASSIGNMENT LOGIC
+# ----------------------------
+def assign_major_holidays_by_rotation(start_year, end_year, manual_assignments=None):
+    """
+    Αναθέτει τις 9 κύριες αργίες βάσει των 7 ετήσιων πακέτων με 7ετή Rota Rotation.
+    """
+    manual_assignments = manual_assignments or {}
+    assignments = {}
+    doctors_list = list(DOCTORS)
+
+    for year in range(start_year, end_year + 1):
+        try:
+            easter = orthodox_easter(year)
+            easter_fri = easter - datetime.timedelta(days=2)
+            easter_sat = easter - datetime.timedelta(days=1)
+            easter_sun = easter
+            easter_mon = easter + datetime.timedelta(days=1)
+        except Exception:
+            continue
+
+        c_24 = datetime.date(year, 12, 24)
+        c_25 = datetime.date(year, 12, 25)
+        c_26 = datetime.date(year, 12, 26)
+        c_31 = datetime.date(year, 12, 31)
+        c_01 = datetime.date(year + 1, 1, 1)
+
+        holiday_packages = [
+            [c_24, easter_fri], # Πακέτο 0: 24/12 + Μ. Παρασκευή
+            [c_25],             # Πακέτο 1: 25/12
+            [c_26, easter_sat], # Πακέτο 2: 26/12 + Μ. Σάββατο
+            [c_31],             # Πακέτο 3: 31/12
+            [c_01],             # Πακέτο 4: 01/01
+            [easter_sun],       # Πακέτο 5: Κυριακή του Πάσχα
+            [easter_mon]        # Πακέτο 6: Δευτέρα του Πάσχα
+        ]
+
+        year_offset = (year - ROTATION_BASE_YEAR) % 7
+
+        for pkg_idx, pkg_dates in enumerate(holiday_packages):
+            doc_idx = (pkg_idx + year_offset) % 7
+            assigned_doc = doctors_list[doc_idx]
+
+            for d in pkg_dates:
+                if d in manual_assignments:
+                    assignments[d] = manual_assignments[d]
+                else:
+                    assignments[d] = assigned_doc
+
+    return assignments
+
+def _week_monday(date):
+    return date - datetime.timedelta(days=date.weekday())
+
+def _has_nearby_shift(doctor, date, schedule, max_gap=2):
+    for d, doc in schedule.items():
+        if doc == doctor and d != date and abs((d - date).days) <= max_gap:
+            return True
+    return False
+
+def _shifts_in_week(doctor, date, schedule, exclude_date=None):
+    wk = _week_monday(date)
+    return sum(
+        1 for d, doc in schedule.items()
+        if doc == doctor and d != exclude_date and _week_monday(d) == wk
+    )
+
+def assign_regular_holidays(regular_dates_sorted, base_schedule, manual_assignments=None, max_per_week=2, min_gap_days=3, custom_queue=None):
+    """
+    Αναθέτει τις μικρές αργίες χρησιμοποιώντας την κυκλική ουρά.
+    """
+    manual_assignments = manual_assignments or {}
+    working = dict(base_schedule)
+    working.update(manual_assignments)
+
+    queue = deque(custom_queue) if custom_queue is not None else deque(DOCTORS)
+    assignments = {}
+    conflicts = set()
+    max_gap = min_gap_days - 1
+
+    for d in regular_dates_sorted:
+        if d in manual_assignments:
+            continue
+
+        skipped = []
+        chosen = None
+        for _ in range(len(queue)):
+            candidate = queue.popleft()
+            nearby_conflict = _has_nearby_shift(candidate, d, working, max_gap=max_gap)
+            week_count = _shifts_in_week(candidate, d, working, exclude_date=d)
+            weekly_conflict = (week_count + 1) > max_per_week
+            
+            if not nearby_conflict and not weekly_conflict:
+                chosen = candidate
+                queue.append(candidate)
+                break
+            skipped.append(candidate)
+
+        if chosen is None:
+            chosen = skipped.pop(0) if skipped else DOCTORS[0]
+            queue.append(chosen)
+            conflicts.add(d)
+
+        for s in reversed(skipped):
+            queue.appendleft(s)
+
+        assignments[d] = chosen
+        working[d] = chosen
+
+    return assignments, conflicts, queue
+
+def generate_base_rota(initial_week, start_date, end_date):
+    schedule = {}
+    total_days = (end_date - start_date).days + 1
+    
+    for day_offset in range(total_days):
+        current_date = start_date + datetime.timedelta(days=day_offset)
+        week_num = day_offset // 7
+        day_of_week = day_offset % 7
+        
+        doc_index = (day_of_week + (week_num * 2)) % len(initial_week)
+        schedule[current_date] = initial_week[doc_index]
+        
+    return schedule
+
+def generate_schedule_with_swaps(initial_week, start_date, end_date, holiday_assignments, manual_assignments):
+    """
+    Δημιουργεί το τελικό πρόγραμμα με Swap:
+    Ο Α (που είχε βάρδια) παίρνει την επόμενη κανονική βάρδια του Β (που πήρε την αργία).
+    """
+    schedule = generate_base_rota(initial_week, start_date, end_date)
+    manual_assignments = manual_assignments or {}
+    holiday_assignments = holiday_assignments or {}
+
+    all_dates = sorted(schedule.keys())
+
+    for h_date, b_doctor in holiday_assignments.items():
+        if h_date not in schedule:
+            continue
+
+        a_doctor = schedule[h_date]
+
+        if a_doctor == b_doctor:
+            continue
+
+        schedule[h_date] = b_doctor
+
+        for future_date in all_dates:
+            if future_date > h_date:
+                if schedule[future_date] == b_doctor and future_date not in holiday_assignments and future_date not in manual_assignments:
+                    schedule[future_date] = a_doctor
+                    break
+
+    for m_date, m_doc in manual_assignments.items():
+        if m_date in schedule:
+            schedule[m_date] = m_doc
+
+    return schedule
+
+# ----------------------------
+# BALANCE & REPORTING
+# ----------------------------
+def compute_balance(schedule, holiday_dates=None):
+    holiday_dates = holiday_dates or set()
+    counts = {doc: {wd: 0 for wd in WEEKDAY_LABELS} for doc in DOCTORS}
+    holiday_counts = {doc: 0 for doc in DOCTORS}
+    for date, doc in schedule.items():
+        if doc not in counts:
+            continue
+        wd = date.weekday()
+        counts[doc][WEEKDAY_LABELS[wd]] += 1
+        if date in holiday_dates:
+            holiday_counts[doc] += 1
+    df = pd.DataFrame.from_dict(counts, orient="index").reset_index()
+    df.rename(columns={"index": "Doctor"}, inplace=True)
+    df["Weekdays"] = df["Mon"] + df["Tue"] + df["Wed"] + df["Thu"]
+    df["Αργίες"] = df["Doctor"].map(holiday_counts)
+    df["Total"] = df["Weekdays"] + df["Fri"] + df["Sat"] + df["Sun"]
+    return df[["Doctor", "Weekdays", "Fri", "Sat", "Sun", "Αργίες", "Total"]]
+
 def compute_major_holidays_summary(schedule, major_holidays):
     summary = {doc: {"Count": 0, "Details": []} for doc in DOCTORS}
     for d in sorted(major_holidays.keys()):
@@ -136,146 +317,8 @@ def compute_regular_holidays_summary(schedule, regular_holidays):
         })
     return pd.DataFrame(data)
 
-def _week_monday(date):
-    return date - datetime.timedelta(days=date.weekday())
-
-def _has_nearby_shift(doctor, date, schedule, max_gap=2):
-    for d, doc in schedule.items():
-        if doc == doctor and d != date and abs((d - date).days) <= max_gap:
-            return True
-    return False
-
-def _shifts_in_week(doctor, date, schedule, exclude_date=None):
-    wk = _week_monday(date)
-    return sum(
-        1 for d, doc in schedule.items()
-        if doc == doctor and d != exclude_date and _week_monday(d) == wk
-    )
-
-def assign_holiday_duties(holiday_dates_sorted, base_schedule, manual_assignments=None, max_per_week=2, min_gap_days=3, custom_queue=None):
-    manual_assignments = manual_assignments or {}
-    working = dict(base_schedule)
-    working.update(manual_assignments)
-
-    queue = deque(custom_queue) if custom_queue is not None else deque(DOCTORS)
-    assignments = {}
-    conflicts = set()
-    max_gap = min_gap_days - 1
-
-    for d in holiday_dates_sorted:
-        if d in manual_assignments:
-            continue
-
-        skipped = []
-        chosen = None
-        for _ in range(len(queue)):
-            candidate = queue.popleft()
-            nearby_conflict = _has_nearby_shift(candidate, d, working, max_gap=max_gap)
-            week_count = _shifts_in_week(candidate, d, working, exclude_date=d)
-            weekly_conflict = (week_count + 1) > max_per_week
-            
-            if not nearby_conflict and not weekly_conflict:
-                chosen = candidate
-                queue.append(candidate)
-                break
-            skipped.append(candidate)
-
-        if chosen is None:
-            chosen = skipped.pop(0) if skipped else DOCTORS[0]
-            queue.append(chosen)
-            conflicts.add(d)
-
-        for s in reversed(skipped):
-            queue.appendleft(s)
-
-        assignments[d] = chosen
-        working[d] = chosen
-
-    return assignments, conflicts, queue
-
 # ----------------------------
-# HELPERS
-# ----------------------------
-def get_week_dates(any_date):
-    monday = any_date - datetime.timedelta(days=any_date.weekday())
-    return [monday + datetime.timedelta(days=i) for i in range(7)]
-
-def generate_base_rota(initial_week, start_date, end_date):
-    """
-    Δημιουργεί τη βασική κυκλική μετατόπιση βαρδιών (2 θέσεις αριστερά κάθε εβδομάδα).
-    """
-    schedule = {}
-    total_days = (end_date - start_date).days + 1
-    
-    for day_offset in range(total_days):
-        current_date = start_date + datetime.timedelta(days=day_offset)
-        week_num = day_offset // 7
-        day_of_week = day_offset % 7
-        
-        doc_index = (day_of_week + (week_num * 2)) % len(initial_week)
-        schedule[current_date] = initial_week[doc_index]
-        
-    return schedule
-
-def generate_schedule_with_swaps(initial_week, start_date, end_date, holiday_assignments, manual_assignments):
-    """
-    Δημιουργεί το τελικό πρόγραμμα με Swap:
-    Ο Α (που είχε κανονικά βάρδια την ημέρα της αργίας) παίρνει την αμέσως
-    επόμενη κανονική βάρδια του Β (που τοποθετήθηκε στην αργία).
-    """
-    schedule = generate_base_rota(initial_week, start_date, end_date)
-    manual_assignments = manual_assignments or {}
-    holiday_assignments = holiday_assignments or {}
-
-    all_dates = sorted(schedule.keys())
-
-    # 1. Εφαρμογή Αργιών με Swap
-    for h_date, b_doctor in holiday_assignments.items():
-        if h_date not in schedule:
-            continue
-
-        a_doctor = schedule[h_date] # Ο γιατρός της κανονικής ροής
-
-        if a_doctor == b_doctor:
-            continue
-
-        # Ο Β παίρνει την αργία
-        schedule[h_date] = b_doctor
-
-        # Ο Α παίρνει την αμέσως επόμενη διαθέσιμη βάρδια του Β
-        for future_date in all_dates:
-            if future_date > h_date:
-                if schedule[future_date] == b_doctor and future_date not in holiday_assignments and future_date not in manual_assignments:
-                    schedule[future_date] = a_doctor
-                    break
-
-    # 2. Χειροκίνητες αλλαγές
-    for m_date, m_doc in manual_assignments.items():
-        if m_date in schedule:
-            schedule[m_date] = m_doc
-
-    return schedule
-
-def compute_balance(schedule, holiday_dates=None):
-    holiday_dates = holiday_dates or set()
-    counts = {doc: {wd: 0 for wd in WEEKDAY_LABELS} for doc in DOCTORS}
-    holiday_counts = {doc: 0 for doc in DOCTORS}
-    for date, doc in schedule.items():
-        if doc not in counts:
-            continue
-        wd = date.weekday()
-        counts[doc][WEEKDAY_LABELS[wd]] += 1
-        if date in holiday_dates:
-            holiday_counts[doc] += 1
-    df = pd.DataFrame.from_dict(counts, orient="index").reset_index()
-    df.rename(columns={"index": "Doctor"}, inplace=True)
-    df["Weekdays"] = df["Mon"] + df["Tue"] + df["Wed"] + df["Thu"]
-    df["Αργίες"] = df["Doctor"].map(holiday_counts)
-    df["Total"] = df["Weekdays"] + df["Fri"] + df["Sat"] + df["Sun"]
-    return df[["Doctor", "Weekdays", "Fri", "Sat", "Sun", "Αργίες", "Total"]]
-
-# ----------------------------
-# CALENDAR DISPLAY
+# DISPLAY & PDF HELPERS
 # ----------------------------
 def display_calendar(schedule):
     manual_assignments = st.session_state.get("manual_assignments", {})
@@ -311,9 +354,6 @@ def display_calendar(schedule):
                     else:
                         cols[i].markdown("")
 
-# ----------------------------
-# PDF EXPORT
-# ----------------------------
 def create_balance_pdf(df, start_date, end_date, filename="balance_summary.pdf"):
     pdf = FPDF(orientation="L", unit="mm", format="A4")
     pdf.add_page()
@@ -462,8 +502,6 @@ if "holiday_names" not in st.session_state:
     st.session_state.holiday_names = {}
 if "holiday_conflicts" not in st.session_state:
     st.session_state.holiday_conflicts = set()
-if "major_holiday_queue" not in st.session_state:
-    st.session_state.major_holiday_queue = deque(DOCTORS)
 if "regular_holiday_queue" not in st.session_state:
     st.session_state.regular_holiday_queue = deque(DOCTORS)
 
@@ -474,7 +512,7 @@ for key in ["initial_week", "start_date", "end_date", "schedule", "balance"]:
 left_col, right_col = st.columns([0.35, 0.65])
 
 # ----------------------------
-# LEFT: Balance & Manual Assignment
+# LEFT: Balance & Manual Overrides
 # ----------------------------
 with left_col:
     st.subheader("📊 Κατάσταση Εφημεριών Εύρους")
@@ -578,11 +616,11 @@ with left_col:
                 st.download_button("⬇️ Κατέβασε ημερολόγιο σε PDF", f, file_name=pdf_file)
 
 # ----------------------------
-# RIGHT: Initial Week + Schedule Generation
+# RIGHT: Rota Generation
 # ----------------------------
 with right_col:
     selected_date = st.date_input("Ημερομηνία έναρξης:", datetime.date.today())
-    week_dates = get_week_dates(selected_date)
+    week_dates = get_week_dates = [selected_date - datetime.timedelta(days=selected_date.weekday()) + datetime.timedelta(days=i) for i in range(7)]
 
     default_order = DOCTORS
     initial_week = {}
@@ -617,38 +655,30 @@ with right_col:
 
         base_rota = generate_base_rota(st.session_state.initial_week, start_date, end_date)
         
-        # 1. Υπολογισμός Μεγάλων Εορτών & Ενημέρωση Ουράς
-        major_dates_sorted = sorted(major_hols.keys())
-        major_assignments, major_conflicts_1, updated_major_q = assign_holiday_duties(
-            major_dates_sorted,
-            base_rota,
-            manual_assignments=st.session_state.manual_assignments,
-            max_per_week=2,
-            min_gap_days=3,
-            custom_queue=st.session_state.major_holiday_queue
+        # 1. Μεγάλες Εορτές: Rota Rotation 7-ετίας με τα 7 Πακέτα
+        major_assignments = assign_major_holidays_by_rotation(
+            start_date.year,
+            end_date.year,
+            manual_assignments=st.session_state.manual_assignments
         )
-        st.session_state.major_holiday_queue = updated_major_q
 
-        # 2. Υπολογισμός Μικρών Αργιών & Ενημέρωση Ουράς
+        # 2. Μικρές Αργίες: Κυκλική Ουρά
         regular_dates_sorted = sorted(regular_hols.keys())
-        regular_assignments, major_conflicts_2, updated_regular_q = assign_holiday_duties(
+        regular_assignments, regular_conflicts, updated_regular_q = assign_regular_holidays(
             regular_dates_sorted,
             base_rota,
             manual_assignments=st.session_state.manual_assignments,
-            max_per_week=2,
-            min_gap_days=3,
             custom_queue=st.session_state.regular_holiday_queue
         )
         st.session_state.regular_holiday_queue = updated_regular_q
 
         holiday_assignments = {**major_assignments, **regular_assignments}
-        holiday_conflicts = major_conflicts_1.union(major_conflicts_2)
 
         st.session_state.holiday_names = holiday_names
         st.session_state.holiday_assignments = holiday_assignments
-        st.session_state.holiday_conflicts = holiday_conflicts
+        st.session_state.holiday_conflicts = regular_conflicts
 
-        # 3. Τελική Παραγωγή Προγράμματος με Swap
+        # 3. Παραγωγή με Swap
         st.session_state.schedule = generate_schedule_with_swaps(
             st.session_state.initial_week,
             start_date,
