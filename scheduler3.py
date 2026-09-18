@@ -15,7 +15,7 @@ DOCTOR_COLORS = {
     "Μαρία": (200, 200, 255),
     "Αθηνά": (255, 255, 200),
     "Αλέξανδρος": (255, 200, 255),
-    "Έλια": (200, 200, 255),
+    "Έλια": (200, 255, 255),
     "Χριστίνα": (220, 220, 220)
 }
 
@@ -74,31 +74,33 @@ def get_holidays_in_range(start_date, end_date):
     return {d: name for d, name in holidays.items() if start_date <= d <= end_date}
 
 # ----------------------------
-# TRUE +5 DAYS SHIFT PATTERN
+# ROLLING WEEKLY SHIFT SCHEDULE
 # ----------------------------
-def generate_true_5day_step_schedule(initial_doctors, start_date, end_date, manual_assignments=None):
+def generate_weekly_shifting_schedule(initial_doctors, start_date, end_date, manual_assignments=None):
     """
-    Δημιουργεί το πρόγραμμα όπου κάθε επόμενη εφημερία προχωράει ακριβώς κατά +5 ημέρες
-    (ή ισοδύναμα με βήτα 5 στη λίστα των γιατρών ανά ημερολογιακή μέρα).
+    Δημιουργεί πρόγραμμα όπου η σειρά των γιατρών μετατοπίζεται κυκλικά 
+    κάθε εβδομάδα, ώστε οι μέρες να αλλάζουν συνεχώς για κάθε γιατρό 
+    και να μην επαναλαμβάνονται οι ίδιες μέρες κάθε εβδομάδα.
     """
     schedule = {}
     manual_assignments = manual_assignments or {}
-    total_days = (end_date - start_date).days + 1
     num_docs = len(initial_doctors)
     
-    # Μετατοπίζουμε τον δείκτη των γιατρών κατά +5 θέσεις (που είναι το ίδιο με το -2 modulo 7)
-    # για κάθε επόμενη μέρα που περνάει στο ημερολόγιο.
-    for day_offset in range(total_days):
-        current_date = start_date + datetime.timedelta(days=day_offset)
-        
+    current_date = start_date
+    while current_date <= end_date:
         if current_date in manual_assignments:
             schedule[current_date] = manual_assignments[current_date]
         else:
-            # Το (day_offset * 5) εξασφαλίζει ότι οι μέρες εναλλάσσονται συνεχώς 
-            # (+5 μέρες απόσταση ανάμεσα στις εφημερίες του ίδιου γιατρού)
-            doc_idx = (day_offset * 5) % num_docs
+            days_from_start = (current_date - start_date).days
+            week_num = days_from_start // 7
+            weekday = current_date.weekday() # 0: Δευτέρα έως 6: Κυριακή
+            
+            # Κυκλική μετατόπιση ανά εβδομάδα για να αλλάζουν οι μέρες
+            doc_idx = (weekday + week_num) % num_docs
             schedule[current_date] = initial_doctors[doc_idx]
             
+        current_date += datetime.timedelta(days=1)
+        
     return schedule
 
 # ----------------------------
@@ -351,7 +353,7 @@ with right_col:
         holiday_names = get_holidays_in_range(start_date, end_date)
         st.session_state.holiday_names = holiday_names
 
-        st.session_state.schedule = generate_true_5day_step_schedule(
+        st.session_state.schedule = generate_weekly_shifting_schedule(
             selected_doctors,
             start_date,
             end_date,
