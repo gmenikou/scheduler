@@ -33,8 +33,10 @@ FIXED_HOLIDAYS = [
     (8, 15, "Κοίμηση της Θεοτόκου"),
     (10, 1, "Ημέρα Ανεξαρτησίας Κύπρου"),
     (10, 28, "Ημέρα του Όχι"),
+    (12, 24, "Παραμονή Χριστουγέννων"),
     (12, 25, "Χριστούγεννα"),
     (12, 26, "Δεύτερη μέρα Χριστουγέννων"),
+    (12, 31, "Παραμονή Πρωτοχρονιάς"),
 ]
 
 # ----------------------------
@@ -60,6 +62,7 @@ def get_cyprus_holidays(year):
     movable = {
         easter - datetime.timedelta(days=48): "Καθαρά Δευτέρα",
         easter - datetime.timedelta(days=2): "Μεγάλη Παρασκευή",
+        easter - datetime.timedelta(days=1): "Μεγάλο Σάββατο",
         easter: "Κυριακή του Πάσχα",
         easter + datetime.timedelta(days=1): "Δευτέρα του Πάσχα",
         easter + datetime.timedelta(days=50): "Δευτέρα Αγίου Πνεύματος",
@@ -75,18 +78,20 @@ def get_holidays_in_range(start_date, end_date):
 
 def get_major_holidays_in_range(start_date, end_date):
     target_dates = {}
-    for year in range(start_date.year - 1, end_date.year + 2):
+    for year in range(start_date.year, end_date.year + 1):
+        # 5 Κύριες Αργίες Χριστούγεννων & Πρωτοχρονιάς (συμπεριλαμβάνεται η 24/12)
         c_dates = [
             (datetime.date(year, 12, 24), "Παραμονή Χριστουγέννων"),
             (datetime.date(year, 12, 25), "Χριστούγεννα"),
             (datetime.date(year, 12, 26), "Δεύτερη μέρα Χριστουγέννων"),
             (datetime.date(year, 12, 31), "Παραμονή Πρωτοχρονιάς"),
-            (datetime.date(year + 1, 1, 1), "Πρωτοχρονιά"),
+            (datetime.date(year, 1, 1), "Πρωτοχρονιά"),
         ]
         for d, name in c_dates:
             if start_date <= d <= end_date:
                 target_dates[d] = name
         
+        # 4 Κύριες Αργίες Πάσχα
         try:
             easter = orthodox_easter(year)
             e_dates = [
