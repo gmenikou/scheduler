@@ -131,9 +131,9 @@ def assign_major_holidays_by_rotation(start_year, end_year, manual_assignments=N
         c_01 = datetime.date(year + 1, 1, 1)
 
         holiday_packages = [
-            [c_24, easter_fri], # Πακέτο 0: 24/12 + Μ. Παρασκευή
+            [c_24, easter_sat], # Πακέτο 0: 24/12 + Μ. Σάββατο
             [c_25],             # Πακέτο 1: 25/12
-            [c_26, easter_sat], # Πακέτο 2: 26/12 + Μ. Σάββατο
+            [c_26, easter_fri], # Πακέτο 2: 26/12 + Μ. Παρασκευή
             [c_31],             # Πακέτο 3: 31/12
             [c_01],             # Πακέτο 4: 01/01
             [easter_sun],       # Πακέτο 5: Κυριακή του Πάσχα
@@ -620,7 +620,7 @@ with left_col:
 # ----------------------------
 with right_col:
     selected_date = st.date_input("Ημερομηνία έναρξης:", datetime.date.today())
-    week_dates = get_week_dates = [selected_date - datetime.timedelta(days=selected_date.weekday()) + datetime.timedelta(days=i) for i in range(7)]
+    week_dates = [selected_date - datetime.timedelta(days=selected_date.weekday()) + datetime.timedelta(days=i) for i in range(7)]
 
     default_order = DOCTORS
     initial_week = {}
