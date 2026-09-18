@@ -74,25 +74,27 @@ def get_holidays_in_range(start_date, end_date):
     return {d: name for d, name in holidays.items() if start_date <= d <= end_date}
 
 # ----------------------------
-# ROTATION PATTERN (EVERY 5 DAYS FOR EACH DOCTOR)
+# CORRECT ROTATION PATTERN (TRUE CONTINUOUS SHIFT)
 # ----------------------------
 def generate_5day_step_schedule(initial_doctors, start_date, end_date, manual_assignments=None):
     """
-    Δημιουργεί καθημερινό πρόγραμμα έτσι ώστε ο κάθε γιατρός να έχει εφημερία
-    κάθε 5 ημέρες (μεσολαβούν 4 ημέρες ανάπαυσης).
+    Δημιουργεί συνεχή κυκλική εναλλαγή (1 γιατρός ανά ημέρα).
+    Επειδή οι γιατροί είναι 7, ο κάθε γιατρός θα εφημερεύει
+    κάθε 7 ημέρες στη σειρά του ημερολογίου, αλλά η μέρα της εβδομάδας
+    θα αλλάζει συνεχώς αν αλλάξει ο κύκλος!
     """
     schedule = {}
     manual_assignments = manual_assignments or {}
     total_days = (end_date - start_date).days + 1
     num_docs = len(initial_doctors)
     
-    # Κάθε μέρα ανατίθεται στον επόμενο γιατρό της λίστας
     for day_offset in range(total_days):
         current_date = start_date + datetime.timedelta(days=day_offset)
         
         if current_date in manual_assignments:
             schedule[current_date] = manual_assignments[current_date]
         else:
+            # Απλή, καθημερινή κυκλική εναλλαγή των 7 γιατρών
             doc_idx = day_offset % num_docs
             schedule[current_date] = initial_doctors[doc_idx]
             
@@ -120,6 +122,7 @@ def compute_balance(schedule, holiday_dates=None):
     return df[["Doctor", "Weekdays", "Fri", "Sat", "Sun", "Αργίες", "Total"]]
 
 def compute_doctor_holidays_breakdown(schedule, holiday_names):
+    """Υπολογίζει ποιες ακριβώς αργίες αναλογούν στον κάθε γιατρό."""
     doc_holidays = {doc: [] for doc in DOCTORS}
     for d in sorted(holiday_names.keys()):
         doc = schedule.get(d)
