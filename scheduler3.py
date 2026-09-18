@@ -3,7 +3,6 @@ import datetime
 import calendar
 import pandas as pd
 from fpdf import FPDF
-from collections import deque
 
 # ----------------------------
 # CONSTANTS & SETUP
@@ -37,6 +36,35 @@ FIXED_HOLIDAYS = [
     (12, 26, "Δεύτερη μέρα Χριστουγέννων"),
     (12, 31, "Παραμονή Πρωτοχρονιάς"),
 ]
+
+# ----------------------------
+# HELPER FUNCTIONS (VALIDATION)
+# ----------------------------
+def _week_monday(date):
+    return date - datetime.timedelta(days=date.weekday())
+
+def _has_nearby_shift(doctor, date, schedule, max_gap=2):
+    """Ελέγχει αν υπάρχει εφημερία σε απόσταση +-3 ημερών (max_gap=2 σημαίνει διαφορά ημερών <= 2, δηλαδή < 3 μέρες κενό)."""
+    for d, doc in schedule.items():
+        if doc == doctor and d != date and abs((d - date).days) <= max_gap:
+            return True
+    return False
+
+def _shifts_in_week(doctor, date, schedule, exclude_date=None):
+    """Υπολογίζει πόσες εφημερίες έχει ο γιατρός στη συγκεκριμένη εβδομάδα (Δευτέρα-Κυριακή)."""
+    wk = _week_monday(date)
+    return sum(
+        1 for d, doc in schedule.items()
+        if doc == doctor and d != exclude_date and _week_monday(d) == wk
+    )
+
+def is_valid_assignment(doctor, date, schedule, exclude_date=None):
+    """Επαληθεύει αν τηρούνται οι 2 κανόνες: max 2 εφημερίες/εβδομάδα & +-3 μέρες απόσταση."""
+    if _has_nearby_shift(doctor, date, schedule, max_gap=2):
+        return False
+    if _shifts_in_week(doctor, date, schedule, exclude_date=exclude_date) >= 2:
+        return False
+    return True
 
 # ----------------------------
 # HOLIDAY HELPERS
@@ -123,20 +151,20 @@ def assign_major_holidays_by_rotation(start_year, end_year, manual_assignments=N
         except Exception:
             continue
 
-        c_01 = datetime.date(year, 1, 1)      # Πρωτοχρονιά
-        c_24 = datetime.date(year, 12, 24)    # Παραμονή Χριστουγέννων
-        c_25 = datetime.date(year, 12, 25)    # Χριστούγεννα
-        c_26 = datetime.date(year, 12, 26)    # Δεύτερη μέρα Χριστουγέννων
-        c_31 = datetime.date(year, 12, 31)    # Παραμονή Πρωτοχρονιάς
+        c_01 = datetime.date(year, 1, 1)
+        c_24 = datetime.date(year, 12, 24)
+        c_25 = datetime.date(year, 12, 25)
+        c_26 = datetime.date(year, 12, 26)
+        c_31 = datetime.date(year, 12, 31)
 
         holiday_packages = [
-            [c_24, easter_sat], # Πακέτο 0: 24/12 & Μ. Σάββατο
-            [c_25],             # Πακέτο 1: 25/12
-            [c_26, easter_fri], # Πακέτο 2: 26/12 & Μ. Παρασκευή
-            [c_31],             # Πακέτο 3: 31/12
-            [c_01],             # Πακέτο 4: 01/01
-            [easter_sun],       # Πακέτο 5: Κυριακή Πάσχα
-            [easter_mon]        # Πακέτο 6: Δευτέρα Πάσχα
+            [c_24, easter_sat],
+            [c_25],            
+            [c_26, easter_fri],
+            [c_31],            
+            [c_01],            
+            [easter_sun],      
+            [easter_mon]       
         ]
 
         year_offset = (year - ROTATION_BASE_YEAR) % 7
@@ -154,55 +182,32 @@ def assign_major_holidays_by_rotation(start_year, end_year, manual_assignments=N
 
     return assignments
 
-def _week_monday(date):
-    return date - datetime.timedelta(days=date.weekday())
-
-def _has_nearby_shift(doctor, date, schedule, max_gap=2):
-    for d, doc in schedule.items():
-        if doc == doctor and d != date and abs((d - date).days) <= max_gap:
-            return True
-    return False
-
-def _shifts_in_week(doctor, date, schedule, exclude_date=None):
-    wk = _week_monday(date)
-    return sum(
-        1 for d, doc in schedule.items()
-        if doc == doctor and d != exclude_date and _week_monday(d) == wk
-    )
-
-def assign_regular_holidays(regular_dates_sorted, base_schedule, manual_assignments=None, max_per_week=2, min_gap_days=3):
+def assign_regular_holidays(regular_dates_sorted, current_schedule, manual_assignments=None):
     manual_assignments = manual_assignments or {}
-    working = dict(base_schedule)
-    working.update(manual_assignments)
+    working = dict(current_schedule)
 
     assignments = {}
     conflicts = set()
-    max_gap = min_gap_days - 1
-    
-    # Μετρητής μικρών αργιών ανά γιατρό για απόλυτη ισοκατανομή
     holiday_counts = {doc: 0 for doc in DOCTORS}
 
     for d in regular_dates_sorted:
         if d in manual_assignments:
             assigned = manual_assignments[d]
             holiday_counts[assigned] += 1
+            working[d] = assigned
             continue
 
-        # Ταξινόμηση γιατρών: προηγείται όποιος έχει τις λιγότερες αργίες
         sorted_doctors = sorted(DOCTORS, key=lambda doc: (holiday_counts[doc], DOCTORS.index(doc)))
         
         chosen = None
         for candidate in sorted_doctors:
-            nearby_conflict = _has_nearby_shift(candidate, d, working, max_gap=max_gap)
-            week_count = _shifts_in_week(candidate, d, working, exclude_date=d)
-            weekly_conflict = (week_count + 1) > max_per_week
-            
-            if not nearby_conflict and not weekly_conflict:
+            # Αυστηρός έλεγχος κανόνων
+            if is_valid_assignment(candidate, d, working, exclude_date=d):
                 chosen = candidate
                 break
 
         if chosen is None:
-            # Σε περίπτωση σύγκρουσης, επιλέγουμε τον γιατρό με τις λιγότερες αργίες
+            # Αν υπάρχει σύγκρουση, επιλέγουμε τον γιατρό με τις λιγότερες αργίες και καταγράφουμε τη σύγκρουση
             chosen = sorted_doctors[0]
             conflicts.add(d)
 
@@ -233,21 +238,35 @@ def generate_schedule_with_swaps(initial_week, start_date, end_date, holiday_ass
 
     all_dates = sorted(schedule.keys())
 
-    for h_date, b_doctor in holiday_assignments.items():
-        if h_date not in schedule:
-            continue
+    # Εφαρμογή αργιών με έξυπνες ανταλλαγές (swaps) που σέβονται τους 2 κανόνες
+    for h_date in sorted(holiday_assignments.keys()):
+        b_doctor = holiday_assignments[h_date]
         a_doctor = schedule[h_date]
+
         if a_doctor == b_doctor:
             continue
 
+        # Ανάθεση της αργίας στον δικαιούχο γιατρό B
         schedule[h_date] = b_doctor
 
+        # Προσπάθεια επιστροφής της χαμένης εφημερίας στον γιατρό A
+        swapped = False
         for future_date in all_dates:
             if future_date > h_date:
-                if schedule[future_date] == b_doctor and future_date not in holiday_assignments and future_date not in manual_assignments:
-                    schedule[future_date] = a_doctor
-                    break
+                if (schedule[future_date] == b_doctor and 
+                    future_date not in holiday_assignments and 
+                    future_date not in manual_assignments):
+                    
+                    # Έλεγχος αν ο A μπορεί να πάρει την βάρδια της future_date χωρίς να σπάει τους κανόνες
+                    temp_schedule = dict(schedule)
+                    temp_schedule[future_date] = a_doctor
+                    
+                    if is_valid_assignment(a_doctor, future_date, temp_schedule, exclude_date=future_date):
+                        schedule[future_date] = a_doctor
+                        swapped = True
+                        break
 
+    # Εφαρμογή των χειροκίνητων αλλαγών (overrides)
     for m_date, m_doc in manual_assignments.items():
         if m_date in schedule:
             schedule[m_date] = m_doc
@@ -516,9 +535,10 @@ with left_col:
         manual_doctor = st.selectbox("Επιλογή Ακτινολόγου", DOCTORS)
         if st.button("✅ Επικύρωση"):
             current_schedule = dict(st.session_state.schedule) if st.session_state.schedule else {}
-            check_schedule = {d: doc for d, doc in current_schedule.items() if d != manual_date}
-            nearby_conflict = _has_nearby_shift(manual_doctor, manual_date, check_schedule, max_gap=2)
-            weekly_conflict = (_shifts_in_week(manual_doctor, manual_date, check_schedule) + 1) > 2
+            
+            # Έλεγχος των κανόνων κατά τη χειροκίνητη εισαγωγή
+            nearby_conflict = _has_nearby_shift(manual_doctor, manual_date, current_schedule, max_gap=2)
+            weekly_conflict = (_shifts_in_week(manual_doctor, manual_date, current_schedule, exclude_date=manual_date) + 1) > 2
 
             st.session_state.manual_assignments[manual_date] = manual_doctor
             st.session_state.schedule[manual_date] = manual_doctor
@@ -532,27 +552,26 @@ with left_col:
             holiday_note = ""
             if manual_date in st.session_state.holiday_names:
                 holiday_note = f" (Αργία: {st.session_state.holiday_names[manual_date]})"
-            st.success(f"{manual_doctor} assigned to {manual_date.strftime('%d/%m/%Y')}{holiday_note}")
+            st.success(f"Ο/Η {manual_doctor} ανατέθηκε στις {manual_date.strftime('%d/%m/%Y')}{holiday_note}")
 
             if nearby_conflict:
                 st.warning(
-                    f"⚠️ Ο/Η {manual_doctor} έχει ήδη άλλη εφημερία εντός 3 ημερών από τις "
-                    f"{manual_date.strftime('%d/%m/%Y')}. Η ανάθεση έγινε ούτως ή άλλως."
+                    f"⚠️ Προσοχή: Ο/Η {manual_doctor} έχει άλλη εφημερία εντός +-3 ημερών από τις "
+                    f"{manual_date.strftime('%d/%m/%Y')}."
                 )
             if weekly_conflict:
                 st.warning(
-                    f"⚠️ Ο/Η {manual_doctor} θα έχει πάνω από 2 εφημερίες μέσα στην ίδια εβδομάδα με τις "
-                    f"{manual_date.strftime('%d/%m/%Y')}. Η ανάθεση έγινε ούτως ή άλλως."
+                    f"⚠️ Προσοχή: Ο/Η {manual_doctor} υπερβαίνει τις 2 εφημερίες την ίδια εβδομάδα."
                 )
             
-            st.rerun()  # Ακαριαία ανανέωση της οθόνης μετά τη χειροκίνητη αλλαγή
+            st.rerun()
 
         if st.session_state.holiday_names:
             conflicts = st.session_state.get("holiday_conflicts", set())
             if conflicts:
                 st.warning(
-                    f"⚠️ Σε {len(conflicts)} αργία(ες) δεν βρέθηκε γιατρός χωρίς σύγκρουση "
-                    f"(κανόνας 3 ημερών / 2 εφημεριών τη βδομάδα) — ελέγξτε τις παρακάτω."
+                    f"⚠️ Σε {len(conflicts)} αργία(ες) δεν βρέθηκε διαθέσιμος γιατρός χωρίς σύγκρουση "
+                    f"(κανόνας +-3 ημερών / max 2 εφημεριών τη βδομάδα) — παρακαλώ ελέγξτε τις."
                 )
             with st.expander(f"🎉 Αργίες στο διάστημα ({len(st.session_state.holiday_names)})"):
                 for d in sorted(st.session_state.holiday_names.keys()):
@@ -683,7 +702,7 @@ with right_col:
             holiday_dates=set(holiday_assignments.keys())
         )
 
-        st.rerun()  # Ακαριαία ανανέωση της οθόνης με το 1ο πάτημα
+        st.rerun()
 
     if st.session_state.schedule:
         display_calendar(st.session_state.schedule)
