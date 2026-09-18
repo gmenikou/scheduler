@@ -15,7 +15,7 @@ DOCTOR_COLORS = {
     "Μαρία": (200, 200, 255),
     "Αθηνά": (255, 255, 200),
     "Αλέξανδρος": (255, 200, 255),
-    "Έλια": (200, 255, 255),
+    "Έλια": (200, 200, 255),
     "Χριστίνα": (220, 220, 220)
 }
 
@@ -74,13 +74,12 @@ def get_holidays_in_range(start_date, end_date):
     return {d: name for d, name in holidays.items() if start_date <= d <= end_date}
 
 # ----------------------------
-# ROLLING WEEKLY SHIFT SCHEDULE
+# WEEKLY -2 DAYS SHIFT SCHEDULE
 # ----------------------------
 def generate_weekly_shifting_schedule(initial_doctors, start_date, end_date, manual_assignments=None):
     """
-    Δημιουργεί πρόγραμμα όπου η σειρά των γιατρών μετατοπίζεται κυκλικά 
-    κάθε εβδομάδα, ώστε οι μέρες να αλλάζουν συνεχώς για κάθε γιατρό 
-    και να μην επαναλαμβάνονται οι ίδιες μέρες κάθε εβδομάδα.
+    Δημιουργεί πρόγραμμα όπου κάθε εβδομάδα η μέρα μετατοπίζεται κατά -2 ημέρες
+    (δηλαδή -2 μέρες σε σχέση με την προηγούμενη εβδομάδα).
     """
     schedule = {}
     manual_assignments = manual_assignments or {}
@@ -95,8 +94,8 @@ def generate_weekly_shifting_schedule(initial_doctors, start_date, end_date, man
             week_num = days_from_start // 7
             weekday = current_date.weekday() # 0: Δευτέρα έως 6: Κυριακή
             
-            # Κυκλική μετατόπιση ανά εβδομάδα για να αλλάζουν οι μέρες
-            doc_idx = (weekday + week_num) % num_docs
+            # Μετατόπιση κατά -2 ημέρες κάθε εβδομάδα (ισοδύναμο με +2 στο modulo 7)
+            doc_idx = (weekday + 2 * week_num) % num_docs
             schedule[current_date] = initial_doctors[doc_idx]
             
         current_date += datetime.timedelta(days=1)
