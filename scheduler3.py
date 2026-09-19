@@ -74,7 +74,7 @@ def get_holidays_in_range(start_date, end_date):
     return {d: name for d, name in holidays.items() if start_date <= d <= end_date}
 
 # ----------------------------
-# ADVANCED ROTA SCHEDULE WITH MONTHLY LIMITS
+# ADVANCED ROTA SCHEDULE
 # ----------------------------
 def generate_weekly_shifting_schedule(initial_doctors, start_date, end_date, manual_assignments=None):
     schedule = {}
@@ -85,8 +85,7 @@ def generate_weekly_shifting_schedule(initial_doctors, start_date, end_date, man
     holiday_dates = set(holiday_names.keys())
     
     holiday_counts = {doc: 0 for doc in initial_doctors}
-    
-    # Μηνιαία παρακολούθηση γιατρών για τα όρια (heavy: Σάββατο, Κυριακή, Αργία | friday: Παρασκευή)
+    total_shifts_count = {doc: 0 for doc in initial_doctors} # Για συνολική ισορροπία (μέλλον/γενική εικόνα)
     doc_heavy_monthly = {doc: {} for doc in initial_doctors}
     doc_friday_monthly = {doc: {} for doc in initial_doctors}
     
@@ -101,18 +100,12 @@ def generate_weekly_shifting_schedule(initial_doctors, start_date, end_date, man
         if is_heavy:
             new_h = h_count + 1
             new_f = f_count
-            if new_h > 2:
-                return True
-            if new_h == 2 and new_f > 0:
+            if new_h > 2 or (new_h == 2 and new_f > 0):
                 return True
         elif is_friday:
             new_h = h_count
             new_f = f_count + 1
-            if new_h == 2 and new_f > 0:
-                return True
-            if new_h >= 1 and new_f > 1:
-                return True
-            if new_h == 0 and new_f > 1:
+            if (new_h == 2 and new_f > 0) or new_f > 1 or (new_h >= 1 and new_f > 1):
                 return True
         return False
 
@@ -131,13 +124,15 @@ def generate_weekly_shifting_schedule(initial_doctors, start_date, end_date, man
         if current_date in manual_assignments:
             doc = manual_assignments[current_date]
             schedule[current_date] = doc
+            total_shifts_count[doc] += 1
             if current_date in holiday_dates:
                 holiday_counts[doc] = holiday_counts.get(doc, 0) + 1
             update_monthly_counts(doc, current_date, is_heavy, is_friday)
         else:
             days_from_start = (current_date - start_monday).days
             week_num = days_from_start // 7
-            doc_idx = (weekday - 2 * week_num) % num_docs
+            
+            doc_idx = (weekday + 2 * week_num) % num_docs
             base_doc = initial_doctors[doc_idx]
             
             def days_since_last_shift(doc_candidate, target_date):
@@ -156,24 +151,23 @@ def generate_weekly_shifting_schedule(initial_doctors, start_date, end_date, man
                         return False
                 return True
 
-            # Εύρεση διαθέσιμων γιατρών που τηρούν απόσταση ±3 μέρες ΚΑΙ δεν παραβιάζουν τα μηνιαία όρια
             valid_docs = [
                 d for d in initial_doctors 
                 if is_doctor_spaced_well(d, current_date) and not would_exceed_monthly_limits(d, current_date, is_heavy, is_friday)
             ]
             
             if not valid_docs:
-                # Fallback αν λόγω αυστηρών ορίων αποκλειστούν όλοι: χαλαρώνουμε τα μηνιαία όρια κρατώντας την απόσταση
                 valid_docs = [d for d in initial_doctors if is_doctor_spaced_well(d, current_date)]
                 if not valid_docs:
                     valid_docs = initial_doctors
 
             if is_heavy or is_friday:
-                # Επιλογή βάσει λιγότερων αργιών/βαριών και πιο μακρινής προηγούμενης εφημερίας
+                # Επιλογή συνδυάζοντας: λιγότερες αργίες, συνολικά λιγότερες εφημερίες (μέλλον/ισορροπία) και μακρινή προηγούμενη (παρελθόν)
                 chosen_doc = max(
                     valid_docs,
                     key=lambda d: (
                         -holiday_counts[d],
+                        -total_shifts_count[d],
                         days_since_last_shift(d, current_date)
                     )
                 )
@@ -185,10 +179,15 @@ def generate_weekly_shifting_schedule(initial_doctors, start_date, end_date, man
                 else:
                     chosen_doc = max(
                         valid_docs,
-                        key=lambda d: (-holiday_counts[d], days_since_last_shift(d, current_date))
+                        key=lambda d: (
+                            -holiday_counts[d],
+                            -total_shifts_count[d],
+                            days_since_last_shift(d, current_date)
+                        )
                     )
 
             schedule[current_date] = chosen_doc
+            total_shifts_count[chosen_doc] += 1
             update_monthly_counts(chosen_doc, current_date, is_heavy, is_friday)
                 
         current_date += datetime.timedelta(days=1)
@@ -196,7 +195,7 @@ def generate_weekly_shifting_schedule(initial_doctors, start_date, end_date, man
     return schedule
 
 # ----------------------------
-# BALANCE & HOLIDAYS REPORTING
+# BALANCE & REPORTING
 # ----------------------------
 def compute_balance(schedule, holiday_dates=None):
     holiday_dates = holiday_dates or set()
@@ -362,9 +361,6 @@ for key in ["initial_doctors", "start_date", "end_date", "schedule", "balance"]:
 
 left_col, right_col = st.columns([0.40, 0.60])
 
-# ----------------------------
-# LEFT: Balance & Holiday Breakdown
-# ----------------------------
 with left_col:
     st.subheader("📊 Κατάσταση Εφημεριών Εύρους")
 
@@ -394,9 +390,6 @@ with left_col:
     if st.session_state.balance is not None and not st.session_state.balance.empty:
         st.dataframe(st.session_state.balance, use_container_width=True, height=260)
 
-        # ----------------------------
-        # ΑΝΑΛΥΣΗ ΑΡΓΙΩΝ ΑΝΑ ΓΙΑΤΡΟ
-        # ----------------------------
         if st.session_state.holiday_names:
             st.subheader("🎉 Αναλογία Αργιών ανά Γιατρό")
             hols_df = compute_doctor_holidays_breakdown(
@@ -418,9 +411,6 @@ with left_col:
             with open(pdf_file, "rb") as f:
                 st.download_button("⬇️ Κατέβασε ημερολόγιο σε PDF", f, file_name=pdf_file)
 
-# ----------------------------
-# RIGHT: Rota Generation
-# ----------------------------
 with right_col:
     st.subheader("Σειρά Εναλλαγής Γιατρών")
     st.write("Ορίστε τη σειρά των 7 γιατρών:")
