@@ -15,7 +15,7 @@ DOCTOR_COLORS = {
     "Μαρία": (200, 200, 255),
     "Αθηνά": (255, 255, 200),
     "Αλέξανδρος": (255, 200, 255),
-    "Έλια": (200, 255, 255),
+    "Έλια": (200, 200, 255),
     "Χριστίνα": (220, 220, 220)
 }
 
@@ -44,14 +44,14 @@ def _week_monday(date):
     return date - datetime.timedelta(days=date.weekday())
 
 def _has_nearby_shift(doctor, date, schedule, max_gap=2):
-    """Ελέγχει αν υπάρχει εφημερία σε απόσταση +-2 ημερών."""
+    """Ελέγχει αν υπάρχει εφημερία σε απόσταση +-2 ημερών[cite: 2]."""
     for d, doc in schedule.items():
         if doc == doctor and d != date and abs((d - date).days) <= max_gap:
             return True
     return False
 
 def _shifts_in_week(doctor, date, schedule, exclude_date=None):
-    """Υπολογίζει πόσες εφημερίες έχει ο γιατρός στη συγκεκριμένη εβδομάδα."""
+    """Υπολογίζει πόσες εφημερίες έχει ο γιατρός στη συγκεκριμένη εβδομάδα[cite: 2]."""
     wk = _week_monday(date)
     return sum(
         1 for d, doc in schedule.items()
@@ -59,7 +59,7 @@ def _shifts_in_week(doctor, date, schedule, exclude_date=None):
     )
 
 def _count_doctor_weekends_in_month(doctor, date, schedule, exclude_date=None):
-    """Μετράει πόσα Σάββατα και πόσες Κυριακές έχει ο γιατρός στον ίδιο μήνα."""
+    """Μετράει πόσα Σάββατα και πόσες Κυριακές έχει ο γιατρός στον ίδιο μήνα[cite: 2]."""
     year, month = date.year, date.month
     saturdays = 0
     sundays = 0
@@ -67,19 +67,19 @@ def _count_doctor_weekends_in_month(doctor, date, schedule, exclude_date=None):
         if d == exclude_date:
             continue
         if doc == doctor and d.year == year and d.month == month:
-            if d.weekday() == 5:  # Σάββατο
+            if d.weekday() == 5:  # Σάββατο[cite: 2]
                 saturdays += 1
-            elif d.weekday() == 6:  # Κυριακή
+            elif d.weekday() == 6:  # Κυριακή[cite: 2]
                 sundays += 1
     return saturdays, sundays
 
 def is_valid_assignment(doctor, date, schedule, exclude_date=None):
     """
-    Επαληθεύει τους κανόνες: 
-    1. Απόσταση +-2 μέρες
-    2. Max 2 εφημερίες/εβδομάδα
-    3. Max 1 Σάββατο ανά μήνα
-    4. Max 1 Κυριακή ανά μήνα
+    Επαληθεύει τους κανόνες[cite: 2]: 
+    1. Απόσταση +-2 μέρες[cite: 2]
+    2. Max 2 εφημερίες/εβδομάδα[cite: 2]
+    3. Max 1 Σάββατο ανά μήνα[cite: 2]
+    4. Max 1 Κυριακή ανά μήνα[cite: 2]
     """
     if _has_nearby_shift(doctor, date, schedule, max_gap=2):
         return False
@@ -213,10 +213,10 @@ def assign_major_holidays_by_rotation(start_year, end_year, manual_assignments=N
 
 def find_best_doctor_for_date(target_date, schedule, holiday_counts, exclude_date=None):
     """
-    Επιλέγει τον κατάλληλο γιατρό με βάση:
-    1. Τήρηση κανόνων ασφαλείας (is_valid_assignment)
-    2. Ισόποση κατανομή (ελάχιστο holiday_counts)
-    3. Μεγαλύτερο κενό (πιο απομακρυσμένη εφημερία πριν και μετά)
+    Επιλέγει τον κατάλληλο γιατρό με βάση[cite: 2]:
+    1. Τήρηση κανόνων ασφαλείας (is_valid_assignment)[cite: 2]
+    2. Ισόποση κατανομή (ελάχιστο holiday_counts)[cite: 2]
+    3. Μεγαλύτερο κενό (πιο απομακρυσμένη εφημερία πριν και μετά)[cite: 2]
     """
     valid_doctors = [
         doc for doc in DOCTORS 
@@ -294,44 +294,6 @@ def generate_base_rota(initial_week, start_date, end_date):
         doc_index = (day_of_week + (week_num * 2)) % len(initial_week)
         schedule[current_date] = initial_week[doc_index]
         
-    return schedule
-
-def generate_schedule_with_swaps(initial_week, start_date, end_date, holiday_assignments, manual_assignments):
-    schedule = generate_base_rota(initial_week, start_date, end_date)
-    manual_assignments = manual_assignments or {}
-    holiday_assignments = holiday_assignments or {}
-
-    all_dates = sorted(schedule.keys())
-
-    for h_date in sorted(holiday_assignments.keys()):
-        if h_date not in schedule:
-            continue
-
-        b_doctor = holiday_assignments[h_date]
-        a_doctor = schedule[h_date]
-
-        if a_doctor == b_doctor:
-            continue
-
-        schedule[h_date] = b_doctor
-
-        for future_date in all_dates:
-            if future_date > h_date:
-                if (schedule[future_date] == b_doctor and 
-                    future_date not in holiday_assignments and 
-                    future_date not in manual_assignments):
-                    
-                    temp_schedule = dict(schedule)
-                    temp_schedule[future_date] = a_doctor
-                    
-                    if is_valid_assignment(a_doctor, future_date, temp_schedule, exclude_date=future_date):
-                        schedule[future_date] = a_doctor
-                        break
-
-    for m_date, m_doc in manual_assignments.items():
-        if m_date in schedule:
-            schedule[m_date] = m_doc
-
     return schedule
 
 # ----------------------------
@@ -722,21 +684,22 @@ with right_col:
 
     if st.button("🗓️ Δημιουργία Προγράμματος"):
         holiday_names = get_holidays_in_range(start_date, end_date)
-        major_hols = get_major_holidays_in_range(start_date, end_date)
-        regular_hols = {d: n for d, n in holiday_names.items() if d not in major_hols}
-
-        base_rota = generate_base_rota(st.session_state.initial_week, start_date, end_date)
         
+        # 1. Υπολογισμός μεγάλων αργιών
         major_assignments = assign_major_holidays_by_rotation(
             start_date.year,
             end_date.year,
             manual_assignments=st.session_state.manual_assignments
         )
-
+        
+        # 2. Υπολογισμός μικρών αργιών με βάση τη βασική ρότα και τους κανόνες δικαιοσύνης/ασφάλειας
+        temp_base = generate_base_rota(st.session_state.initial_week, start_date, end_date)
+        regular_hols = {d: n for d, n in holiday_names.items() if d not in major_assignments}
         regular_dates_sorted = sorted(regular_hols.keys())
+        
         regular_assignments, regular_conflicts = assign_regular_holidays(
             regular_dates_sorted,
-            base_rota,
+            temp_base,
             manual_assignments=st.session_state.manual_assignments
         )
 
@@ -746,14 +709,19 @@ with right_col:
         st.session_state.holiday_assignments = holiday_assignments
         st.session_state.holiday_conflicts = regular_conflicts
 
-        st.session_state.schedule = generate_schedule_with_swaps(
-            st.session_state.initial_week,
-            start_date,
-            end_date,
-            holiday_assignments=holiday_assignments,
-            manual_assignments=st.session_state.manual_assignments
-        )
+        # 3. Ενιαία κατασκευή προγράμματος (Χωρίς τα προβληματικά swaps που έσπαγαν τη ρότα)
+        final_schedule = generate_base_rota(st.session_state.initial_week, start_date, end_date)
         
+        for d, doc in holiday_assignments.items():
+            if d in final_schedule:
+                final_schedule[d] = doc
+                
+        if st.session_state.manual_assignments:
+            for d, doc in st.session_state.manual_assignments.items():
+                if d in final_schedule:
+                    final_schedule[d] = doc
+
+        st.session_state.schedule = final_schedule
         st.session_state.start_date = start_date
         st.session_state.end_date = end_date
         
