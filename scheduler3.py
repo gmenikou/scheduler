@@ -59,31 +59,52 @@ def _shifts_in_week(doctor, date, schedule, exclude_date=None):
 
 def _count_doctor_weekends_in_month(doctor, date, schedule, exclude_date=None):
     year, month = date.year, date.month
-    saturdays = 0
-    sundays = 0
+    weekends_count = 0
     for d, doc in schedule.items():
         if d == exclude_date:
             continue
         if doc == doctor and d.year == year and d.month == month:
-            if d.weekday() == 5:
-                saturdays += 1
-            elif d.weekday() == 6:
-                sundays += 1
-    return saturdays, sundays
+            if d.weekday() in (5, 6): # Savvato i Kyriaki (symperilamvanomenon argion se S/K)
+                weekends_count += 1
+    return weekends_count
 
-def is_valid_assignment(doctor, date, schedule, exclude_date=None):
+def _total_shifts_in_month(doctor, date, schedule, exclude_date=None):
+    year, month = date.year, date.month
+    total = 0
+    for d, doc in schedule.items():
+        if d == exclude_date:
+            continue
+        if doc == doctor and d.year == year and d.month == month:
+            total += 1
+    return total
+
+def is_valid_assignment(doctor, date, schedule, exclude_date=None, strict_monthly_limits=True):
     if _has_nearby_shift(doctor, date, schedule, max_gap=2):
         return False
     if _shifts_in_week(doctor, date, schedule, exclude_date=exclude_date) >= 2:
         return False
         
-    saturdays, sundays = _count_doctor_weekends_in_month(doctor, date, schedule, exclude_date=exclude_date)
-    wd = date.weekday()
-    if wd == 5 and saturdays >= 1:
-        return False
-    if wd == 6 and sundays >= 1:
-        return False
-        
+    if strict_monthly_limits:
+        # Elegxos synolikoy fortioy (stoxos 4-5 efimeries ana mina)
+        total_m = _total_shifts_in_month(doctor, date, schedule, exclude_date=exclude_date)
+        if total_m >= 5:
+            return False
+            
+        # Elegxos S/K ana mina (proterotita na paroun oloi apo 1 prin pane gia 2o)
+        wd = date.weekday()
+        if wd in (5, 6):
+            sks = _count_doctor_weekends_in_month(doctor, date, schedule, exclude_date=exclude_date)
+            # An yparxoun giatroi me 0 S/K ston mina, o sygkekrimenos den prepei na parei 2o an den exoun kalyfthei oloi
+            if sks >= 1:
+                # Elexoume tous allous giatrous tou idiou mina
+                year, month = date.year, date.month
+                all_sks = {doc: _count_doctor_weekends_in_month(doc, date, schedule, exclude_date=exclude_date) for doc in DOCTORS}
+                min_sks = min(all_sks.values())
+                if sks > min_sks:
+                    return False
+                if sks >= 2: # Absolute max 2 S/K se akraies periptoseis afou exoun oloi parei 1
+                    return False
+                    
     return True
 
 # ----------------------------
@@ -226,23 +247,7 @@ def assign_major_holidays_by_rotation(start_year, end_year, base_rota, manual_as
                     break
             
             if not chosen_doc:
-                has_sat_pkg = any(d.weekday() == 5 for d in valid_pkg_dates)
-                has_sun_pkg = any(d.weekday() == 6 for d in valid_pkg_dates)
-                
-                best_fallback = None
-                for offset in range(len(doctors_list)):
-                    doc_idx = (base_doc_idx + offset) % len(doctors_list)
-                    doc = doctors_list[doc_idx]
-                    
-                    sats, suns = _count_doctor_weekends_in_month(doc, valid_pkg_dates[0], working)
-                    if has_sat_pkg and sats >= 1:
-                        continue
-                    if has_sun_pkg and suns >= 1:
-                        continue
-                    best_fallback = doc
-                    break
-                
-                chosen_doc = best_fallback if best_fallback else doctors_list[base_doc_idx]
+                chosen_doc = doctors_list[base_doc_idx]
 
             for d in valid_pkg_dates:
                 assignments[d] = chosen_doc
@@ -257,11 +262,22 @@ def find_best_doctor_for_date(target_date, schedule, holiday_counts, exclude_dat
     ]
     
     if not valid_doctors:
-        return DOCTORS[0]
+        # Fallback xoris apolytoy periorismoys an kollosei o algorithmos
+        valid_doctors = [
+            doc for doc in DOCTORS 
+            if is_valid_assignment(doc, target_date, schedule, exclude_date=exclude_date, strict_monthly_limits=False)
+        ]
+        if not valid_doctors:
+            return DOCTORS[0]
         
     min_hols = min(holiday_counts[doc] for doc in valid_doctors)
     candidates = [doc for doc in valid_doctors if holiday_counts[doc] == min_hols]
     
+    # Proterotita se autous me ligoteres synolikes efimeries ston mina gia isokatatomi (4-5)
+    total_shifts_map = {doc: _total_shifts_in_month(doc, target_date, schedule, exclude_date=exclude_date) for doc in candidates}
+    min_shifts = min(total_shifts_map.values())
+    candidates = [doc for doc in candidates if total_shifts_map[doc] == min_shifts]
+
     best_doc = candidates[0]
     best_score = -1
     
@@ -625,8 +641,7 @@ with left_col:
             conflicts = st.session_state.get("holiday_conflicts", set())
             if conflicts:
                 st.warning(
-                    f"⚠️ Σε {len(conflicts)} αργία(ες) δεν βρέθηκε διαθέσιμος γιατρός χωρίς σύγκρουση "
-                    f"(κανόνας +-2 ημερών / max 2 εφημεριών / max 1 ΣΚ μήνα) — παρακαλώ ελέγξτε τις."
+                    f"⚠️ Σε {len(conflicts)} αργία(ες) δεν βρέθηκε διαθέσιμος γιατρός χωρίς σύγκρουση — παρακαλώ ελέγξτε τις."
                 )
             with st.expander(f"🎉 Αργίες στο διάστημα ({len(st.session_state.holiday_names)})"):
                 for d in sorted(st.session_state.holiday_names.keys()):
