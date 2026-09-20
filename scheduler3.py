@@ -44,7 +44,7 @@ def _week_monday(date):
     return date - datetime.timedelta(days=date.weekday())
 
 def _has_nearby_shift(doctor, date, schedule, max_gap=2):
-    """Ελέγχει αν υπάρχει εφημερία σε απόσταση +-3 ημερών."""
+    """Ελέγχει αν υπάρχει εφημερία σε απόσταση +-2 ημερών."""
     for d, doc in schedule.items():
         if doc == doctor and d != date and abs((d - date).days) <= max_gap:
             return True
@@ -58,12 +58,41 @@ def _shifts_in_week(doctor, date, schedule, exclude_date=None):
         if doc == doctor and d != exclude_date and _week_monday(d) == wk
     )
 
+def _count_doctor_weekends_in_month(doctor, date, schedule, exclude_date=None):
+    """Μετράει πόσα Σάββατα και πόσες Κυριακές έχει ο γιατρός στον ίδιο μήνα."""
+    year, month = date.year, date.month
+    saturdays = 0
+    sundays = 0
+    for d, doc in schedule.items():
+        if d == exclude_date:
+            continue
+        if doc == doctor and d.year == year and d.month == month:
+            if d.weekday() == 5:  # Σάββατο
+                saturdays += 1
+            elif d.weekday() == 6:  # Κυριακή
+                sundays += 1
+    return saturdays, sundays
+
 def is_valid_assignment(doctor, date, schedule, exclude_date=None):
-    """Επαληθεύει αν τηρούνται οι 2 κανόνες: max 2 εφημερίες/εβδομάδα & +-3 μέρες απόσταση."""
+    """
+    Επαληθεύει τους κανόνες: 
+    1. Απόσταση +-2 μέρες
+    2. Max 2 εφημερίες/εβδομάδα
+    3. Max 1 Σάββατο ανά μήνα
+    4. Max 1 Κυριακή ανά μήνα
+    """
     if _has_nearby_shift(doctor, date, schedule, max_gap=2):
         return False
     if _shifts_in_week(doctor, date, schedule, exclude_date=exclude_date) >= 2:
         return False
+        
+    saturdays, sundays = _count_doctor_weekends_in_month(doctor, date, schedule, exclude_date=exclude_date)
+    wd = date.weekday()
+    if wd == 5 and saturdays >= 1:
+        return False
+    if wd == 6 and sundays >= 1:
+        return False
+        
     return True
 
 # ----------------------------
@@ -182,6 +211,48 @@ def assign_major_holidays_by_rotation(start_year, end_year, manual_assignments=N
 
     return assignments
 
+def find_best_doctor_for_date(target_date, schedule, holiday_counts, exclude_date=None):
+    """
+    Επιλέγει τον κατάλληλο γιατρό με βάση:
+    1. Τήρηση κανόνων ασφαλείας (is_valid_assignment)
+    2. Ισόποση κατανομή (ελάχιστο holiday_counts)
+    3. Μεγαλύτερο κενό (πιο απομακρυσμένη εφημερία πριν και μετά)
+    """
+    valid_doctors = [
+        doc for doc in DOCTORS 
+        if is_valid_assignment(doc, target_date, schedule, exclude_date=exclude_date)
+    ]
+    
+    if not valid_doctors:
+        return DOCTORS[0]
+        
+    min_hols = min(holiday_counts[doc] for doc in valid_doctors)
+    candidates = [doc for doc in valid_doctors if holiday_counts[doc] == min_hols]
+    
+    best_doc = candidates[0]
+    best_score = -1
+    
+    for doc in candidates:
+        prev_dates = [
+            d for d, assigned in schedule.items() 
+            if assigned == doc and d < target_date and d != exclude_date
+        ]
+        prev_dist = (target_date - max(prev_dates)).days if prev_dates else 9999
+        
+        next_dates = [
+            d for d, assigned in schedule.items() 
+            if assigned == doc and d > target_date and d != exclude_date
+        ]
+        next_dist = (min(next_dates) - target_date).days if next_dates else 9999
+        
+        score = min(prev_dist, next_dist)
+        
+        if score > best_score:
+            best_score = score
+            best_doc = doc
+            
+    return best_doc
+
 def assign_regular_holidays(regular_dates_sorted, current_schedule, manual_assignments=None):
     manual_assignments = manual_assignments or {}
     working = dict(current_schedule)
@@ -190,23 +261,19 @@ def assign_regular_holidays(regular_dates_sorted, current_schedule, manual_assig
     conflicts = set()
     holiday_counts = {doc: 0 for doc in DOCTORS}
 
+    for d, assigned in manual_assignments.items():
+        if assigned in holiday_counts:
+            holiday_counts[assigned] += 1
+
     for d in regular_dates_sorted:
         if d in manual_assignments:
             assigned = manual_assignments[d]
-            holiday_counts[assigned] += 1
             working[d] = assigned
             continue
 
-        sorted_doctors = sorted(DOCTORS, key=lambda doc: (holiday_counts[doc], DOCTORS.index(doc)))
+        chosen = find_best_doctor_for_date(d, working, holiday_counts, exclude_date=d)
         
-        chosen = None
-        for candidate in sorted_doctors:
-            if is_valid_assignment(candidate, d, working, exclude_date=d):
-                chosen = candidate
-                break
-
-        if chosen is None:
-            chosen = sorted_doctors[0]
+        if not is_valid_assignment(chosen, d, working, exclude_date=d):
             conflicts.add(d)
 
         assignments[d] = chosen
@@ -236,9 +303,7 @@ def generate_schedule_with_swaps(initial_week, start_date, end_date, holiday_ass
 
     all_dates = sorted(schedule.keys())
 
-    # Εφαρμογή αργιών με έξυπνες ανταλλαγές (swaps)
     for h_date in sorted(holiday_assignments.keys()):
-        # ΔΙΟΡΘΩΣΗ KEYERROR: Έλεγχος αν η αργία ανήκει στο εύρος ημερομηνιών
         if h_date not in schedule:
             continue
 
@@ -248,10 +313,8 @@ def generate_schedule_with_swaps(initial_week, start_date, end_date, holiday_ass
         if a_doctor == b_doctor:
             continue
 
-        # Ανάθεση της αργίας στον δικαιούχο γιατρό B
         schedule[h_date] = b_doctor
 
-        # Προσπάθεια επιστροφής της χαμένης εφημερίας στον γιατρό A
         for future_date in all_dates:
             if future_date > h_date:
                 if (schedule[future_date] == b_doctor and 
@@ -265,7 +328,6 @@ def generate_schedule_with_swaps(initial_week, start_date, end_date, holiday_ass
                         schedule[future_date] = a_doctor
                         break
 
-    # Εφαρμογή των χειροκίνητων αλλαγών (overrides)
     for m_date, m_doc in manual_assignments.items():
         if m_date in schedule:
             schedule[m_date] = m_doc
@@ -554,7 +616,7 @@ with left_col:
 
             if nearby_conflict:
                 st.warning(
-                    f"⚠️ Προσοχή: Ο/Η {manual_doctor} έχει άλλη εφημερία εντός +-3 ημερών από τις "
+                    f"⚠️ Προσοχή: Ο/Η {manual_doctor} έχει άλλη εφημερία εντός +-2 ημερών από τις "
                     f"{manual_date.strftime('%d/%m/%Y')}."
                 )
             if weekly_conflict:
@@ -569,7 +631,7 @@ with left_col:
             if conflicts:
                 st.warning(
                     f"⚠️ Σε {len(conflicts)} αργία(ες) δεν βρέθηκε διαθέσιμος γιατρός χωρίς σύγκρουση "
-                    f"(κανόνας +-3 ημερών / max 2 εφημεριών τη βδομάδα) — παρακαλώ ελέγξτε τις."
+                    f"(κανόνας +-2 ημερών / max 2 εφημεριών / max 1 ΣΚ μήνα) — παρακαλώ ελέγξτε τις."
                 )
             with st.expander(f"🎉 Αργίες στο διάστημα ({len(st.session_state.holiday_names)})"):
                 for d in sorted(st.session_state.holiday_names.keys()):
