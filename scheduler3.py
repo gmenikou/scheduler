@@ -163,21 +163,96 @@ def get_major_holidays_in_range(start_date, end_date):
     return dict(sorted(target_dates.items()))
 
 # ----------------------------
+# HOLIDAY FAIRNESS (ΝΕΟ)
+# ----------------------------
+def _holiday_objective(schedule, holiday_names, major_names):
+    """
+    Μετρά πόσο άνιση είναι η κατανομή. Μικρότερο = δικαιότερο.
+    Σειρά προτεραιότητας:
+      1) μεγάλες εορτές (Χριστούγεννα, Πάσχα, Πρωτοχρονιά...)
+      2) όλες οι αργίες
+      3) Σαββατοκύριακα
+    Χρησιμοποιούμε άθροισμα τετραγώνων: ελαχιστοποιείται όταν όλοι έχουν (σχεδόν) τον ίδιο αριθμό.
+    """
+    major = {doc: 0 for doc in DOCTORS}
+    total = {doc: 0 for doc in DOCTORS}
+    weekend = {doc: 0 for doc in DOCTORS}
+    for d, doc in schedule.items():
+        if doc not in total:
+            continue
+        if d in major_names:
+            major[doc] += 1
+        if d in holiday_names:
+            total[doc] += 1
+        if d.weekday() in (5, 6):
+            weekend[doc] += 1
+    return (
+        sum(v * v for v in major.values()),
+        sum(v * v for v in total.values()),
+        sum(v * v for v in weekend.values()),
+    )
+
+def _balance_holidays(schedule, holiday_names, major_names, locked_dates, max_rounds=200):
+    """
+    Εξισορρόπηση αργιών με ΑΝΤΙΜΕΤΑΘΕΣΕΙΣ: ο γιατρός Α που έχει την αργία h
+    ανταλλάσσει βάρδια με τον γιατρό Β που έχει την ημέρα r.
+    Έτσι ο συνολικός αριθμός βαρδιών κάθε γιατρού δεν αλλάζει.
+    Δεχόμαστε μόνο αντιμεταθέσεις που σέβονται τους κανόνες
+    (κενό >3 ημέρες, max 2/εβδομάδα, max 5/μήνα) και βελτιώνουν την ισομοιρασία.
+    Οι χειροκίνητες αναθέσεις (locked_dates) δεν πειράζονται ποτέ.
+    """
+    all_dates = sorted(schedule.keys())
+    movable_holidays = [d for d in sorted(holiday_names) if d in schedule and d not in locked_dates]
+    current = _holiday_objective(schedule, holiday_names, major_names)
+
+    for _ in range(max_rounds):
+        best_obj = current
+        best_swap = None
+        for h in movable_holidays:
+            a = schedule[h]
+            for r in all_dates:
+                if r == h or r in locked_dates:
+                    continue
+                b = schedule[r]
+                if a == b:
+                    continue
+                # δοκιμαστική αντιμετάθεση
+                schedule[h], schedule[r] = b, a
+                if (is_valid_assignment(b, h, schedule, exclude_date=h) and
+                        is_valid_assignment(a, r, schedule, exclude_date=r)):
+                    obj = _holiday_objective(schedule, holiday_names, major_names)
+                    if obj < best_obj:
+                        best_obj = obj
+                        best_swap = (h, r)
+                # επαναφορά
+                schedule[h], schedule[r] = a, b
+        if best_swap is None:
+            break
+        h, r = best_swap
+        schedule[h], schedule[r] = schedule[r], schedule[h]
+        current = best_obj
+    return schedule
+
+# ----------------------------
 # ROBUST HYBRID SCHEDULING
 # ----------------------------
 def generate_full_schedule(start_date, end_date, initial_week, manual_assignments=None):
     manual_assignments = manual_assignments or {}
     schedule = {}
     
+    # Η ρότα ευθυγραμμίζεται με την πραγματική ημέρα της εβδομάδας (Δευ=0),
+    # ώστε να λειτουργεί σωστά ακόμη κι αν η ημερομηνία έναρξης δεν είναι Δευτέρα.
+    base_monday = _week_monday(start_date)
     total_days = (end_date - start_date).days + 1
     for day_offset in range(total_days):
         current_date = start_date + datetime.timedelta(days=day_offset)
-        week_num = day_offset // 7
-        day_of_week = day_offset % 7
+        week_num = (_week_monday(current_date) - base_monday).days // 7
+        day_of_week = current_date.weekday()
         doc_index = (day_of_week + (week_num * 2)) % len(initial_week)
         schedule[current_date] = initial_week[doc_index]
 
     holiday_names = get_holidays_in_range(start_date, end_date)
+    major_names = get_major_holidays_in_range(start_date, end_date)
 
     for d, doc in manual_assignments.items():
         if d in schedule:
@@ -197,7 +272,6 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                 valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=False)]
             
             if valid_docs:
-                # ΑΠΟΛΥΤΑ ΙΣΟΤΙΜΗ ΚΑΤΑΝΟΜΗ: Πρώτα οι λιγότερες συνολικές αργίες
                 best_doc = min(valid_docs, key=lambda doc: (
                     _total_holidays_in_schedule(doc, schedule, holiday_names, exclude_date=d),
                     _count_doctor_weekends_in_month(doc, d, schedule, exclude_date=d),
@@ -221,6 +295,9 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                         schedule[od] = under
                         break
                 break
+
+    # ΝΕΟ: τελική ισομοιρασία αργιών σε ΟΛΟ το εύρος
+    _balance_holidays(schedule, holiday_names, major_names, locked_dates=set(manual_assignments.keys()))
 
     for d, doc in manual_assignments.items():
         if d in schedule:
