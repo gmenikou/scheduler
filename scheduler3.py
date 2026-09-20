@@ -9,15 +9,15 @@ from fpdf import FPDF
 # ----------------------------
 DOCTORS = ["Χριστίνα", "Αθηνά", "Μαρία", "Έλια", "Αλέξανδρος", "Εύα", "Έλενα"]
 
-# Διακριτά και μοναδικά χρώματα για κάθε γιατρό
+# Diakrita kai monadika xromata gia kathe giatro
 DOCTOR_COLORS = {
-    "Έλενα": (255, 182, 193),       # Ανοιχτό Ροζ (Light Pink)
-    "Εύα": (152, 251, 152),         # Ανοιχτό Πράσινο (Pale Green)
-    "Μαρία": (176, 196, 222),       # Ανοιχτό Μπλε (Light Steel Blue)
-    "Αθηνά": (255, 250, 205),       # Κίτρινο Λεμονιού (Lemon Chiffon)
-    "Αλέξανδρος": (221, 160, 221),   # Μωβ/Plum
-    "Έλια": (175, 238, 238),        # Τουρκουάζ (Pale Turquoise)
-    "Χριστίνα": (245, 222, 179)     # Μπεζ/Wheat
+    "Έλενα": (255, 182, 193),       # Anoixto Roz
+    "Εύα": (152, 251, 152),         # Anoixto Prasino
+    "Μαρία": (176, 196, 222),       # Anoixto Mple
+    "Αθηνά": (255, 250, 205),       # Kitrino Lemoniou
+    "Αλέξανδρος": (221, 160, 221),   # Mov / Plum
+    "Έλια": (175, 238, 238),        # Tourkouaz
+    "Χριστίνα": (245, 222, 179)     # Mpez / Wheat
 }
 
 WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
@@ -45,14 +45,12 @@ def _week_monday(date):
     return date - datetime.timedelta(days=date.weekday())
 
 def _has_nearby_shift(doctor, date, schedule, max_gap=2):
-    """Ελέγχει αν υπάρχει εφημερία σε απόσταση +-2 ημερών."""
     for d, doc in schedule.items():
         if doc == doctor and d != date and abs((d - date).days) <= max_gap:
             return True
     return False
 
 def _shifts_in_week(doctor, date, schedule, exclude_date=None):
-    """Υπολογίζει πόσες εφημερίες έχει ο γιατρός στη συγκεκριμένη εβδομάδα."""
     wk = _week_monday(date)
     return sum(
         1 for d, doc in schedule.items()
@@ -60,7 +58,6 @@ def _shifts_in_week(doctor, date, schedule, exclude_date=None):
     )
 
 def _count_doctor_weekends_in_month(doctor, date, schedule, exclude_date=None):
-    """Μετράει πόσα Σάββατα και πόσες Κυριακές έχει ο γιατρός στον ίδιο μήνα."""
     year, month = date.year, date.month
     saturdays = 0
     sundays = 0
@@ -68,20 +65,13 @@ def _count_doctor_weekends_in_month(doctor, date, schedule, exclude_date=None):
         if d == exclude_date:
             continue
         if doc == doctor and d.year == year and d.month == month:
-            if d.weekday() == 5:  # Σάββατο
+            if d.weekday() == 5:
                 saturdays += 1
-            elif d.weekday() == 6:  # Κυριακή
+            elif d.weekday() == 6:
                 sundays += 1
     return saturdays, sundays
 
 def is_valid_assignment(doctor, date, schedule, exclude_date=None):
-    """
-    Επαληθεύει τους κανόνες: 
-    1. Απόσταση +-2 μέρες
-    2. Max 2 εφημερίες/εβδομάδα
-    3. Max 1 Σάββατο ανά μήνα
-    4. Max 1 Κυριακή ανά μήνα
-    """
     if _has_nearby_shift(doctor, date, schedule, max_gap=2):
         return False
     if _shifts_in_week(doctor, date, schedule, exclude_date=exclude_date) >= 2:
@@ -205,7 +195,6 @@ def assign_major_holidays_by_rotation(start_year, end_year, base_rota, manual_as
             if not valid_pkg_dates:
                 continue
 
-            # Έλεγχος για manual assignments σε αυτές τις ημερομηνίες
             pkg_assigned_manually = False
             for d in valid_pkg_dates:
                 if d in manual_assignments:
@@ -220,7 +209,6 @@ def assign_major_holidays_by_rotation(start_year, end_year, base_rota, manual_as
             base_doc_idx = (pkg_idx + year_offset) % 7
             chosen_doc = None
             
-            # 1. Δοκιμή γιατρών σύμφωνα με τη σειρά εναλλαγής τηρώντας αυστηρά τους κανόνες
             for offset in range(len(doctors_list)):
                 doc_idx = (base_doc_idx + offset) % len(doctors_list)
                 doc = doctors_list[doc_idx]
@@ -237,8 +225,6 @@ def assign_major_holidays_by_rotation(start_year, end_year, base_rota, manual_as
                     chosen_doc = doc
                     break
             
-            # 2. ΑΥΣΤΗΡΟ FALLBACK: Αν κανείς δεν πληροί 100% τους κανόνες, 
-            # αποκλείουμε απόλυτα όσους έχουν ήδη Σάββατο/Κυριακή στον μήνα αυτόν.
             if not chosen_doc:
                 has_sat_pkg = any(d.weekday() == 5 for d in valid_pkg_dates)
                 has_sun_pkg = any(d.weekday() == 6 for d in valid_pkg_dates)
@@ -256,7 +242,6 @@ def assign_major_holidays_by_rotation(start_year, end_year, base_rota, manual_as
                     best_fallback = doc
                     break
                 
-                # Αν ακόμη κι έτσι δεν βρεθεί, παίρνουμε τουλάχιστον τον βασικό της σειράς αλλά αποφεύγουμε τις διπλές παραβιάσεις αν γίνεται
                 chosen_doc = best_fallback if best_fallback else doctors_list[base_doc_idx]
 
             for d in valid_pkg_dates:
@@ -733,10 +718,8 @@ with right_col:
     if st.button("🗓️ Δημιουργία Προγράμματος"):
         holiday_names = get_holidays_in_range(start_date, end_date)
         
-        # 1. Δημιουργία βασικής ρότας πρώτα
         base_rota = generate_base_rota(st.session_state.initial_week, start_date, end_date)
         
-        # 2. Υπολογισμός μεγάλων αργιών με αυστηρό έλεγχο ορίων S/K
         major_assignments = assign_major_holidays_by_rotation(
             start_date.year,
             end_date.year,
@@ -749,7 +732,6 @@ with right_col:
             if d in working_rota:
                 working_rota[d] = doc
 
-        # 3. Υπολογισμός μικρών αργιών
         regular_hols = {d: n for d, n in holiday_names.items() if d not in major_assignments}
         regular_dates_sorted = sorted(regular_hols.keys())
         
@@ -765,7 +747,6 @@ with right_col:
         st.session_state.holiday_assignments = holiday_assignments
         st.session_state.holiday_conflicts = regular_conflicts
 
-        # 4. Τελική σύνθεση προγράμματος
         final_schedule = dict(base_rota)
         for d, doc in holiday_assignments.items():
             if d in final_schedule:
