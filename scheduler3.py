@@ -15,7 +15,7 @@ DOCTOR_COLORS = {
     "Μαρία": (200, 200, 255),
     "Αθηνά": (255, 255, 200),
     "Αλέξανδρος": (255, 200, 255),
-    "Έλια": (200, 255, 255),
+    "Έλια": (200, 200, 255),
     "Χριστίνα": (220, 220, 220)
 }
 
@@ -74,128 +74,36 @@ def get_holidays_in_range(start_date, end_date):
     return {d: name for d, name in holidays.items() if start_date <= d <= end_date}
 
 # ----------------------------
-# ADVANCED ROTA SCHEDULE
+# WEEKLY -2 DAYS SHIFT SCHEDULE
 # ----------------------------
 def generate_weekly_shifting_schedule(initial_doctors, start_date, end_date, manual_assignments=None):
+    """
+    Δημιουργεί πρόγραμμα όπου κάθε εβδομάδα η μέρα μετατοπίζεται κατά -2 ημέρες
+    (δηλαδή -2 μέρες σε σχέση με την προηγούμενη εβδομάδα).
+    """
     schedule = {}
     manual_assignments = manual_assignments or {}
     num_docs = len(initial_doctors)
     
-    holiday_names = get_holidays_in_range(start_date, end_date)
-    holiday_dates = set(holiday_names.keys())
-    
-    holiday_counts = {doc: 0 for doc in initial_doctors}
-    total_shifts_count = {doc: 0 for doc in initial_doctors} # Για συνολική ισορροπία (μέλλον/γενική εικόνα)
-    doc_heavy_monthly = {doc: {} for doc in initial_doctors}
-    doc_friday_monthly = {doc: {} for doc in initial_doctors}
-    
-    start_monday = start_date - datetime.timedelta(days=start_date.weekday())
     current_date = start_date
-    
-    def would_exceed_monthly_limits(doc, target_date, is_heavy, is_friday):
-        ym = (target_date.year, target_date.month)
-        h_count = doc_heavy_monthly[doc].get(ym, 0)
-        f_count = doc_friday_monthly[doc].get(ym, 0)
-        
-        if is_heavy:
-            new_h = h_count + 1
-            new_f = f_count
-            if new_h > 2 or (new_h == 2 and new_f > 0):
-                return True
-        elif is_friday:
-            new_h = h_count
-            new_f = f_count + 1
-            if (new_h == 2 and new_f > 0) or new_f > 1 or (new_h >= 1 and new_f > 1):
-                return True
-        return False
-
-    def update_monthly_counts(doc, target_date, is_heavy, is_friday):
-        ym = (target_date.year, target_date.month)
-        if is_heavy:
-            doc_heavy_monthly[doc][ym] = doc_heavy_monthly[doc].get(ym, 0) + 1
-        elif is_friday:
-            doc_friday_monthly[doc][ym] = doc_friday_monthly[doc].get(ym, 0) + 1
-
     while current_date <= end_date:
-        weekday = current_date.weekday()
-        is_heavy = (weekday in (5, 6)) or (current_date in holiday_dates)
-        is_friday = (weekday == 4)
-
         if current_date in manual_assignments:
-            doc = manual_assignments[current_date]
-            schedule[current_date] = doc
-            total_shifts_count[doc] += 1
-            if current_date in holiday_dates:
-                holiday_counts[doc] = holiday_counts.get(doc, 0) + 1
-            update_monthly_counts(doc, current_date, is_heavy, is_friday)
+            schedule[current_date] = manual_assignments[current_date]
         else:
-            days_from_start = (current_date - start_monday).days
+            days_from_start = (current_date - start_date).days
             week_num = days_from_start // 7
+            weekday = current_date.weekday() # 0: Δευτέρα έως 6: Κυριακή
             
+            # Μετατόπιση κατά -2 ημέρες κάθε εβδομάδα (ισοδύναμο με +2 στο modulo 7)
             doc_idx = (weekday + 2 * week_num) % num_docs
-            base_doc = initial_doctors[doc_idx]
+            schedule[current_date] = initial_doctors[doc_idx]
             
-            def days_since_last_shift(doc_candidate, target_date):
-                for d_offset in range(1, 60):
-                    check_date = target_date - datetime.timedelta(days=d_offset)
-                    if schedule.get(check_date) == doc_candidate:
-                        return d_offset
-                return 999
-
-            def is_doctor_spaced_well(doc_candidate, target_date):
-                for d_offset in range(-3, 4):
-                    if d_offset == 0:
-                        continue
-                    check_date = target_date + datetime.timedelta(days=d_offset)
-                    if schedule.get(check_date) == doc_candidate:
-                        return False
-                return True
-
-            valid_docs = [
-                d for d in initial_doctors 
-                if is_doctor_spaced_well(d, current_date) and not would_exceed_monthly_limits(d, current_date, is_heavy, is_friday)
-            ]
-            
-            if not valid_docs:
-                valid_docs = [d for d in initial_doctors if is_doctor_spaced_well(d, current_date)]
-                if not valid_docs:
-                    valid_docs = initial_doctors
-
-            if is_heavy or is_friday:
-                # Επιλογή συνδυάζοντας: λιγότερες αργίες, συνολικά λιγότερες εφημερίες (μέλλον/ισορροπία) και μακρινή προηγούμενη (παρελθόν)
-                chosen_doc = max(
-                    valid_docs,
-                    key=lambda d: (
-                        -holiday_counts[d],
-                        -total_shifts_count[d],
-                        days_since_last_shift(d, current_date)
-                    )
-                )
-                if current_date in holiday_dates:
-                    holiday_counts[chosen_doc] += 1
-            else:
-                if base_doc in valid_docs:
-                    chosen_doc = base_doc
-                else:
-                    chosen_doc = max(
-                        valid_docs,
-                        key=lambda d: (
-                            -holiday_counts[d],
-                            -total_shifts_count[d],
-                            days_since_last_shift(d, current_date)
-                        )
-                    )
-
-            schedule[current_date] = chosen_doc
-            total_shifts_count[chosen_doc] += 1
-            update_monthly_counts(chosen_doc, current_date, is_heavy, is_friday)
-                
         current_date += datetime.timedelta(days=1)
         
     return schedule
 
 # ----------------------------
-# BALANCE & REPORTING
+# BALANCE & HOLIDAYS REPORTING
 # ----------------------------
 def compute_balance(schedule, holiday_dates=None):
     holiday_dates = holiday_dates or set()
@@ -361,6 +269,9 @@ for key in ["initial_doctors", "start_date", "end_date", "schedule", "balance"]:
 
 left_col, right_col = st.columns([0.40, 0.60])
 
+# ----------------------------
+# LEFT: Balance & Holiday Breakdown
+# ----------------------------
 with left_col:
     st.subheader("📊 Κατάσταση Εφημεριών Εύρους")
 
@@ -390,6 +301,9 @@ with left_col:
     if st.session_state.balance is not None and not st.session_state.balance.empty:
         st.dataframe(st.session_state.balance, use_container_width=True, height=260)
 
+        # ----------------------------
+        # ΑΝΑΛΥΣΗ ΑΡΓΙΩΝ ΑΝΑ ΓΙΑΤΡΟ
+        # ----------------------------
         if st.session_state.holiday_names:
             st.subheader("🎉 Αναλογία Αργιών ανά Γιατρό")
             hols_df = compute_doctor_holidays_breakdown(
@@ -411,6 +325,9 @@ with left_col:
             with open(pdf_file, "rb") as f:
                 st.download_button("⬇️ Κατέβασε ημερολόγιο σε PDF", f, file_name=pdf_file)
 
+# ----------------------------
+# RIGHT: Rota Generation
+# ----------------------------
 with right_col:
     st.subheader("Σειρά Εναλλαγής Γιατρών")
     st.write("Ορίστε τη σειρά των 7 γιατρών:")
