@@ -66,6 +66,15 @@ def _count_doctor_weekends_in_month(doctor, date, schedule, exclude_date=None):
                 weekends_count += 1
     return weekends_count
 
+def _total_holidays_in_schedule(doctor, schedule, holiday_names, exclude_date=None):
+    count = 0
+    for d, doc in schedule.items():
+        if d == exclude_date:
+            continue
+        if doc == doctor and d in holiday_names:
+            count += 1
+    return count
+
 def _total_shifts_in_month(doctor, date, schedule, exclude_date=None):
     year, month = date.year, date.month
     total = 0
@@ -188,7 +197,9 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                 valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=False)]
             
             if valid_docs:
+                # ΑΠΟΛΥΤΑ ΙΣΟΤΙΜΗ ΚΑΤΑΝΟΜΗ: Πρώτα οι λιγότερες συνολικές αργίες
                 best_doc = min(valid_docs, key=lambda doc: (
+                    _total_holidays_in_schedule(doc, schedule, holiday_names, exclude_date=d),
                     _count_doctor_weekends_in_month(doc, d, schedule, exclude_date=d),
                     _total_shifts_in_month(doc, d, schedule, exclude_date=d)
                 ))
@@ -402,7 +413,6 @@ with right_col:
         with c1:
             start_date = st.date_input("Start date", st.session_state.start_date)
         with c2:
-            # Αυτόματο κλείδωμα ακριβώς στον 1 μήνα για αποφυγή πολλαπλών ετών
             default_end = start_date + datetime.timedelta(days=30)
             end_date = st.date_input("End date", default_end)
 
