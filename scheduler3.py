@@ -162,7 +162,6 @@ def get_major_holidays_in_range(start_date, end_date):
 def generate_hybrid_schedule(start_date, end_date, initial_week, manual_assignments=None):
     manual_assignments = manual_assignments or {}
     
-    # 1. Dimioyrgia vasikis rotas gia oles tis imeres (ase tis kathimerines na akoloythoyn ti rota)
     schedule = {}
     total_days = (end_date - start_date).days + 1
     for day_offset in range(total_days):
@@ -172,41 +171,27 @@ def generate_hybrid_schedule(start_date, end_date, initial_week, manual_assignme
         doc_index = (day_of_week + (week_num * 2)) % len(initial_week)
         schedule[current_date] = initial_week[doc_index]
 
-    # Efarmogi xeirokinitwn allagwn prwta
     for d, doc in manual_assignments.items():
         if d in schedule:
             schedule[d] = doc
 
     holiday_names = get_holidays_in_range(start_date, end_date)
     
-    # 2. Entopismos Savvatokyriakwn & Argion pou prepei na rythmistoyn dikaia
-    # Mazeyoyme oles tis imeres S/K i argies
     special_dates = sorted(list(set(list(holiday_names.keys()) + [d for d, dt in schedule.items() if d.weekday() in (5, 6)])))
     special_dates = [d for d in special_dates if start_date <= d <= end_date]
 
-    # Proterotita sta S/K: Oloi na paroun 1 S/K/argia prin pane gia 2o, kai synolikes efimeries 4-5
-    # Trexoyme ena diorthotiko pass gia tis eidikes imeres (S/K & argies)
     for d in special_dates:
         if d in manual_assignments:
             continue
             
         current_doc = schedule[d]
-        # Elegxoyme an o trexon giatros exei idi poly fortio (>=5) i parei polla S/K enw alloi exoyn 0
-        sks = _count_doctor_weekends_in_month(current_doc, d, schedule, exclude_date=d)
-        total_s = _total_shifts_in_month(current_doc, d, schedule, exclude_date=d)
-        
-        # An o giatros den einai egkyros (exei hdi polles efimeries i paraviazei apostasi $\pm 2$), ton allazoyme
         if not is_valid_assignment(current_doc, d, schedule, exclude_date=d):
-            # Vriskoyme ton kalytero diatithemeno giatro
             valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d)]
             if valid_docs:
-                # Protimisame ayton me ta ligotera S/K kai synolikes efimeries
                 best_doc = min(valid_docs, key=lambda doc: (_count_doctor_weekends_in_month(doc, d, schedule, exclude_date=d), _total_shifts_in_month(doc, d, schedule, exclude_date=d)))
                 schedule[d] = best_doc
 
-    # 3. Telikos elegxos isis katanomis (4-5 efimeries ana giatro) stis kathimerines an xreiazetai
-    # (Diashmalizoume oti kanenas den menei me <4 i >5 an einai efikto)
-    for _ in range(2): # 2 perasmata diorthosis
+    for _ in range(2):
         shift_counts = {doc: _total_shifts_in_month(doc, start_date, schedule) for doc in DOCTORS}
         overloaded = [doc for doc, cnt in shift_counts.items() if cnt > 5]
         underloaded = [doc for doc, cnt in shift_counts.items() if cnt < 4]
@@ -214,10 +199,8 @@ def generate_hybrid_schedule(start_date, end_date, initial_week, manual_assignme
         if not overloaded and not underloaded:
             break
             
-        # An yparxoyn anisorropies, metakynoyme mias meras efimeria (oxi S/K) an yparxei dynatotita
         for ov in overloaded:
             for under in underloaded:
-                # Vriskoyme mia efimeria toy overloaded pou den einai S/K oyte argia
                 ov_dates = [d for d, doc in schedule.items() if doc == ov and d.weekday() not in (5, 6) and d not in holiday_names and d not in manual_assignments]
                 for od in ov_dates:
                     if is_valid_assignment(under, od, schedule, exclude_date=od):
@@ -247,6 +230,114 @@ def compute_balance(schedule, holiday_dates=None):
     df["Αργίες"] = df["Doctor"].map(holiday_counts)
     df["Total"] = df["Weekdays"] + df["Fri"] + df["Sat"] + df["Sun"]
     return df[["Doctor", "Weekdays", "Fri", "Sat", "Sun", "Αργίες", "Total"]]
+
+def compute_major_holidays_summary(schedule, major_holidays):
+    summary = {doc: {"Count": 0, "Details": []} for doc in DOCTORS}
+    for d in sorted(major_holidays.keys()):
+        doc = schedule.get(d, "-")
+        if doc in summary:
+            summary[doc]["Count"] += 1
+            summary[doc]["Details"].append(f"{d.strftime('%d/%m/%Y')} ({major_holidays[d]})")
+    
+    data = []
+    for doc in DOCTORS:
+        data.append({
+            "Ακτινολόγος": doc,
+            "Σύνολο": summary[doc]["Count"],
+            "Ημερομηνίες & Εορτές": ", ".join(summary[doc]["Details"]) if summary[doc]["Details"] else "Καμία"
+        })
+    return pd.DataFrame(data)
+
+def compute_regular_holidays_summary(schedule, regular_holidays):
+    summary = {doc: {"Count": 0, "Details": []} for doc in DOCTORS}
+    for d in sorted(regular_holidays.keys()):
+        doc = schedule.get(d, "-")
+        if doc in summary:
+            summary[doc]["Count"] += 1
+            summary[doc]["Details"].append(f"{d.strftime('%d/%m/%Y')} ({regular_holidays[d]})")
+    
+    data = []
+    for doc in DOCTORS:
+        data.append({
+            "Ακτινολόγος": doc,
+            "Σύνολο": summary[doc]["Count"],
+            "Ημερομηνίες & Εορτές": ", ".join(summary[doc]["Details"]) if summary[doc]["Details"] else "Καμία"
+        })
+    return pd.DataFrame(data)
+
+# ----------------------------
+# PDF EXPORT HELPERS
+# ----------------------------
+def create_balance_pdf(df, start_date, end_date, filename="balance_summary.pdf"):
+    pdf = FPDF(orientation="L", unit="mm", format="A4")
+    pdf.add_page()
+    pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
+    pdf.add_font('DejaVu', 'B', 'DejaVuSans.ttf', uni=True)
+    pdf.set_font("DejaVu", "B", 16)
+    pdf.cell(0, 10, "Doctor Balance Summary", ln=True, align="C")
+    pdf.set_font("DejaVu", "", 12)
+    pdf.cell(0, 8, f"Period: {start_date.strftime('%d/%m/%Y')} – {end_date.strftime('%d/%m/%Y')}", ln=True, align="C")
+    pdf.ln(6)
+    col_widths = [45, 25, 18, 18, 18, 22, 22]
+    pdf.set_font("DejaVu", "B", 12)
+    for h, w in zip(df.columns, col_widths):
+        pdf.cell(w, 8, str(h), border=1, align="C")
+    pdf.ln()
+    pdf.set_font("DejaVu", "", 12)
+    for _, row in df.iterrows():
+        for val, w in zip(row, col_widths):
+            pdf.cell(w, 8, str(val), border=1, align="C")
+        pdf.ln()
+    pdf.output(filename)
+    return filename
+
+def create_major_holidays_pdf(df, start_date, end_date, filename="major_holidays_summary.pdf"):
+    pdf = FPDF(orientation="L", unit="mm", format="A4")
+    pdf.add_page()
+    pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
+    pdf.add_font('DejaVu', 'B', 'DejaVuSans.ttf', uni=True)
+    pdf.set_font("DejaVu", "B", 16)
+    pdf.cell(0, 10, "Κατάσταση Εφημεριών Χριστουγέννων & Πάσχα", ln=True, align="C")
+    pdf.set_font("DejaVu", "", 12)
+    pdf.cell(0, 8, f"Περίοδος: {start_date.strftime('%d/%m/%Y')} – {end_date.strftime('%d/%m/%Y')}", ln=True, align="C")
+    pdf.ln(6)
+    col_widths = [35, 20, 222]
+    pdf.set_font("DejaVu", "B", 11)
+    for h, w in zip(df.columns, col_widths):
+        pdf.cell(w, 8, str(h), border=1, align="C")
+    pdf.ln()
+    pdf.set_font("DejaVu", "", 10)
+    for _, row in df.iterrows():
+        pdf.cell(col_widths[0], 10, str(row["Ακτινολόγος"]), border=1, align="C")
+        pdf.cell(col_widths[1], 10, str(row["Σύνολο"]), border=1, align="C")
+        pdf.multi_cell(col_widths[2], 5, str(row["Ημερομηνίες & Εορτές"]), border=1, align="L")
+        pdf.ln(0)
+    pdf.output(filename)
+    return filename
+
+def create_regular_holidays_pdf(df, start_date, end_date, filename="regular_holidays_summary.pdf"):
+    pdf = FPDF(orientation="L", unit="mm", format="A4")
+    pdf.add_page()
+    pdf.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
+    pdf.add_font('DejaVu', 'B', 'DejaVuSans.ttf', uni=True)
+    pdf.set_font("DejaVu", "B", 16)
+    pdf.cell(0, 10, "Κατάσταση Εφημεριών Μικρών Αργιών", ln=True, align="C")
+    pdf.set_font("DejaVu", "", 12)
+    pdf.cell(0, 8, f"Περίοδος: {start_date.strftime('%d/%m/%Y')} – {end_date.strftime('%d/%m/%Y')}", ln=True, align="C")
+    pdf.ln(6)
+    col_widths = [35, 20, 222]
+    pdf.set_font("DejaVu", "B", 11)
+    for h, w in zip(df.columns, col_widths):
+        pdf.cell(w, 8, str(h), border=1, align="C")
+    pdf.ln()
+    pdf.set_font("DejaVu", "", 10)
+    for _, row in df.iterrows():
+        pdf.cell(col_widths[0], 10, str(row["Ακτινολόγος"]), border=1, align="C")
+        pdf.cell(col_widths[1], 10, str(row["Σύνολο"]), border=1, align="C")
+        pdf.multi_cell(col_widths[2], 5, str(row["Ημερομηνίες & Εορτές"]), border=1, align="L")
+        pdf.ln(0)
+    pdf.output(filename)
+    return filename
 
 def display_calendar(schedule, holiday_names):
     manual_assignments = st.session_state.get("manual_assignments", {})
@@ -283,7 +374,7 @@ def display_calendar(schedule, holiday_names):
 # STREAMLIT UI
 # ----------------------------
 st.set_page_config(page_title="📅 Πρόγραμμα Εφημεριών", layout="wide")
-st.title("📅 Πρόγραμμα Εφημεριών Ακτινολόγων (Yvridiko Systima)")
+st.title("📅 Πρόγραμμα Εφημεριών Ακτινολόγων")
 st.markdown("<span style='font-size:14px; color:gray;'>© Γιώργος Μενοίκου, PhD</span>", unsafe_allow_html=True)
 
 if "manual_assignments" not in st.session_state:
@@ -302,22 +393,48 @@ if "start_date" not in st.session_state:
 left_col, right_col = st.columns([0.35, 0.65])
 
 with left_col:
-    st.subheader("📊 Κατάσταση Εφημεριών")
+    st.subheader("📊 Κατάσταση Εφημεριών Εύρους")
     if st.session_state.start_date and st.session_state.schedule:
-        manual_date = st.date_input("Epilexte imerominia gia allagi", min_value=min(st.session_state.schedule.keys()), max_value=max(st.session_state.schedule.keys()))
-        manual_doctor = st.selectbox("Epilogi Aktinologoy", DOCTORS)
-        if st.button("✅ Epikyrwsi Allagis"):
+        manual_date = st.date_input("Επιλέξετε ημερομηνία για αλλαγή", min_value=min(st.session_state.schedule.keys()), max_value=max(st.session_state.schedule.keys()))
+        manual_doctor = st.selectbox("Επιλογή Ακτινολόγου", DOCTORS)
+        if st.button("✅ Επικύρωση"):
             st.session_state.manual_assignments[manual_date] = manual_doctor
             st.session_state.schedule[manual_date] = manual_doctor
             st.session_state.balance = compute_balance(st.session_state.schedule, holiday_dates=set(st.session_state.holiday_names.keys()))
-            st.success(f"Anatethike ston/stin {manual_doctor} stis {manual_date.strftime('%d/%m/%Y')}")
+            st.success(f"Ο/Η {manual_doctor} ανατέθηκε στις {manual_date.strftime('%d/%m/%Y')}")
             st.rerun()
 
     if st.session_state.balance is not None and not st.session_state.balance.empty:
         st.dataframe(st.session_state.balance, use_container_width=True, height=260)
 
+        major_hols = get_major_holidays_in_range(st.session_state.start_date, max(st.session_state.schedule.keys()) if st.session_state.schedule else st.session_state.start_date)
+        if major_hols:
+            with st.expander("🎄🐣 Ανάλυση Μεγάλων Εορτών (Χριστούγεννα & Πάσχα)"):
+                major_df = compute_major_holidays_summary(st.session_state.schedule, major_hols)
+                st.dataframe(major_df, use_container_width=True)
+                if st.button("📄 Εξαγωγή αναφοράς Χριστουγέννων/Πάσχα σε PDF"):
+                    pdf_hols_file = create_major_holidays_pdf(major_df, st.session_state.start_date, max(st.session_state.schedule.keys()))
+                    with open(pdf_hols_file, "rb") as f:
+                        st.download_button("⬇️ Κατέβασε αναφορά εορτών σε PDF", f, file_name=pdf_hols_file)
+
+        if st.session_state.holiday_names:
+            regular_hols_dict = {d: n for d, n in st.session_state.holiday_names.items() if d not in major_hols}
+            if regular_hols_dict:
+                with st.expander("🎈 Ανάλυση Μικρών Αργιών"):
+                    regular_df = compute_regular_holidays_summary(st.session_state.schedule, regular_hols_dict)
+                    st.dataframe(regular_df, use_container_width=True)
+                    if st.button("📄 Εξαγωγή αναφοράς μικρών αργιών σε PDF"):
+                        pdf_reg_file = create_regular_holidays_pdf(regular_df, st.session_state.start_date, max(st.session_state.schedule.keys()))
+                        with open(pdf_reg_file, "rb") as f:
+                            st.download_button("⬇️ Κατέβασε αναφορά μικρών αργιών σε PDF", f, file_name=pdf_reg_file)
+
+        if st.button("📄 Εξαγωγή κατάστασης σε PDF"):
+            pdf_file = create_balance_pdf(st.session_state.balance, st.session_state.start_date, max(st.session_state.schedule.keys()))
+            with open(pdf_file, "rb") as f:
+                st.download_button("⬇️ Κατέβασε κατάσταση σε PDF", f, file_name=pdf_file)
+
 with right_col:
-    selected_date = st.date_input("Imerominia enarxis:", datetime.date.today())
+    selected_date = st.date_input("Ημερομηνία έναρξης:", datetime.date.today())
     week_dates = [selected_date - datetime.timedelta(days=selected_date.weekday()) + datetime.timedelta(days=i) for i in range(7)]
 
     initial_week = {}
@@ -326,7 +443,7 @@ with right_col:
         with cols[i]:
             initial_week[d] = st.selectbox(d.strftime("%a %d/%m"), DOCTORS, index=i % 7, key=f"doc_{d}")
 
-    if st.button("💾 Apothikefsi Arxikis Rotas"):
+    if st.button("💾 Αποθήκευση Αρχικής Ρότας"):
         st.session_state.initial_week = [initial_week[d] for d in sorted(initial_week)]
         st.session_state.start_date = week_dates[0]
         st.rerun()
@@ -338,7 +455,7 @@ with right_col:
         with c2:
             end_date = st.date_input("End date", st.session_state.start_date + datetime.timedelta(days=30))
 
-        if st.button("🗓️ Dimiourgia Programmatos"):
+        if st.button("🗓️ Δημιουργία Προγράμματος"):
             sch, hols = generate_hybrid_schedule(
                 start_date, end_date, st.session_state.initial_week,
                 manual_assignments=st.session_state.manual_assignments
