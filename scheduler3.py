@@ -66,12 +66,20 @@ def _total_shifts_in_month(doctor, date, schedule, exclude_date=None):
     return total
 
 def _specific_weekday_count(doctor, weekday, schedule, exclude_date=None):
-    """Μετράει πόσες φορές συνολικά έχει κάνει ο γιατρός μια συγκεκριμένη μέρα (π.χ. Παρασκευή) στο συνολικό εύρος."""
     count = 0
     for d, doc in schedule.items():
         if d == exclude_date:
             continue
         if doc == doctor and d.weekday() == weekday:
+            count += 1
+    return count
+
+def _total_regular_holidays_count(doctor, schedule, regular_dates, exclude_date=None):
+    count = 0
+    for d, doc in schedule.items():
+        if d == exclude_date:
+            continue
+        if doc == doctor and d in regular_dates:
             count += 1
     return count
 
@@ -173,7 +181,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
     major_blocks = get_major_holiday_blocks_in_range(start_date, end_date)
     all_major_dates = {d for block in major_blocks for d in block["dates"]}
 
-    # ΒΗΜΑ 1: Κατανομή Παρασκευών, Σαββάτων και Κυριακών με απόλυτη ισότητα ανάμεσα στους γιατρούς στο συνολικό εύρος
+    # ΒΗΜΑ 1: Κατανομή Παρασκευών, Σαββάτων και Κυριακών με ισότητα
     weekend_dates = sorted([d for d in schedule.keys() if d.weekday() in (4, 5, 6) and d not in manual_assignments and d not in all_major_dates])
     for d in weekend_dates:
         valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=True, max_gap=3)]
@@ -181,7 +189,6 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=False, max_gap=3)]
         
         if valid_docs:
-            # Επιλέγουμε τον γιατρό που έχει τις λιγότερες αναθέσεις στη συγκεκριμένη ημέρα (π.χ. Παρασκευή) συνολικά στο εύρος
             wd = d.weekday()
             best_doc = min(valid_docs, key=lambda doc: (
                 _specific_weekday_count(doc, wd, schedule, exclude_date=d),
@@ -189,7 +196,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             ))
             schedule[d] = best_doc
 
-    # Παρακολούθηση ποιος γιατρός έκανε Χριστούγεννα (24, 25, 26, 31 Δεκεμβρίου) ώστε να αποκλείεται από την 1/1 του επόμενου έτους
+    # Παρακολούθηση ποιος γιατρός έκανε Χριστούγεννα (24, 25, 26, 31 Δεκεμβρίου) για τον κανόνα της 1/1
     xmas_doctors_by_year = {y: set() for y in range(start_date.year - 1, end_date.year + 2)}
     doctor_yearly_major_count = {doc: {y: 0 for y in range(start_date.year, end_date.year + 2)} for doc in DOCTORS}
 
@@ -240,8 +247,8 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         else:
             doctor_yearly_major_count[best_doc][block_year - 1] += 1
 
-    # ΒΗΜΑ 3: Κατανομή υπόλοιπων (μικρών) αργιών με ισότητα
-    regular_dates_in_range = [d for d in holiday_names.keys() if d not in all_major_dates]
+    # ΒΗΜΑ 3: Κατανομή μικρών αργιών με αυστηρή ισότητα
+    regular_dates_in_range = sorted([d for d in holiday_names.keys() if d not in all_major_dates])
     for d in regular_dates_in_range:
         if d in manual_assignments:
             continue
@@ -251,7 +258,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         
         if valid_docs:
             best_doc = min(valid_docs, key=lambda doc: (
-                sum(1 for date, doc_name in schedule.items() if doc_name == doc and date in holiday_names),
+                _total_regular_holidays_count(doc, schedule, regular_dates_in_range, exclude_date=d),
                 _total_shifts_in_month(doc, d, schedule, exclude_date=d)
             ))
         else:
@@ -267,10 +274,13 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 # ----------------------------
 # BALANCE & REPORTING
 # ----------------------------
-def compute_balance(schedule, holiday_dates=None):
+def compute_balance(schedule, holiday_dates=None, major_dates=None):
     holiday_dates = holiday_dates or set()
+    major_dates = major_dates or set()
+    
     counts = {doc: {wd: 0 for wd in WEEKDAY_LABELS} for doc in DOCTORS}
     holiday_counts = {doc: 0 for doc in DOCTORS}
+    
     for date, doc in schedule.items():
         if doc not in counts:
             continue
@@ -278,10 +288,13 @@ def compute_balance(schedule, holiday_dates=None):
         counts[doc][WEEKDAY_LABELS[wd]] += 1
         if date in holiday_dates:
             holiday_counts[doc] += 1
+            
     df = pd.DataFrame.from_dict(counts, orient="index").reset_index()
     df.rename(columns={"index": "Doctor"}, inplace=True)
     df["Weekdays"] = df["Mon"] + df["Tue"] + df["Wed"] + df["Thu"]
     df["Αργίες"] = df["Doctor"].map(holiday_counts)
+    
+    # Συνολικές βάρδιες = Καθημερινές + Παρασκευές + Σάββατα + Κυριακές (οι αργίες περιλαμβάνονται ήδη στις ημερομηνίες τους)
     df["Total"] = df["Weekdays"] + df["Fri"] + df["Sat"] + df["Sun"]
     return df[["Doctor", "Weekdays", "Fri", "Sat", "Sun", "Αργίες", "Total"]]
 
