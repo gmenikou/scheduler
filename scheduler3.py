@@ -183,8 +183,8 @@ def get_rotated_major_package_owner(year, package_type):
     doc_idx = (p_idx + year_diff) % len(DOCTORS)
     return DOCTORS[doc_idx]
 
-def is_valid_assignment(doctor, date, schedule, exclude_date=None, strict_monthly=True):
-    if _has_nearby_shift(doctor, date, schedule, max_gap=3):
+def is_valid_assignment(doctor, date, schedule, exclude_date=None, strict_monthly=True, max_gap=3):
+    if _has_nearby_shift(doctor, date, schedule, max_gap=max_gap):
         return False
     if _shifts_in_week(doctor, date, schedule, exclude_date=exclude_date) > 2:
         return False
@@ -232,9 +232,9 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
     # ΒΗΜΑ 1: Δίκαιη κατανομή Παρασκευών, Σαββάτων και Κυριακών
     weekend_dates = sorted([d for d in schedule.keys() if d.weekday() in (4, 5, 6) and d not in manual_assignments and d not in major_holidays])
     for d in weekend_dates:
-        valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=True)]
+        valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=True, max_gap=3)]
         if not valid_docs:
-            valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=False)]
+            valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=False, max_gap=3)]
         
         if valid_docs:
             best_doc = min(valid_docs, key=lambda doc: (
@@ -243,7 +243,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             ))
             schedule[d] = best_doc
 
-    # ΒΗΜΑ 2: Αυστηρή κατανομή μεγάλων αργιών με rotation ΚΑΙ αυστηρό όριο 1 ανά έτος
+    # ΒΗΜΑ 2: Κατανομή μεγάλων αργιών με rotation, όριο 1 ανά έτος ΚΑΙ max_gap=2 για ευελιξία στις γιορτές
     holiday_dates = sorted([d for d in holiday_names.keys() if start_date <= d <= end_date])
 
     for d in holiday_dates:
@@ -254,17 +254,16 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         if pkg_name:
             target_doc = get_rotated_major_package_owner(d.year, pkg_name)
             
-            # Ελέγχουμε αν ο target_doc έχει ήδη πάρει άλλη μεγάλη αργία φέτος
             already_has_major = _count_major_holidays_in_year(target_doc, d, schedule, major_holidays, exclude_date=d) > 0
             
-            if not already_has_major and is_valid_assignment(target_doc, d, schedule, exclude_date=d, strict_monthly=False):
+            # Εφαρμογή max_gap=2 για τις μεγάλες αργίες
+            if not already_has_major and is_valid_assignment(target_doc, d, schedule, exclude_date=d, strict_monthly=False, max_gap=2):
                 best_doc = target_doc
             else:
-                # Βρίσκουμε γιατρούς που ΔΕΝ έχουν πάρει άλλη μεγάλη αργία φέτος
                 valid_docs = [
                     doc for doc in DOCTORS 
                     if _count_major_holidays_in_year(doc, d, schedule, major_holidays, exclude_date=d) == 0 
-                    and is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=False)
+                    and is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=False, max_gap=2)
                 ]
                 
                 if target_doc in valid_docs:
@@ -274,9 +273,9 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                 else:
                     best_doc = min(DOCTORS, key=lambda doc: _total_shifts_in_month(doc, d, schedule, exclude_date=d))
         else:
-            valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=True)]
+            valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=True, max_gap=3)]
             if not valid_docs:
-                valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=False)]
+                valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=False, max_gap=3)]
             
             if valid_docs:
                 best_doc = min(valid_docs, key=lambda doc: (
@@ -316,7 +315,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             for under in underloaded:
                 ov_dates = [d for d, doc in schedule.items() if doc == ov and d.weekday() not in (5, 6) and d not in holiday_names and d not in manual_assignments]
                 for od in ov_dates:
-                    if is_valid_assignment(under, od, schedule, exclude_date=od, strict_monthly=False):
+                    if is_valid_assignment(under, od, schedule, exclude_date=od, strict_monthly=False, max_gap=3):
                         schedule[od] = under
                         break
                 break
