@@ -6,7 +6,10 @@ import calendar
 
 import pandas as pd
 import streamlit as st
-from fpdf import FPDF  # pip install fpdf2
+import fpdf as _fpdf_module
+from fpdf import FPDF  # δουλεύει και με fpdf2 (προτείνεται) και με το παλιό fpdf 1.7
+
+FPDF2 = int(str(getattr(_fpdf_module, "__version__", "1")).split(".")[0]) >= 2
 
 # ----------------------------
 # CONSTANTS & SETUP
@@ -145,6 +148,72 @@ def get_major_holidays_in_range(start_date, end_date):
 
 
 # ----------------------------
+# ΚΑΝΟΝΕΣ ΜΕΓΑΛΩΝ ΑΡΓΙΩΝ
+#  1) Κανείς δεν παίρνει δύο από: 25/12, 26/12, 31/12, 1/1, Κυριακή και Δευτέρα του Πάσχα
+#  2) Όποιος παίρνει 24/12 (Παραμονή Χριστουγέννων) παίρνει και το Μεγάλο Σάββατο
+#  3) Όποιος παίρνει 26/12 παίρνει και τη Μεγάλη Παρασκευή
+# ----------------------------
+CORE_TYPES = {"xmas", "xmas2", "nye", "ny", "easter", "easter_mon"}
+PAIR_TYPES = [("xmas_eve", "holy_sat"), ("xmas2", "good_fri")]
+
+
+def _major_type(d):
+    if d.month == 12:
+        return {24: "xmas_eve", 25: "xmas", 26: "xmas2", 31: "nye"}.get(d.day)
+    if d.month == 1 and d.day == 1:
+        return "ny"
+    off = (d - orthodox_easter(d.year)).days
+    return {-2: "good_fri", -1: "holy_sat", 0: "easter", 1: "easter_mon"}.get(off)
+
+
+def build_major_rules(major_dates):
+    """Επιστρέφει (core_group, pairs).
+    core_group: ημερομηνία -> ομάδα (περίοδος) για τις 'βαριές' αργίες.
+    pairs: λίστα (ημ/νία Α, ημ/νία Β) που πρέπει να πάνε στον ίδιο γιατρό.
+    Η ομαδοποίηση επιλέγεται αυτόματα: ημερολογιακό έτος (Ιαν-Δεκ) ή
+    'Χριστούγεννα -> επόμενο Πάσχα', όποια δίνει περισσότερα πλήρη ζευγάρια στο εύρος."""
+    types = {d: _major_type(d) for d in major_dates}
+
+    def gk_calendar(d):
+        return d.year
+
+    def gk_season(d):
+        return d.year if d.month == 12 else d.year - 1
+
+    def pairs_for(gk):
+        by = {(gk(d), t): d for d, t in types.items() if t}
+        out = []
+        for a, b in PAIR_TYPES:
+            for (g, t), d in by.items():
+                if t == a and (g, b) in by:
+                    out.append((d, by[(g, b)]))
+        return out
+
+    p_cal, p_sea = pairs_for(gk_calendar), pairs_for(gk_season)
+    gk, pairs = (gk_season, p_sea) if len(p_sea) > len(p_cal) else (gk_calendar, p_cal)
+    core_group = {d: gk(d) for d, t in types.items() if t in CORE_TYPES}
+    return core_group, pairs
+
+
+def find_major_violations(schedule, major_holidays):
+    dates = [d for d in major_holidays if d in schedule]
+    core_group, pairs = build_major_rules(dates)
+    out, per = [], {}
+    for d, g in core_group.items():
+        per.setdefault((schedule[d], g), []).append(d)
+    for (doc, g), ds in per.items():
+        if len(ds) > 1:
+            names = ", ".join(f"{x:%d/%m/%Y} ({major_holidays[x]})" for x in sorted(ds))
+            out.append((min(ds), doc, f"δύο μεγάλες της ίδιας περιόδου: {names}"))
+    for a, b in pairs:
+        if schedule[a] != schedule[b]:
+            out.append((a, schedule[a],
+                        f"{major_holidays[a]} και {major_holidays[b]} ({b:%d/%m/%Y}) "
+                        f"πρέπει να πάνε στον ίδιο γιατρό (τώρα: {schedule[b]})"))
+    return sorted(out, key=lambda t: t[0])
+
+
+# ----------------------------
 # OPTIMIZER
 # Ισοκατανέμει ταυτόχρονα: μεγάλες αργίες, μικρές αργίες, σύνολο αργιών,
 # Παρασκευές/Σάββατα/Κυριακές ανά γιατρό, μήνες με Σάββατο ΚΑΙ Κυριακή,
@@ -154,11 +223,17 @@ def get_major_holidays_in_range(start_date, end_date):
 def optimize_schedule(schedule, holiday_names, major_holidays, locked,
                       prior_major=None, prior_minor=None,
                       window=14, iters=40000, seed=0,
-                      w_wd=15, w_dbl=10, w_mon=5):
+                      w_wd=15, w_dbl=10, w_mon=5, w_core=400, w_pair=400):
     rng = random.Random(seed)
     prior_major = prior_major or {}
     prior_minor = prior_minor or {}
     kind = {d: ("M" if d in major_holidays else "m") for d in holiday_names}
+
+    core_group, pairs = build_major_rules([d for d in major_holidays if d in schedule])
+    pairs_of = {}
+    for a, b in pairs:
+        pairs_of.setdefault(a, []).append((a, b))
+        pairs_of.setdefault(b, []).append((a, b))
 
     maj = {k: prior_major.get(k, 0) for k in DOCTORS}
     mnr = {k: prior_minor.get(k, 0) for k in DOCTORS}
@@ -168,6 +243,8 @@ def optimize_schedule(schedule, holiday_names, major_holidays, locked,
     dbl = {k: 0 for k in DOCTORS}        # μήνες με Σάββατο ΚΑΙ Κυριακή
     ddates = {k: set() for k in DOCTORS}
     mon_sq = {k: 0 for k in DOCTORS}
+    core_cnt = {k: {} for k in DOCTORS}  # doc -> {ομάδα: πλήθος 'βαριών' αργιών}
+    core_dup = {k: 0 for k in DOCTORS}   # ζεύγη 'βαριών' αργιών στον ίδιο γιατρό/περίοδο
 
     def apply(date, doc, s):
         if s > 0:
@@ -179,6 +256,11 @@ def optimize_schedule(schedule, holiday_names, major_holidays, locked,
             maj[doc] += s
         elif kd == "m":
             mnr[doc] += s
+        g = core_group.get(date)
+        if g is not None:
+            c = core_cnt[doc].get(g, 0)
+            core_dup[doc] += (c + s) * (c + s - 1) // 2 - c * (c - 1) // 2
+            core_cnt[doc][g] = c + s
         w = date.weekday()
         if w >= 4:
             wd[doc][w] += s
@@ -202,6 +284,7 @@ def optimize_schedule(schedule, holiday_names, major_holidays, locked,
             + w_wd * sum(v * v for v in wd[k].values())
             + w_dbl * dbl[k] ** 2
             + w_mon * mon_sq[k]
+            + w_core * core_dup[k]
         )
 
     def valid(doc, date):
@@ -224,7 +307,8 @@ def optimize_schedule(schedule, holiday_names, major_holidays, locked,
     if len(free) < 2:
         return schedule
 
-    total = sum(doc_cost(k) for k in DOCTORS)
+    total = (sum(doc_cost(k) for k in DOCTORS)
+             + w_pair * sum(1 for a, b in pairs if schedule[a] != schedule[b]))
     best_total, best = total, dict(schedule)
     T0, T1 = 60.0, 0.5
 
@@ -238,10 +322,18 @@ def optimize_schedule(schedule, holiday_names, major_holidays, locked,
         if P == Q:
             continue
 
+        affected = set(pairs_of.get(x, ())) | set(pairs_of.get(y, ()))
+        pair_before = sum(1 for a, b in affected if schedule[a] != schedule[b])
+        pair_after = sum(
+            1 for a, b in affected
+            if (Q if a == x else P if a == y else schedule[a])
+            != (Q if b == x else P if b == y else schedule[b])
+        )
+
         before = doc_cost(P) + doc_cost(Q)
         apply(x, P, -1); apply(y, Q, -1)
         apply(y, P, +1); apply(x, Q, +1)
-        delta = doc_cost(P) + doc_cost(Q) - before
+        delta = doc_cost(P) + doc_cost(Q) - before + w_pair * (pair_after - pair_before)
 
         if valid(P, y) and valid(Q, x) and (delta <= 0 or rng.random() < math.exp(-delta / T)):
             schedule[x], schedule[y] = Q, P
@@ -263,26 +355,35 @@ def optimize_schedule(schedule, holiday_names, major_holidays, locked,
 def generate_full_schedule(start_date, end_date, initial_week, ref_monday,
                            manual_assignments=None, prior_major=None, prior_minor=None):
     manual_assignments = manual_assignments or {}
-    schedule = {}
+    base = {}
 
     # Βασική ροτά (ξεκινά από την Δευτέρα αναφοράς, ώστε να δουλεύει σωστά
     # ακόμα κι όταν η ημερομηνία έναρξης δεν είναι Δευτέρα)
     for i in range((end_date - start_date).days + 1):
         cur = start_date + datetime.timedelta(days=i)
         off = (cur - ref_monday).days
-        schedule[cur] = initial_week[((off % 7) + (off // 7) * 2) % len(initial_week)]
+        base[cur] = initial_week[((off % 7) + (off // 7) * 2) % len(initial_week)]
 
     # Χειροκίνητες αλλαγές (κλειδωμένες)
     for d, doc in manual_assignments.items():
-        if d in schedule:
-            schedule[d] = doc
+        if d in base:
+            base[d] = doc
 
     holiday_names = get_holidays_in_range(start_date, end_date)
     major = get_major_holidays_in_range(start_date, end_date)
-    locked = {d for d in manual_assignments if d in schedule}
+    locked = {d for d in manual_assignments if d in base}
 
-    optimize_schedule(schedule, holiday_names, major, locked, prior_major, prior_minor)
-    return schedule, holiday_names
+    # Έως 6 προσπάθειες μέχρι να τηρηθούν πλήρως οι κανόνες των μεγάλων αργιών
+    best = None
+    for attempt in range(6):
+        sch = dict(base)
+        optimize_schedule(sch, holiday_names, major, locked, prior_major, prior_minor, seed=attempt)
+        n_viol = len(find_major_violations(sch, major))
+        if best is None or n_viol < best[0]:
+            best = (n_viol, sch)
+        if n_viol == 0:
+            break
+    return best[1], holiday_names
 
 
 # ----------------------------
@@ -353,35 +454,52 @@ def _find_font(name):
     return None
 
 
+def _pdf_cell(pdf, w, h, txt, border=0, align="", newline=False):
+    """Κελί που δουλεύει σε fpdf2 και σε παλιό fpdf."""
+    if FPDF2:
+        extra = {"new_x": "LMARGIN", "new_y": "NEXT"} if newline else {}
+        pdf.cell(w, h, txt, border=border, align=align, **extra)
+    else:
+        pdf.cell(w, h, txt, border=border, align=align, ln=1 if newline else 0)
+
+
 def create_balance_pdf(df, start_date, end_date):
     regular = _find_font("DejaVuSans.ttf")
     if regular is None:
-        raise FileNotFoundError("Λείπει το DejaVuSans.ttf δίπλα στο app.py")
+        raise FileNotFoundError("Λείπει το DejaVuSans.ttf δίπλα στο αρχείο της εφαρμογής")
     bold = _find_font("DejaVuSans-Bold.ttf") or regular
 
     pdf = FPDF(orientation="L", unit="mm", format="A4")
     pdf.add_page()
-    pdf.add_font("DejaVu", "", regular)
-    pdf.add_font("DejaVu", "B", bold)
+    if FPDF2:
+        pdf.add_font("DejaVu", "", regular)
+        pdf.add_font("DejaVu", "B", bold)
+    else:
+        pdf.add_font("DejaVu", "", regular, uni=True)
+        pdf.add_font("DejaVu", "B", bold, uni=True)
 
     pdf.set_font("DejaVu", "B", 16)
-    pdf.cell(0, 10, "Doctor Balance Summary", align="C", new_x="LMARGIN", new_y="NEXT")
+    _pdf_cell(pdf, 0, 10, "Doctor Balance Summary", align="C", newline=True)
     pdf.set_font("DejaVu", "", 12)
-    pdf.cell(0, 8, f"Period: {start_date.strftime('%d/%m/%Y')} – {end_date.strftime('%d/%m/%Y')}",
-             align="C", new_x="LMARGIN", new_y="NEXT")
+    _pdf_cell(pdf, 0, 8, f"Period: {start_date.strftime('%d/%m/%Y')} - {end_date.strftime('%d/%m/%Y')}",
+              align="C", newline=True)
     pdf.ln(6)
 
     col_widths = [45, 25, 18, 18, 18, 22, 22]
     pdf.set_font("DejaVu", "B", 12)
     for h, w in zip(df.columns, col_widths):
-        pdf.cell(w, 8, str(h), border=1, align="C")
+        _pdf_cell(pdf, w, 8, str(h), border=1, align="C")
     pdf.ln()
     pdf.set_font("DejaVu", "", 12)
     for _, row in df.iterrows():
         for val, w in zip(row, col_widths):
-            pdf.cell(w, 8, str(val), border=1, align="C")
+            _pdf_cell(pdf, w, 8, str(val), border=1, align="C")
         pdf.ln()
-    return bytes(pdf.output())
+
+    if FPDF2:
+        return bytes(pdf.output())
+    out = pdf.output(dest="S")
+    return out if isinstance(out, (bytes, bytearray)) else out.encode("latin-1")
 
 
 # ----------------------------
@@ -479,7 +597,9 @@ with left_col:
             st.session_state.manual_assignments = {}
             st.rerun()
 
-        problems = find_violations(schedule)
+        problems = find_violations(schedule) + find_major_violations(
+            schedule, get_major_holidays_in_range(first_day, last_day))
+        problems.sort(key=lambda t: t[0])
         if problems:
             with st.expander(f"⚠️ {len(problems)} παραβιάσεις κανόνων", expanded=False):
                 for d, doc, why in problems:
@@ -507,7 +627,7 @@ with left_col:
             pdf_bytes = create_balance_pdf(st.session_state.balance, first_day, last_day)
             st.download_button("📄 Κατέβασε κατάσταση σε PDF", data=pdf_bytes,
                                file_name="balance_summary.pdf", mime="application/pdf")
-        except FileNotFoundError as e:
+        except Exception as e:  # το PDF δεν πρέπει να ρίχνει ποτέ την εφαρμογή
             st.caption(f"PDF μη διαθέσιμο: {e}")
 
 # ---------- RIGHT: initial rota, range, calendar ----------
