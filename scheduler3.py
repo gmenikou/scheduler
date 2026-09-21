@@ -55,16 +55,6 @@ def _shifts_in_week(doctor, date, schedule, exclude_date=None):
         if doc == doctor and d != exclude_date and _week_monday(d) == wk
     )
 
-def _total_shifts_in_month(doctor, date, schedule, exclude_date=None):
-    year, month = date.year, date.month
-    total = 0
-    for d, doc in schedule.items():
-        if d == exclude_date:
-            continue
-        if doc == doctor and d.year == year and d.month == month:
-            total += 1
-    return total
-
 def _saturdays_in_month(doctor, date, schedule, exclude_date=None):
     year, month = date.year, date.month
     count = 0
@@ -85,19 +75,23 @@ def _sundays_in_month(doctor, date, schedule, exclude_date=None):
             count += 1
     return count
 
-def is_valid_assignment(doctor, date, schedule, holiday_names, exclude_date=None, strict_monthly=True, ignore_weekend_caps=False):
-    # Κανόνας: Ελάχιστο κενό 3 ημερών
+def _worked_same_weekday_last_week(doctor, date, schedule):
+    """Ελέγχει αν ο γιατρός δούλεψε την ίδια μέρα την προηγούμενη εβδομάδα."""
+    prev_week_date = date - datetime.timedelta(days=7)
+    if schedule.get(prev_week_date) == doctor:
+        return 1
+    return 0
+
+def is_valid_assignment(doctor, date, schedule, holiday_names, exclude_date=None, ignore_weekend_caps=False):
+    # 1. Κανόνας: Ελάχιστο κενό 3 ημερών
     if _has_nearby_shift(doctor, date, schedule, max_gap=3):
         return False
-    # Κανόνας: Έως 2 εφημερίδες την εβδομάδα
-    if _shifts_in_week(doctor, date, schedule, exclude_date=exclude_date) >= 2:
+        
+    # 2. Κανόνας: Αυστηρά ΜΕΓΙΣΤΟ 1 εφημερίδα την εβδομάδα
+    if _shifts_in_week(doctor, date, schedule, exclude_date=exclude_date) >= 1:
         return False
-    # Κανόνας: Έως 5 εφημερίδες τον μήνα
-    if strict_monthly:
-        if _total_shifts_in_month(doctor, date, schedule, exclude_date=exclude_date) >= 5:
-            return False
             
-    # ΚΑΝΟΝΑΣ ΣΑΒΒΑΤΟΚΥΡΙΑΚΩΝ: Έως 1 Σάββατο και 1 Κυριακή ανά μήνα (ανεξάρτητα από τις αργίες καθημερινών)
+    # 3. Κανόνας Σαββατοκύριακων: Έως 1 Σάββατο και 1 Κυριακή ανά μήνα
     if not ignore_weekend_caps:
         if date.weekday() == 5:  # Σάββατο
             if _saturdays_in_month(doctor, date, schedule, exclude_date=exclude_date) >= 1:
@@ -195,32 +189,39 @@ def generate_full_schedule(start_date, end_date, manual_assignments=None):
         is_weekend = current_date.weekday() in (5, 6)
         is_holiday = current_date in holiday_names
         
-        # 1. Δοκιμή με κανονικά όρια (έως 1 Σάββατο & 1 Κυριακή ανά μήνα)
-        valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, current_date, schedule, holiday_names, strict_monthly=True, ignore_weekend_caps=False)]
+        # 1. Δοκιμή με κανονικά όρια
+        valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, current_date, schedule, holiday_names, ignore_weekend_caps=False)]
         
-        # 2. Αν δεν βρίσκουμε, χαλαρώνουμε τα όρια Σαββατοκύριακου (π.χ. σε μήνες με 5 Σ/Κ)
+        # 2. Αν δεν βρίσκουμε, χαλαρώνουμε τα όρια Σαββατοκύριακου
         if not valid_docs:
-            valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, current_date, schedule, holiday_names, strict_monthly=True, ignore_weekend_caps=True)]
-            
-        # 3. Αν εξακολουθεί να μην υπάρχει, χαλαρώνουμε και το μηνιαίο όριο
-        if not valid_docs:
-            valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, current_date, schedule, holiday_names, strict_monthly=False, ignore_weekend_caps=True)]
+            valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, current_date, schedule, holiday_names, ignore_weekend_caps=True)]
             
         if not valid_docs:
             valid_docs = DOCTORS
             
-        # Επιλογή με κριτήριο ισότητας
+        # Επιλογή με κριτήριο ισότητας (αποφυγή ίδιας μέρας την προηγούμενη εβδομάδα πρώτη-πρώτη)
         best_doc = min(valid_docs, key=lambda doc: (
+            _worked_same_weekday_last_week(doc, current_date, schedule),
             _saturdays_in_month(doc, current_date, schedule) if current_date.weekday() == 5 else 0,
             _sundays_in_month(doc, current_date, schedule) if current_date.weekday() == 6 else 0,
             _count_doctor_holidays(doc, schedule, holiday_names) if is_holiday else 0,
-            _total_shifts_in_month(doc, current_date, schedule),
+            _total_shifts_in_month_flex(doc, current_date, schedule),
             _shifts_in_week(doc, current_date, schedule)
         ))
         
         schedule[current_date] = best_doc
 
     return schedule, holiday_names
+
+def _total_shifts_in_month_flex(doctor, date, schedule, exclude_date=None):
+    year, month = date.year, date.month
+    total = 0
+    for d, doc in schedule.items():
+        if d == exclude_date:
+            continue
+        if doc == doctor and d.year == year and d.month == month:
+            total += 1
+    return total
 
 def _count_doctor_holidays(doctor, schedule, holiday_names):
     return sum(1 for d, doc_name in schedule.items() if doc_name == doctor and d in holiday_names)
