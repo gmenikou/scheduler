@@ -85,16 +85,6 @@ def _count_doctor_holidays(doctor, schedule, holiday_names, exclude_date=None):
             count += 1
     return count
 
-def _count_major_holidays_in_year(doctor, date, schedule, major_holidays, exclude_date=None):
-    year = date.year
-    count = 0
-    for d, doc in schedule.items():
-        if d == exclude_date:
-            continue
-        if doc == doctor and d.year == year and d in major_holidays:
-            count += 1
-    return count
-
 def orthodox_easter(year):
     a = year % 4
     b = year % 7
@@ -164,25 +154,6 @@ def get_major_holidays_in_range(start_date, end_date):
             
     return dict(sorted(target_dates.items()))
 
-# ----------------------------
-# ROTATION / 7-YEAR CYCLE LOGIC
-# ----------------------------
-def get_rotated_major_package_owner(year, package_type):
-    base_year = 2026
-    year_diff = year - base_year
-    package_indices = {
-        "Πρωτοχρονιά": 0,
-        "Παραμονή Πρωτοχρονιάς": 1,
-        "Χριστούγεννα": 2,
-        "Κυριακή του Πάσχα": 3,
-        "Δευτέρα του Πάσχα": 4,
-        "Μεγάλη Παρασκευή + 26/12": 5,
-        "Μεγάλο Σάββατο + 24/12": 6
-    }
-    p_idx = package_indices.get(package_type, 0)
-    doc_idx = (p_idx + year_diff) % len(DOCTORS)
-    return DOCTORS[doc_idx]
-
 def is_valid_assignment(doctor, date, schedule, exclude_date=None, strict_monthly=True, max_gap=3):
     if _has_nearby_shift(doctor, date, schedule, max_gap=max_gap):
         return False
@@ -243,49 +214,29 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             ))
             schedule[d] = best_doc
 
-    # ΒΗΜΑ 2: Κατανομή μεγάλων αργιών με rotation, όριο 1 ανά έτος ΚΑΙ max_gap=2 για ευελιξία στις γιορτές
+    # ΒΗΜΑ 2: Δίκαιη, ισότιμη κατανομή μεγάλων αργιών σε όλο το εύρος (Global Fair Round-Robin)
     holiday_dates = sorted([d for d in holiday_names.keys() if start_date <= d <= end_date])
+    major_dates_in_range = [d for d in holiday_dates if d in major_holidays]
 
-    for d in holiday_dates:
+    # Καταμετρούμε πόσες μεγάλες αργίες έχει πάρει ήδη ο καθένας στο τρέχον schedule (π.χ. από manual)
+    major_counts = {doc: sum(1 for d, doc_name in schedule.items() if d in major_holidays and doc_name == doc) for doc in DOCTORS}
+
+    for d in major_dates_in_range:
         if d in manual_assignments:
             continue
         
-        pkg_name = major_holidays.get(d)
-        if pkg_name:
-            target_doc = get_rotated_major_package_owner(d.year, pkg_name)
-            
-            already_has_major = _count_major_holidays_in_year(target_doc, d, schedule, major_holidays, exclude_date=d) > 0
-            
-            # Εφαρμογή max_gap=2 για τις μεγάλες αργίες
-            if not already_has_major and is_valid_assignment(target_doc, d, schedule, exclude_date=d, strict_monthly=False, max_gap=2):
-                best_doc = target_doc
-            else:
-                valid_docs = [
-                    doc for doc in DOCTORS 
-                    if _count_major_holidays_in_year(doc, d, schedule, major_holidays, exclude_date=d) == 0 
-                    and is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=False, max_gap=2)
-                ]
-                
-                if target_doc in valid_docs:
-                    best_doc = target_doc
-                elif valid_docs:
-                    best_doc = min(valid_docs, key=lambda doc: _total_shifts_in_month(doc, d, schedule, exclude_date=d))
-                else:
-                    best_doc = min(DOCTORS, key=lambda doc: _total_shifts_in_month(doc, d, schedule, exclude_date=d))
+        # Επιλέγουμε γιατρούς που περνούν τους κανόνες (με max_gap=2 για τις γιορτές)
+        valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=False, max_gap=2)]
+        
+        if valid_docs:
+            # Δίνουμε προτεραιότητα σε αυτόν που έχει τις ΛΙΓΟΤΕΡΕΣ μεγάλες αργίες συνολικά στο επιλεγμένο εύρος
+            best_doc = min(valid_docs, key=lambda doc: (major_counts[doc], _total_shifts_in_month(doc, d, schedule, exclude_date=d)))
         else:
-            valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=True, max_gap=3)]
-            if not valid_docs:
-                valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=False, max_gap=3)]
-            
-            if valid_docs:
-                best_doc = min(valid_docs, key=lambda doc: (
-                    _count_doctor_holidays(doc, schedule, holiday_names, exclude_date=d),
-                    _total_shifts_in_month(doc, d, schedule, exclude_date=d)
-                ))
-            else:
-                best_doc = DOCTORS[0]
+            # Αν όλοι απορριφθούν από τους αυστηρούς κανόνες, παίρνουμε τον λιγότερο επιβαρρυμένο συνολικά σε μεγάλες αργίες
+            best_doc = min(DOCTORS, key=lambda doc: major_counts[doc])
             
         schedule[d] = best_doc
+        major_counts[best_doc] += 1
         
         # ΕΦΑΡΜΟΓΗ ΠΑΚΕΤΟΥ (Συγχρονισμός ζευγαριών)
         year = d.year
@@ -305,7 +256,25 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         except Exception:
             pass
 
-    # ΒΗΜΑ 3: Γρήγορος έλεγχος ισορροπίας
+    # Κατανομή υπόλοιπων (μικρών) αργιών
+    regular_dates_in_range = [d for d in holiday_dates if d not in major_holidays]
+    for d in regular_dates_in_range:
+        if d in manual_assignments:
+            continue
+        valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=True, max_gap=3)]
+        if not valid_docs:
+            valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=False, max_gap=3)]
+        
+        if valid_docs:
+            best_doc = min(valid_docs, key=lambda doc: (
+                _count_doctor_holidays(doc, schedule, holiday_names, exclude_date=d),
+                _total_shifts_in_month(doc, d, schedule, exclude_date=d)
+            ))
+        else:
+            best_doc = DOCTORS[0]
+        schedule[d] = best_doc
+
+    # ΒΗΜΑ 3: Γρήγορος έλεγχος ισορροπίας μηνός
     shift_counts = {doc: _total_shifts_in_month(doc, start_date, schedule) for doc in DOCTORS}
     overloaded = [doc for doc, cnt in shift_counts.items() if cnt > 5]
     underloaded = [doc for doc, cnt in shift_counts.items() if cnt < 4]
