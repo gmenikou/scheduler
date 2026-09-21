@@ -198,12 +198,12 @@ def generate_full_schedule(start_date, end_date, manual_assignments=None):
         # Απολύτως αυστηρός έλεγχος με βάση τους κανόνες
         valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, current_date, schedule, holiday_names)]
         
-        # Αν για κάποιο λόγο δεν βρεθεί κανείς (ακραία περίπτωση), επιτρέπουμε μόνο χαλάρωση του κενού ημερών, αλλά ΠΟΤΕ των Σαββατοκύριακων/ίδιας μέρας
+        # Αν για κάποιο λόγο δεν βρεθεί κανείς, διορθώθηκε το current_date
         if not valid_docs:
             valid_docs = [doc for doc in DOCTORS if not _worked_same_weekday_in_month(doc, current_date, schedule)]
-            if date.weekday() == 6:
+            if current_date.weekday() == 6:
                 valid_docs = [doc for doc in valid_docs if _sundays_in_month(doc, current_date, schedule) == 0]
-            elif date.weekday() == 5:
+            elif current_date.weekday() == 5:
                 valid_docs = [doc for doc in valid_docs if _saturdays_in_month(doc, current_date, schedule) == 0]
             
         if not valid_docs:
