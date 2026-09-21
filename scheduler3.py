@@ -65,12 +65,12 @@ def _total_shifts_in_month(doctor, date, schedule, exclude_date=None):
             total += 1
     return total
 
-def _count_doctor_holidays(doctor, schedule, holiday_names, exclude_date=None):
+def _count_doctor_specific_holidays(doctor, schedule, target_holiday_set, exclude_date=None):
     count = 0
     for d, doc in schedule.items():
         if d == exclude_date:
             continue
-        if doc == doctor and d in holiday_names:
+        if doc == doctor and d in target_holiday_set:
             count += 1
     return count
 
@@ -168,28 +168,44 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         schedule[current_date] = initial_week[doc_index]
 
     holiday_names = get_holidays_in_range(start_date, end_date)
+    major_hols = get_major_holidays_in_range(start_date, end_date)
+    regular_hols = {d: n for d, n in holiday_names.items() if d not in major_hols}
 
     # Εφαρμογή χειροκίνητων αλλαγών
     for d, doc in manual_assignments.items():
         if d in schedule:
             schedule[d] = doc
 
-    # ΒΗΜΑ 2: Δίκαιη και ισότιμη κατανομή αργιών με βάση τις λιγότερες συνολικές αργίες
-    holiday_dates = sorted([d for d in holiday_names.keys() if start_date <= d <= end_date])
-
-    for d in holiday_dates:
+    # ΒΗΜΑ 2Α: Πρώτα κατανέμουμε τις ΜΕΓΑΛΕΣ αργίες με αυστηρή ισοτιμία μεταξύ τους
+    major_dates = sorted([d for d in major_hols.keys() if start_date <= d <= end_date])
+    for d in major_dates:
         if d in manual_assignments:
             continue
         
-        # Αναζήτηση γιατρών που πληρούν τους κανόνες (κενό +/-3, έως 2 εφημερίες την εβδομάδα, έως 5 τον μήνα)
         valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=True)]
         if not valid_docs:
             valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=False)]
         
         if valid_docs:
-            # ΑΠΟΛΥΤΑ ΙΣΟΤΙΜΗ ΚΑΤΑΝΟΜΗ: Επιλογή αυτού με τις λιγότερες αργίες
             best_doc = min(valid_docs, key=lambda doc: (
-                _count_doctor_holidays(doc, schedule, holiday_names, exclude_date=d),
+                _count_doctor_specific_holidays(doc, schedule, set(major_hols.keys()), exclude_date=d),
+                _total_shifts_in_month(doc, d, schedule, exclude_date=d)
+            ))
+            schedule[d] = best_doc
+
+    # ΒΗΜΑ 2Β: Μετά κατανέμουμε τις ΜΙΚΡΕΣ αργίες ισότιμα μεταξύ τους
+    regular_dates = sorted([d for d in regular_hols.keys() if start_date <= d <= end_date])
+    for d in regular_dates:
+        if d in manual_assignments:
+            continue
+        
+        valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=True)]
+        if not valid_docs:
+            valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=False)]
+        
+        if valid_docs:
+            best_doc = min(valid_docs, key=lambda doc: (
+                _count_doctor_specific_holidays(doc, schedule, set(regular_hols.keys()), exclude_date=d),
                 _total_shifts_in_month(doc, d, schedule, exclude_date=d)
             ))
             schedule[d] = best_doc
@@ -250,7 +266,7 @@ def compute_major_holidays_summary(schedule, major_holidays):
     for doc in DOCTORS:
         data.append({
             "Ακτινολόγος": doc,
-            "Σύνολο": summary[doc]["Count"],
+            "Σύνολο Μεγάλων Αργιών": summary[doc]["Count"],
             "Ημερομηνίες & Εορτές": ", ".join(summary[doc]["Details"]) if summary[doc]["Details"] else "Καμία"
         })
     return pd.DataFrame(data)
@@ -266,7 +282,7 @@ def compute_regular_holidays_summary(schedule, regular_holidays):
     for doc in DOCTORS:
         data.append({
             "Ακτινολόγος": doc,
-            "Σύνολο": summary[doc]["Count"],
+            "Σύνολο Μικρών Αργιών": summary[doc]["Count"],
             "Ημερομηνίες & Εορτές": ", ".join(summary[doc]["Details"]) if summary[doc]["Details"] else "Καμία"
         })
     return pd.DataFrame(data)
