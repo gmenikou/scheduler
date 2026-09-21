@@ -1,6 +1,7 @@
 import streamlit as st
 import datetime
 import calendar
+import random
 import pandas as pd
 from fpdf import FPDF
 
@@ -75,23 +76,31 @@ def _sundays_in_month(doctor, date, schedule, exclude_date=None):
             count += 1
     return count
 
-def _worked_same_weekday_last_week(doctor, date, schedule):
-    """Ελέγχει αν ο γιατρός δούλεψε την ίδια μέρα την προηγούμενη εβδομάδα."""
-    prev_week_date = date - datetime.timedelta(days=7)
-    if schedule.get(prev_week_date) == doctor:
-        return 1
-    return 0
+def _worked_same_weekday_in_month(doctor, date, schedule, exclude_date=None):
+    """Ελέγχει αν ο γιατρός έχει ήδη δουλέψει την ίδια μέρα (π.χ. Τετάρτη) μέσα στον ίδιο μήνα."""
+    year, month = date.year, date.month
+    weekday = date.weekday()
+    for d, doc in schedule.items():
+        if d == exclude_date:
+            continue
+        if doc == doctor and d.year == year and d.month == month and d.weekday() == weekday:
+            return True
+    return False
 
-def is_valid_assignment(doctor, date, schedule, holiday_names, exclude_date=None, ignore_weekend_caps=False):
-    # 1. Κανόνας: Ελάχιστο κενό 3 ημερών
+def is_valid_assignment(doctor, date, schedule, holiday_names, exclude_date=None, ignore_weekend_caps=False, ignore_same_weekday_rule=False):
+    # 1. Κανόνας: Απαγόρευση ίδιας μέρας (π.χ. Τετάρτη) ξανά μέσα στον ίδιο μήνα
+    if not ignore_same_weekday_rule and _worked_same_weekday_in_month(doctor, date, schedule, exclude_date=exclude_date):
+        return False
+
+    # 2. Κανόνας: Ελάχιστο κενό 3 ημερών
     if _has_nearby_shift(doctor, date, schedule, max_gap=3):
         return False
         
-    # 2. Κανόνας: Αυστηρά ΜΕΓΙΣΤΟ 1 εφημερίδα την εβδομάδα
+    # 3. Κανόνας: Αυστηρά ΜΕΓΙΣΤΟ 1 εφημερίδα την εβδομάδα
     if _shifts_in_week(doctor, date, schedule, exclude_date=exclude_date) >= 1:
         return False
             
-    # 3. Κανόνας Σαββατοκύριακων: Έως 1 Σάββατο και 1 Κυριακή ανά μήνα
+    # 4. Κανόνας Σαββατοκύριακων: Έως 1 Σάββατο και 1 Κυριακή ανά μήνα
     if not ignore_weekend_caps:
         if date.weekday() == 5:  # Σάββατο
             if _saturdays_in_month(doctor, date, schedule, exclude_date=exclude_date) >= 1:
@@ -189,19 +198,26 @@ def generate_full_schedule(start_date, end_date, manual_assignments=None):
         is_weekend = current_date.weekday() in (5, 6)
         is_holiday = current_date in holiday_names
         
-        # 1. Δοκιμή με κανονικά όρια
-        valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, current_date, schedule, holiday_names, ignore_weekend_caps=False)]
+        # 1. Αυστηρή δοκιμή (αποφυγή ίδιας μέρας στον μήνα + κανονικά Σ/Κ)
+        valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, current_date, schedule, holiday_names, ignore_weekend_caps=False, ignore_same_weekday_rule=False)]
         
-        # 2. Αν δεν βρίσκουμε, χαλαρώνουμε τα όρια Σαββατοκύριακου
+        # 2. Αν δεν βρίσκουμε, χαλαρώνουμε τον κανόνα της ίδιας μέρας στον μήνα
         if not valid_docs:
-            valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, current_date, schedule, holiday_names, ignore_weekend_caps=True)]
+            valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, current_date, schedule, holiday_names, ignore_weekend_caps=False, ignore_same_weekday_rule=True)]
+
+        # 3. Αν πάλι δεν βρίσκουμε, χαλαρώνουμε και τα Σ/Κ
+        if not valid_docs:
+            valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, current_date, schedule, holiday_names, ignore_weekend_caps=True, ignore_same_weekday_rule=True)]
             
         if not valid_docs:
             valid_docs = DOCTORS
             
-        # Επιλογή με κριτήριο ισότητας (αποφυγή ίδιας μέρας την προηγούμενη εβδομάδα πρώτη-πρώτη)
-        best_doc = min(valid_docs, key=lambda doc: (
-            _worked_same_weekday_last_week(doc, current_date, schedule),
+        # Ανακατεύουμε τους γιατρούς τυχαία για να αποφύγουμε τα στατικά αλφαβητικά μοτίβα
+        valid_docs_shuffled = list(valid_docs)
+        random.shuffle(valid_docs_shuffled)
+        
+        # Επιλογή με κριτήριο ισότητας
+        best_doc = min(valid_docs_shuffled, key=lambda doc: (
             _saturdays_in_month(doc, current_date, schedule) if current_date.weekday() == 5 else 0,
             _sundays_in_month(doc, current_date, schedule) if current_date.weekday() == 6 else 0,
             _count_doctor_holidays(doc, schedule, holiday_names) if is_holiday else 0,
