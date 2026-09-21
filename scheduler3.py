@@ -65,14 +65,13 @@ def _total_shifts_in_month(doctor, date, schedule, exclude_date=None):
             total += 1
     return total
 
-def _specific_weekday_in_month(doctor, date, schedule, exclude_date=None):
-    year, month = date.year, date.month
-    weekday = date.weekday()
+def _specific_weekday_count(doctor, weekday, schedule, exclude_date=None):
+    """Μετράει πόσες φορές συνολικά έχει κάνει ο γιατρός μια συγκεκριμένη μέρα (π.χ. Παρασκευή) στο συνολικό εύρος."""
     count = 0
     for d, doc in schedule.items():
         if d == exclude_date:
             continue
-        if doc == doctor and d.year == year and d.month == month and d.weekday() == weekday:
+        if doc == doctor and d.weekday() == weekday:
             count += 1
     return count
 
@@ -145,19 +144,6 @@ def is_valid_assignment(doctor, date, schedule, exclude_date=None, strict_monthl
     if _shifts_in_week(doctor, date, schedule, exclude_date=exclude_date) > 2:
         return False
         
-    if date.weekday() in (4, 5, 6):
-        doc_count = _specific_weekday_in_month(doctor, date, schedule, exclude_date=exclude_date)
-        year, month = date.year, date.month
-        weekday = date.weekday()
-        
-        other_counts = [
-            sum(1 for d, doc_name in schedule.items() if d != exclude_date and doc_name == doc and d.year == year and d.month == month and d.weekday() == weekday)
-            for doc in DOCTORS if doc != doctor
-        ]
-        min_others = min(other_counts) if other_counts else 0
-        if doc_count > min_others:
-            return False
-
     if strict_monthly:
         if _total_shifts_in_month(doctor, date, schedule, exclude_date=exclude_date) > 5:
             return False
@@ -184,10 +170,10 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         if d in schedule:
             schedule[d] = doc
 
-    # ΒΗΜΑ 1: Κατανομή Παρασκευών, Σαββάτων και Κυριακών (κανονικές μέρες)
     major_blocks = get_major_holiday_blocks_in_range(start_date, end_date)
     all_major_dates = {d for block in major_blocks for d in block["dates"]}
 
+    # ΒΗΜΑ 1: Κατανομή Παρασκευών, Σαββάτων και Κυριακών με απόλυτη ισότητα ανάμεσα στους γιατρούς στο συνολικό εύρος
     weekend_dates = sorted([d for d in schedule.keys() if d.weekday() in (4, 5, 6) and d not in manual_assignments and d not in all_major_dates])
     for d in weekend_dates:
         valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=True, max_gap=3)]
@@ -195,19 +181,19 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=False, max_gap=3)]
         
         if valid_docs:
+            # Επιλέγουμε τον γιατρό που έχει τις λιγότερες αναθέσεις στη συγκεκριμένη ημέρα (π.χ. Παρασκευή) συνολικά στο εύρος
+            wd = d.weekday()
             best_doc = min(valid_docs, key=lambda doc: (
-                _specific_weekday_in_month(doc, d, schedule, exclude_date=d),
+                _specific_weekday_count(doc, wd, schedule, exclude_date=d),
                 _total_shifts_in_month(doc, d, schedule, exclude_date=d)
             ))
             schedule[d] = best_doc
 
     # Παρακολούθηση ποιος γιατρός έκανε Χριστούγεννα (24, 25, 26, 31 Δεκεμβρίου) ώστε να αποκλείεται από την 1/1 του επόμενου έτους
     xmas_doctors_by_year = {y: set() for y in range(start_date.year - 1, end_date.year + 2)}
-
-    # Πρώτα προσδιορίζουμε ποιος παίρνει τα Χριστουγεννιάτικα πακέτα (24, 25, 26, 31)
     doctor_yearly_major_count = {doc: {y: 0 for y in range(start_date.year, end_date.year + 2)} for doc in DOCTORS}
 
-    # Διαχωρισμός πακέτων Πρωτοχρονιάς (1/1) από τα υπόλοιπα μεγάλα πακέτα για να εφαρμοστεί σωστά ο αποκλεισμός
+    # ΒΗΜΑ 2: Κατανομή των 7 Πακέτων Μεγάλων Αργιών
     for block in major_blocks:
         block_dates = block["dates"]
         block_year = block["year"]
@@ -222,7 +208,6 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         if not assigned_doc:
             eligible_docs = [doc for doc in DOCTORS if doctor_yearly_major_count[doc][block_year if not is_jan_1 else block_year - 1] == 0]
             
-            # Ειδικός κανόνας: Αν είναι 1/1, αποκλείονται όσοι έκαναν Χριστούγεννα/31/12 τον Δεκέμβριο του προηγούμενου έτους
             if is_jan_1:
                 prev_year = block_year - 1
                 eligible_docs = [doc for doc in eligible_docs if doc not in xmas_doctors_by_year.get(prev_year, set())]
@@ -246,7 +231,6 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             if d not in manual_assignments and d in schedule:
                 schedule[d] = best_doc
         
-        # Αν το πακέτο είναι εντός Δεκεμβρίου (24, 25, 26, 31), καταγράφουμε τον γιατρό για τον αποκλεισμό της 1/1 του επόμενου έτους
         for d in block_dates:
             if d.month == 12:
                 xmas_doctors_by_year[block_year].add(best_doc)
@@ -256,7 +240,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         else:
             doctor_yearly_major_count[best_doc][block_year - 1] += 1
 
-    # Κατανομή υπόλοιπων (μικρών) αργιών
+    # ΒΗΜΑ 3: Κατανομή υπόλοιπων (μικρών) αργιών με ισότητα
     regular_dates_in_range = [d for d in holiday_names.keys() if d not in all_major_dates]
     for d in regular_dates_in_range:
         if d in manual_assignments:
