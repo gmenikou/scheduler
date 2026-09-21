@@ -65,6 +65,17 @@ def _total_shifts_in_month(doctor, date, schedule, exclude_date=None):
             total += 1
     return total
 
+def _specific_weekday_in_month(doctor, date, schedule, exclude_date=None):
+    year, month = date.year, date.month
+    weekday = date.weekday()
+    count = 0
+    for d, doc in schedule.items():
+        if d == exclude_date:
+            continue
+        if doc == doctor and d.year == year and d.month == month and d.weekday() == weekday:
+            count += 1
+    return count
+
 def _count_doctor_holidays(doctor, schedule, holiday_names, exclude_date=None):
     count = 0
     for d, doc in schedule.items():
@@ -74,19 +85,6 @@ def _count_doctor_holidays(doctor, schedule, holiday_names, exclude_date=None):
             count += 1
     return count
 
-def is_valid_assignment(doctor, date, schedule, exclude_date=None, strict_monthly=True):
-    if _has_nearby_shift(doctor, date, schedule, max_gap=3):
-        return False
-    if _shifts_in_week(doctor, date, schedule, exclude_date=exclude_date) > 2:
-        return False
-    if strict_monthly:
-        if _total_shifts_in_month(doctor, date, schedule, exclude_date=exclude_date) > 5:
-            return False
-    return True
-
-# ----------------------------
-# HOLIDAY HELPERS
-# ----------------------------
 def orthodox_easter(year):
     a = year % 4
     b = year % 7
@@ -126,9 +124,7 @@ def get_major_holidays_in_range(start_date, end_date):
     for year in range(start_date.year, end_date.year + 1):
         c_dates = [
             (datetime.date(year, 1, 1), "Πρωτοχρονιά"),
-            (datetime.date(year, 12, 24), "Παραμονή Χριστουγέννων"),
             (datetime.date(year, 12, 25), "Χριστούγεννα"),
-            (datetime.date(year, 12, 26), "Δεύτερη μέρα Χριστουγέννων"),
             (datetime.date(year, 12, 31), "Παραμονή Πρωτοχρονιάς"),
         ]
         for d, name in c_dates:
@@ -138,27 +134,84 @@ def get_major_holidays_in_range(start_date, end_date):
         try:
             easter = orthodox_easter(year)
             e_dates = [
-                (easter - datetime.timedelta(days=2), "Μεγάλη Παρασκευή"),
-                (easter - datetime.timedelta(days=1), "Μεγάλο Σάββατο"),
                 (easter, "Κυριακή του Πάσχα"),
                 (easter + datetime.timedelta(days=1), "Δευτέρα του Πάσχα"),
+                (easter - datetime.timedelta(days=2), "Μεγάλη Παρασκευή + 26/12"),
+                (easter - datetime.timedelta(days=1), "Μεγάλο Σάββατο + 24/12"),
             ]
             for d, name in e_dates:
                 if start_date <= d <= end_date:
                     target_dates[d] = name
+            
+            dec_26 = datetime.date(year, 12, 26)
+            dec_24 = datetime.date(year, 12, 24)
+            if start_date <= dec_26 <= end_date:
+                target_dates[dec_26] = "Μεγάλη Παρασκευή + 26/12"
+            if start_date <= dec_24 <= end_date:
+                target_dates[dec_24] = "Μεγάλο Σάββατο + 24/12"
         except Exception:
             pass
             
     return dict(sorted(target_dates.items()))
 
 # ----------------------------
-# 2-STEP FAIR SCHEDULING LOGIC
+# ROTATION / 7-YEAR CYCLE LOGIC
+# ----------------------------
+def get_rotated_major_package_owner(year, package_type):
+    """
+    Υπολογίζει ποιος γιατρός δικαιούται το συγκεκριμένο πακέτο το έτος `year` 
+    βάσει κύκλου 7 ετών (rotation).
+    packages: 0: Πρωτοχρονιά, 1: Πρωτοχρονιάς, 2: Χριστούγεννα, 
+              3: Κυρ. Πάσχα, 4: Δευτ. Πάσχα, 5: Μ.Παρασκευή+26/12, 6: Μ.Σάββατο+24/12
+    """
+    base_year = 2026  # Έτος βάσης αναφοράς
+    year_diff = year - base_year
+    package_indices = {
+        "Πρωτοχρονιά": 0,
+        "Παραμονή Πρωτοχρονιάς": 1,
+        "Χριστούγεννα": 2,
+        "Κυριακή του Πάσχα": 3,
+        "Δευτέρα του Πάσχα": 4,
+        "Μεγάλη Παρασκευή + 26/12": 5,
+        "Μεγάλο Σάββατο + 24/12": 6
+    }
+    p_idx = package_indices.get(package_type, 0)
+    # Κυκλική μετατόπιση ανά έτος
+    doc_idx = (p_idx + year_diff) % len(DOCTORS)
+    return DOCTORS[doc_idx]
+
+def is_valid_assignment(doctor, date, schedule, exclude_date=None, strict_monthly=True):
+    if _has_nearby_shift(doctor, date, schedule, max_gap=3):
+        return False
+    if _shifts_in_week(doctor, date, schedule, exclude_date=exclude_date) > 2:
+        return False
+        
+    if date.weekday() in (4, 5, 6):
+        doc_count = _specific_weekday_in_month(doctor, date, schedule, exclude_date=exclude_date)
+        year, month = date.year, date.month
+        weekday = date.weekday()
+        
+        other_counts = []
+        for doc in DOCTORS:
+            if doc != doctor:
+                c = sum(1 for d, doc_name in schedule.items() if d != exclude_date and doc_name == doc and d.year == year and d.month == month and d.weekday() == weekday)
+                other_counts.append(c)
+        min_others = min(other_counts) if other_counts else 0
+        if doc_count > min_others:
+            return False
+
+    if strict_monthly:
+        if _total_shifts_in_month(doctor, date, schedule, exclude_date=exclude_date) > 5:
+            return False
+    return True
+
+# ----------------------------
+# SCHEDULING LOGIC
 # ----------------------------
 def generate_full_schedule(start_date, end_date, initial_week, manual_assignments=None):
     manual_assignments = manual_assignments or {}
     schedule = {}
     
-    # ΒΗΜΑ 1: Τρέχει η κανονική ροτά σαν να μην υπάρχουν αργίες για να γεμίσουν οι θέσεις
     total_days = (end_date - start_date).days + 1
     for day_offset in range(total_days):
         current_date = start_date + datetime.timedelta(days=day_offset)
@@ -168,31 +221,71 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         schedule[current_date] = initial_week[doc_index]
 
     holiday_names = get_holidays_in_range(start_date, end_date)
+    major_holidays = get_major_holidays_in_range(start_date, end_date)
 
-    # Εφαρμογή χειροκίνητων αλλαγών
     for d, doc in manual_assignments.items():
         if d in schedule:
             schedule[d] = doc
 
-    # ΒΗΜΑ 2: Δίκαιη και ισότιμη κατανομή αργιών με βάση τις λιγότερες συνολικές αργίες
+    # ΒΗΜΑ 1.5: Δίκαιη κατανομή Παρασκευών, Σαββάτων και Κυριακών
+    weekend_dates = sorted([d for d in schedule.keys() if d.weekday() in (4, 5, 6) and d not in manual_assignments and d not in major_holidays])
+    for d in weekend_dates:
+        valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=True)]
+        if not valid_docs:
+            valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=False)]
+        
+        if valid_docs:
+            best_doc = min(valid_docs, key=lambda doc: (
+                _specific_weekday_in_month(doc, d, schedule, exclude_date=d),
+                _total_shifts_in_month(doc, d, schedule, exclude_date=d)
+            ))
+            schedule[d] = best_doc
+
+    # ΒΗΜΑ 2: Κατανομή μεγάλων αργιών με βάση τον ετήσιο κύκλο rotation (7ετία)
     holiday_dates = sorted([d for d in holiday_names.keys() if start_date <= d <= end_date])
 
     for d in holiday_dates:
         if d in manual_assignments:
             continue
         
-        # Αναζήτηση γιατρών που πληρούν τους κανόνες (κενό +/-3, έως 2 εφημερίες την εβδομάδα, έως 5 τον μήνα)
         valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=True)]
         if not valid_docs:
             valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=False)]
         
         if valid_docs:
-            # ΑΠΟΛΥΤΑ ΙΣΟΤΙΜΗ ΚΑΤΑΝΟΜΗ: Επιλογή αυτού με τις λιγότερες αργίες
-            best_doc = min(valid_docs, key=lambda doc: (
-                _count_doctor_holidays(doc, schedule, holiday_names, exclude_date=d),
-                _total_shifts_in_month(doc, d, schedule, exclude_date=d)
-            ))
+            # Αν είναι μεγάλη αργία, βρες ποιος έχει σειρά φέτος βάσει του rotation
+            pkg_name = major_holidays.get(d)
+            if pkg_name:
+                target_doc = get_rotated_major_package_owner(d.year, pkg_name)
+                if target_doc in valid_docs:
+                    best_doc = target_doc
+                else:
+                    best_doc = min(valid_docs, key=lambda doc: _total_shifts_in_month(doc, d, schedule, exclude_date=d))
+            else:
+                best_doc = min(valid_docs, key=lambda doc: (
+                    _count_doctor_holidays(doc, schedule, holiday_names, exclude_date=d),
+                    _total_shifts_in_month(doc, d, schedule, exclude_date=d)
+                ))
+            
             schedule[d] = best_doc
+            
+            # ΕΦΑΡΜΟΓΗ ΠΑΚΕΤΟΥ (Συγχρονισμός ζευγαριών)
+            year = d.year
+            try:
+                easter = orthodox_easter(year)
+                good_fri = easter - datetime.timedelta(days=2)
+                holy_sat = easter - datetime.timedelta(days=1)
+                dec_26 = datetime.date(year, 12, 26)
+                dec_24 = datetime.date(year, 12, 24)
+                
+                if (d == good_fri or d == dec_26):
+                    if good_fri in schedule: schedule[good_fri] = best_doc
+                    if dec_26 in schedule: schedule[dec_26] = best_doc
+                elif (d == holy_sat or d == dec_24):
+                    if holy_sat in schedule: schedule[holy_sat] = best_doc
+                    if dec_24 in schedule: schedule[dec_24] = best_doc
+            except Exception:
+                pass
 
     # Τελικός έλεγχος ισορροπίας μηνιαίων ορίων (4-5 εφημερίες)
     for _ in range(3):
