@@ -196,11 +196,10 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             ))
             schedule[d] = best_doc
 
-    # Παρακολούθηση ποιος γιατρός έκανε Χριστούγεννα (24, 25, 26, 31 Δεκεμβρίου) για τον κανόνα της 1/1
     xmas_doctors_by_year = {y: set() for y in range(start_date.year - 1, end_date.year + 2)}
     doctor_yearly_major_count = {doc: {y: 0 for y in range(start_date.year, end_date.year + 2)} for doc in DOCTORS}
 
-    # ΒΗΜΑ 2: Κατανομή των 7 Πακέτων Μεγάλων Αργιών
+    # ΒΗΜΑ 2: Κατανομή των Πακέτων Μεγάλων Αργιών
     for block in major_blocks:
         block_dates = block["dates"]
         block_year = block["year"]
@@ -272,11 +271,10 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
     return schedule, holiday_names
 
 # ----------------------------
-# BALANCE & REPORTING
+# BALANCE & REPORTING (ΔΙΟΡΘΩΜΕΝΟ)
 # ----------------------------
 def compute_balance(schedule, holiday_dates=None, major_dates=None):
     holiday_dates = holiday_dates or set()
-    major_dates = major_dates or set()
     
     counts = {doc: {wd: 0 for wd in WEEKDAY_LABELS} for doc in DOCTORS}
     holiday_counts = {doc: 0 for doc in DOCTORS}
@@ -286,6 +284,8 @@ def compute_balance(schedule, holiday_dates=None, major_dates=None):
             continue
         wd = date.weekday()
         counts[doc][WEEKDAY_LABELS[wd]] += 1
+        
+        # Ελέγχουμε σωστά αν η ημερομηνία είναι αργία (ανεξάρτητα από ημέρα εβδομάδας)
         if date in holiday_dates:
             holiday_counts[doc] += 1
             
@@ -294,7 +294,7 @@ def compute_balance(schedule, holiday_dates=None, major_dates=None):
     df["Weekdays"] = df["Mon"] + df["Tue"] + df["Wed"] + df["Thu"]
     df["Αργίες"] = df["Doctor"].map(holiday_counts)
     
-    # Συνολικές βάρδιες = Καθημερινές + Παρασκευές + Σάββατα + Κυριακές (οι αργίες περιλαμβάνονται ήδη στις ημερομηνίες τους)
+    # Συνολικές βάρδιες = Καθημερινές + Παρασκευές + Σάββατα + Κυριακές
     df["Total"] = df["Weekdays"] + df["Fri"] + df["Sat"] + df["Sun"]
     return df[["Doctor", "Weekdays", "Fri", "Sat", "Sun", "Αργίες", "Total"]]
 
