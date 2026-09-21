@@ -85,6 +85,16 @@ def _count_doctor_holidays(doctor, schedule, holiday_names, exclude_date=None):
             count += 1
     return count
 
+def _count_major_holidays_in_year(doctor, date, schedule, major_holidays, exclude_date=None):
+    year = date.year
+    count = 0
+    for d, doc in schedule.items():
+        if d == exclude_date:
+            continue
+        if doc == doctor and d.year == year and d in major_holidays:
+            count += 1
+    return count
+
 def orthodox_easter(year):
     a = year % 4
     b = year % 7
@@ -233,7 +243,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             ))
             schedule[d] = best_doc
 
-    # ΒΗΜΑ 2: Αυστηρή κατανομή μεγάλων αργιών με βάση τον κύκλο rotation (7ετία)
+    # ΒΗΜΑ 2: Αυστηρή κατανομή μεγάλων αργιών με rotation ΚΑΙ αυστηρό όριο 1 ανά έτος
     holiday_dates = sorted([d for d in holiday_names.keys() if start_date <= d <= end_date])
 
     for d in holiday_dates:
@@ -243,16 +253,26 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         pkg_name = major_holidays.get(d)
         if pkg_name:
             target_doc = get_rotated_major_package_owner(d.year, pkg_name)
-            if is_valid_assignment(target_doc, d, schedule, exclude_date=d, strict_monthly=False):
+            
+            # Ελέγχουμε αν ο target_doc έχει ήδη πάρει άλλη μεγάλη αργία φέτος
+            already_has_major = _count_major_holidays_in_year(target_doc, d, schedule, major_holidays, exclude_date=d) > 0
+            
+            if not already_has_major and is_valid_assignment(target_doc, d, schedule, exclude_date=d, strict_monthly=False):
                 best_doc = target_doc
             else:
-                valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=False)]
+                # Βρίσκουμε γιατρούς που ΔΕΝ έχουν πάρει άλλη μεγάλη αργία φέτος
+                valid_docs = [
+                    doc for doc in DOCTORS 
+                    if _count_major_holidays_in_year(doc, d, schedule, major_holidays, exclude_date=d) == 0 
+                    and is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=False)
+                ]
+                
                 if target_doc in valid_docs:
                     best_doc = target_doc
                 elif valid_docs:
                     best_doc = min(valid_docs, key=lambda doc: _total_shifts_in_month(doc, d, schedule, exclude_date=d))
                 else:
-                    best_doc = target_doc
+                    best_doc = min(DOCTORS, key=lambda doc: _total_shifts_in_month(doc, d, schedule, exclude_date=d))
         else:
             valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=True)]
             if not valid_docs:
