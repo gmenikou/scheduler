@@ -233,50 +233,58 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             ))
             schedule[d] = best_doc
 
-    # ΒΗΜΑ 2: Κατανομή μεγάλων αργιών με βάση τον ετήσιο κύκλο rotation (7ετία)
+    # ΒΗΜΑ 2: Αυστηρή κατανομή μεγάλων αργιών με βάση τον κύκλο rotation (7ετία)
     holiday_dates = sorted([d for d in holiday_names.keys() if start_date <= d <= end_date])
 
     for d in holiday_dates:
         if d in manual_assignments:
             continue
         
-        valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=True)]
-        if not valid_docs:
-            valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=False)]
-        
-        if valid_docs:
-            pkg_name = major_holidays.get(d)
-            if pkg_name:
-                target_doc = get_rotated_major_package_owner(d.year, pkg_name)
+        pkg_name = major_holidays.get(d)
+        if pkg_name:
+            target_doc = get_rotated_major_package_owner(d.year, pkg_name)
+            if is_valid_assignment(target_doc, d, schedule, exclude_date=d, strict_monthly=False):
+                best_doc = target_doc
+            else:
+                valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=False)]
                 if target_doc in valid_docs:
                     best_doc = target_doc
-                else:
+                elif valid_docs:
                     best_doc = min(valid_docs, key=lambda doc: _total_shifts_in_month(doc, d, schedule, exclude_date=d))
-            else:
+                else:
+                    best_doc = target_doc
+        else:
+            valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=True)]
+            if not valid_docs:
+                valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=False)]
+            
+            if valid_docs:
                 best_doc = min(valid_docs, key=lambda doc: (
                     _count_doctor_holidays(doc, schedule, holiday_names, exclude_date=d),
                     _total_shifts_in_month(doc, d, schedule, exclude_date=d)
                 ))
+            else:
+                best_doc = DOCTORS[0]
             
-            schedule[d] = best_doc
+        schedule[d] = best_doc
+        
+        # ΕΦΑΡΜΟΓΗ ΠΑΚΕΤΟΥ (Συγχρονισμός ζευγαριών)
+        year = d.year
+        try:
+            easter = orthodox_easter(year)
+            good_fri = easter - datetime.timedelta(days=2)
+            holy_sat = easter - datetime.timedelta(days=1)
+            dec_26 = datetime.date(year, 12, 26)
+            dec_24 = datetime.date(year, 12, 24)
             
-            # ΕΦΑΡΜΟΓΗ ΠΑΚΕΤΟΥ (Συγχρονισμός ζευγαριών)
-            year = d.year
-            try:
-                easter = orthodox_easter(year)
-                good_fri = easter - datetime.timedelta(days=2)
-                holy_sat = easter - datetime.timedelta(days=1)
-                dec_26 = datetime.date(year, 12, 26)
-                dec_24 = datetime.date(year, 12, 24)
-                
-                if (d == good_fri or d == dec_26):
-                    if good_fri in schedule: schedule[good_fri] = best_doc
-                    if dec_26 in schedule: schedule[dec_26] = best_doc
-                elif (d == holy_sat or d == dec_24):
-                    if holy_sat in schedule: schedule[holy_sat] = best_doc
-                    if dec_24 in schedule: schedule[dec_24] = best_doc
-            except Exception:
-                pass
+            if (d == good_fri or d == dec_26):
+                if good_fri in schedule: schedule[good_fri] = best_doc
+                if dec_26 in schedule: schedule[dec_26] = best_doc
+            elif (d == holy_sat or d == dec_24):
+                if holy_sat in schedule: schedule[holy_sat] = best_doc
+                if dec_24 in schedule: schedule[dec_24] = best_doc
+        except Exception:
+            pass
 
     # ΒΗΜΑ 3: Γρήγορος έλεγχος ισορροπίας
     shift_counts = {doc: _total_shifts_in_month(doc, start_date, schedule) for doc in DOCTORS}
