@@ -271,33 +271,8 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
     return schedule, holiday_names
 
 # ----------------------------
-# BALANCE & REPORTING (ΔΙΟΡΘΩΜΕΝΟ)
+# BALANCE & REPORTING (ΑΚΡΙΒΗΣ ΥΠΟΛΟΓΙΣΜΟΣ)
 # ----------------------------
-def compute_balance(schedule, holiday_dates=None, major_dates=None):
-    holiday_dates = holiday_dates or set()
-    
-    counts = {doc: {wd: 0 for wd in WEEKDAY_LABELS} for doc in DOCTORS}
-    holiday_counts = {doc: 0 for doc in DOCTORS}
-    
-    for date, doc in schedule.items():
-        if doc not in counts:
-            continue
-        wd = date.weekday()
-        counts[doc][WEEKDAY_LABELS[wd]] += 1
-        
-        # Ελέγχουμε σωστά αν η ημερομηνία είναι αργία (ανεξάρτητα από ημέρα εβδομάδας)
-        if date in holiday_dates:
-            holiday_counts[doc] += 1
-            
-    df = pd.DataFrame.from_dict(counts, orient="index").reset_index()
-    df.rename(columns={"index": "Doctor"}, inplace=True)
-    df["Weekdays"] = df["Mon"] + df["Tue"] + df["Wed"] + df["Thu"]
-    df["Αργίες"] = df["Doctor"].map(holiday_counts)
-    
-    # Συνολικές βάρδιες = Καθημερινές + Παρασκευές + Σάββατα + Κυριακές
-    df["Total"] = df["Weekdays"] + df["Fri"] + df["Sat"] + df["Sun"]
-    return df[["Doctor", "Weekdays", "Fri", "Sat", "Sun", "Αργίες", "Total"]]
-
 def compute_major_holidays_summary(schedule, start_date, end_date):
     blocks = get_major_holiday_blocks_in_range(start_date, end_date)
     summary = {doc: {"Count": 0, "Details": []} for doc in DOCTORS}
@@ -334,6 +309,33 @@ def compute_regular_holidays_summary(schedule, regular_holidays):
             "Ημερομηνίες & Εορτές": ", ".join(summary[doc]["Details"]) if summary[doc]["Details"] else "Καμία"
         })
     return pd.DataFrame(data)
+
+def compute_balance(schedule, start_date, end_date, holiday_names):
+    counts = {doc: {wd: 0 for wd in WEEKDAY_LABELS} for doc in DOCTORS}
+    
+    for date, doc in schedule.items():
+        if doc not in counts:
+            continue
+        wd = date.weekday()
+        counts[doc][WEEKDAY_LABELS[wd]] += 1
+            
+    df = pd.DataFrame.from_dict(counts, orient="index").reset_index()
+    df.rename(columns={"index": "Doctor"}, inplace=True)
+    df["Weekdays"] = df["Mon"] + df["Tue"] + df["Wed"] + df["Thu"]
+    
+    # Υπολογισμός συνολικών αργιών απευθείας από τα αθροίσματα των 2 πινάκων αργιών για απόλυτη συμφωνία
+    major_df = compute_major_holidays_summary(schedule, start_date, end_date)
+    major_dict = dict(zip(major_df["Ακτινολόγος"], major_df["Σύνολο Πακέτων"]))
+    
+    major_blocks = get_major_holiday_blocks_in_range(start_date, end_date)
+    all_major_dates = {d for block in major_blocks for d in block["dates"]}
+    regular_hols_dict = {d: n for d, n in holiday_names.items() if d not in all_major_dates}
+    regular_df = compute_regular_holidays_summary(schedule, regular_hols_dict)
+    regular_dict = dict(zip(regular_df["Ακτινολόγος"], regular_df["Σύνολο"]))
+    
+    df["Αργίες"] = df["Doctor"].apply(lambda doc: major_dict.get(doc, 0) + regular_dict.get(doc, 0))
+    df["Total"] = df["Weekdays"] + df["Fri"] + df["Sat"] + df["Sun"]
+    return df[["Doctor", "Weekdays", "Fri", "Sat", "Sun", "Αργίες", "Total"]]
 
 # ----------------------------
 # PDF HELPERS
@@ -422,7 +424,7 @@ with left_col:
         if st.button("✅ Επικύρωση"):
             st.session_state.manual_assignments[manual_date] = manual_doctor
             st.session_state.schedule[manual_date] = manual_doctor
-            st.session_state.balance = compute_balance(st.session_state.schedule, holiday_dates=set(st.session_state.holiday_names.keys()))
+            st.session_state.balance = compute_balance(st.session_state.schedule, st.session_state.start_date, max(st.session_state.schedule.keys()), st.session_state.holiday_names)
             st.success(f"Ο/Η {manual_doctor} ανατέθηκε στις {manual_date.strftime('%d/%m/%Y')}")
             st.rerun()
 
@@ -478,7 +480,7 @@ with right_col:
             )
             st.session_state.schedule = sch
             st.session_state.holiday_names = hols
-            st.session_state.balance = compute_balance(sch, holiday_dates=set(hols.keys()))
+            st.session_state.balance = compute_balance(sch, start_date, end_date, hols)
             st.rerun()
 
     if st.session_state.schedule:
