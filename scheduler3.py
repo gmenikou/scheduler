@@ -56,23 +56,14 @@ def _shifts_in_week(doctor, date, schedule, exclude_date=None):
         if doc == doctor and d != exclude_date and _week_monday(d) == wk
     )
 
-def _saturdays_in_month(doctor, date, schedule, exclude_date=None):
+def _weekend_shifts_in_month(doctor, date, schedule, exclude_date=None):
+    """Μετράει συνολικά τα Σαββατοκύριακα (Σάββατα + Κυριακές) που έχει κάνει ο γιατρός στον μήνα."""
     year, month = date.year, date.month
     count = 0
     for d, doc in schedule.items():
         if d == exclude_date:
             continue
-        if doc == doctor and d.year == year and d.month == month and d.weekday() == 5:
-            count += 1
-    return count
-
-def _sundays_in_month(doctor, date, schedule, exclude_date=None):
-    year, month = date.year, date.month
-    count = 0
-    for d, doc in schedule.items():
-        if d == exclude_date:
-            continue
-        if doc == doctor and d.year == year and d.month == month and d.weekday() == 6:
+        if doc == doctor and d.year == year and d.month == month and d.weekday() in (5, 6):
             count += 1
     return count
 
@@ -99,12 +90,23 @@ def is_valid_assignment(doctor, date, schedule, holiday_names, exclude_date=None
     if _shifts_in_week(doctor, date, schedule, exclude_date=exclude_date) >= 1:
         return False
             
-    # 4. Απαραβάτος Κανόνας Σαββατοκύριακων: Αυστηρά έως 1 Σάββατο και 1 Κυριακή ανά μήνα (ΧΩΡΙΣ ΧΑΛΑΡΩΣΗ)
-    if date.weekday() == 5:  # Σάββατο
-        if _saturdays_in_month(doctor, date, schedule, exclude_date=exclude_date) >= 1:
-            return False
-    elif date.weekday() == 6:  # Κυριακή
-        if _sundays_in_month(doctor, date, schedule, exclude_date=exclude_date) >= 1:
+    # 4. Δίκαιος κανόνας Σαββατοκύριακων: Πρώτα παίρνουν ΟΛΟΙ από 1 (Σάββατο ή Κυριακή) 
+    # και μόνο αν συμπληρωθούν όλοι, επιτρέπεται να πάρουν δεύτερο.
+    is_weekend = date.weekday() in (5, 6)
+    if is_weekend:
+        doc_weekend_count = _weekend_shifts_in_month(doctor, date, schedule, exclude_date=exclude_date)
+        
+        # Βρες πόσα Σαββατοκύριακα έχουν κάνει οι ΥΠΟΛΟΙΠΟΙ γιατροί στον ίδιο μήνα
+        year, month = date.year, date.month
+        other_counts = []
+        for doc in DOCTORS:
+            if doc != doctor:
+                other_counts.append(_weekend_shifts_in_month(doc, date, schedule, exclude_date=exclude_date))
+        
+        min_others = min(other_counts) if other_counts else 0
+        
+        # Αν ο γιατρός έχει ήδη περισσότερα Σαββατοκύριακα από τους υπόλοιπους, ΔΕΝ μπορεί να πάρει άλλο
+        if doc_weekend_count > min_others:
             return False
                 
     return True
@@ -195,16 +197,12 @@ def generate_full_schedule(start_date, end_date, manual_assignments=None):
             
         is_holiday = current_date in holiday_names
         
-        # Απολύτως αυστηρός έλεγχος με βάση τους κανόνες
+        # Έλεγχος εγκυρότητας με τους νέους δίκαιους κανόνες
         valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, current_date, schedule, holiday_names)]
         
-        # Αν για κάποιο λόγο δεν βρεθεί κανείς, διορθώθηκε το current_date
+        # Αν υπάρξει έλλειψη, χαλαρώνουμε μόνο το ελάχιστο κενό ημερών, ποτέ όμως τα Σαββατοκύριακα άδικα
         if not valid_docs:
             valid_docs = [doc for doc in DOCTORS if not _worked_same_weekday_in_month(doc, current_date, schedule)]
-            if current_date.weekday() == 6:
-                valid_docs = [doc for doc in valid_docs if _sundays_in_month(doc, current_date, schedule) == 0]
-            elif current_date.weekday() == 5:
-                valid_docs = [doc for doc in valid_docs if _saturdays_in_month(doc, current_date, schedule) == 0]
             
         if not valid_docs:
             valid_docs = DOCTORS
