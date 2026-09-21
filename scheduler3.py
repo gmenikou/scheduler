@@ -214,25 +214,26 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             ))
             schedule[d] = best_doc
 
-    # ΒΗΜΑ 2: Δίκαιη, ισότιμη κατανομή μεγάλων αργιών σε όλο το εύρος (Global Fair Round-Robin)
+    # ΒΗΜΑ 2: Δίκαιη, ισότιμη κατανομή μεγάλων αργιών (Strict Dynamic Round-Robin)
     holiday_dates = sorted([d for d in holiday_names.keys() if start_date <= d <= end_date])
     major_dates_in_range = [d for d in holiday_dates if d in major_holidays]
 
-    # Καταμετρούμε πόσες μεγάλες αργίες έχει πάρει ήδη ο καθένας στο τρέχον schedule (π.χ. από manual)
-    major_counts = {doc: sum(1 for d, doc_name in schedule.items() if d in major_holidays and doc_name == doc) for doc in DOCTORS}
+    # Ομαδοποίηση ημερομηνιών ανά πακέτο (π.χ. τα ζευγάρια 24/12 & Μεγάλο Σάββατο κ.λπ.)
+    # Για να διασφαλίσουμε ότι ο καθένας παίρνει ισότιμα πακέτα στο επιλεγμένο εύρος.
+    major_counts = {doc: 0 for doc in DOCTORS}
 
     for d in major_dates_in_range:
         if d in manual_assignments:
             continue
         
-        # Επιλέγουμε γιατρούς που περνούν τους κανόνες (με max_gap=2 για τις γιορτές)
+        # Βρίσκουμε ποιοι γιατροί είναι διαθέσιμοι με βάση τους κανόνες (max_gap=2 για γιορτές)
         valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=False, max_gap=2)]
         
         if valid_docs:
-            # Δίνουμε προτεραιότητα σε αυτόν που έχει τις ΛΙΓΟΤΕΡΕΣ μεγάλες αργίες συνολικά στο επιλεγμένο εύρος
+            # Επιλέγουμε αυστηρά αυτόν με τις λιγότερες μεγάλες αργίες στο επιλεγμένο εύρος
             best_doc = min(valid_docs, key=lambda doc: (major_counts[doc], _total_shifts_in_month(doc, d, schedule, exclude_date=d)))
         else:
-            # Αν όλοι απορριφθούν από τους αυστηρούς κανόνες, παίρνουμε τον λιγότερο επιβαρρυμένο συνολικά σε μεγάλες αργίες
+            # Σε περίπτωση που οι αυστηροί κανόνες αποκλείσουν τους πάντες, διαλέγουμε τον λιγότερο επιβαρρυμένο σε μεγάλες αργίες
             best_doc = min(DOCTORS, key=lambda doc: major_counts[doc])
             
         schedule[d] = best_doc
