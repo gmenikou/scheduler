@@ -65,32 +65,47 @@ def _total_shifts_in_month(doctor, date, schedule, exclude_date=None):
             total += 1
     return total
 
-def _count_doctor_holidays(doctor, schedule, holiday_names, exclude_date=None):
+def _saturdays_in_month(doctor, date, schedule, exclude_date=None):
+    year, month = date.year, date.month
     count = 0
     for d, doc in schedule.items():
         if d == exclude_date:
             continue
-        if doc == doctor and d in holiday_names:
+        if doc == doctor and d.year == year and d.month == month and d.weekday() == 5:
             count += 1
     return count
 
-def _count_doctor_saturdays(doctor, schedule, exclude_date=None):
+def _sundays_in_month(doctor, date, schedule, exclude_date=None):
+    year, month = date.year, date.month
     count = 0
     for d, doc in schedule.items():
         if d == exclude_date:
             continue
-        if doc == doctor and d.weekday() == 5:  # Σάββατο
+        if doc == doctor and d.year == year and d.month == month and d.weekday() == 6:
             count += 1
     return count
 
-def is_valid_assignment(doctor, date, schedule, exclude_date=None, strict_monthly=True):
+def is_valid_assignment(doctor, date, schedule, holiday_names, exclude_date=None, strict_monthly=True, ignore_weekend_caps=False):
+    # Κανόνας: Ελάχιστο κενό 3 ημερών
     if _has_nearby_shift(doctor, date, schedule, max_gap=3):
         return False
-    if _shifts_in_week(doctor, date, schedule, exclude_date=exclude_date) > 2:
+    # Κανόνας: Έως 2 εφημερίδες την εβδομάδα
+    if _shifts_in_week(doctor, date, schedule, exclude_date=exclude_date) >= 2:
         return False
+    # Κανόνας: Έως 5 εφημερίδες τον μήνα
     if strict_monthly:
-        if _total_shifts_in_month(doctor, date, schedule, exclude_date=exclude_date) > 5:
+        if _total_shifts_in_month(doctor, date, schedule, exclude_date=exclude_date) >= 5:
             return False
+            
+    # ΚΑΝΟΝΑΣ ΣΑΒΒΑΤΟΚΥΡΙΑΚΩΝ: Έως 1 Σάββατο και 1 Κυριακή ανά μήνα (ανεξάρτητα από τις αργίες καθημερινών)
+    if not ignore_weekend_caps:
+        if date.weekday() == 5:  # Σάββατο
+            if _saturdays_in_month(doctor, date, schedule, exclude_date=exclude_date) >= 1:
+                return False
+        elif date.weekday() == 6:  # Κυριακή
+            if _sundays_in_month(doctor, date, schedule, exclude_date=exclude_date) >= 1:
+                return False
+                
     return True
 
 # ----------------------------
@@ -161,87 +176,54 @@ def get_major_holidays_in_range(start_date, end_date):
     return dict(sorted(target_dates.items()))
 
 # ----------------------------
-# 2-STEP FAIR SCHEDULING LOGIC
+# SEQUENTIAL FAIR SCHEDULING LOGIC
 # ----------------------------
-def generate_full_schedule(start_date, end_date, initial_week, manual_assignments=None):
+def generate_full_schedule(start_date, end_date, manual_assignments=None):
     manual_assignments = manual_assignments or {}
     schedule = {}
+    holiday_names = get_holidays_in_range(start_date, end_date)
     
-    # ΒΗΜΑ 1: Τρέχει η κανονική ροτά σαν να μην υπάρχουν αργίες για να γεμίσουν οι θέσεις
     total_days = (end_date - start_date).days + 1
+    
     for day_offset in range(total_days):
         current_date = start_date + datetime.timedelta(days=day_offset)
-        week_num = day_offset // 7
-        day_of_week = day_offset % 7
-        doc_index = (day_of_week + (week_num * 2)) % len(initial_week)
-        schedule[current_date] = initial_week[doc_index]
-
-    holiday_names = get_holidays_in_range(start_date, end_date)
-
-    # Εφαρμογή χειροκίνητων αλλαγών
-    for d, doc in manual_assignments.items():
-        if d in schedule:
-            schedule[d] = doc
-
-    # ΕΙΔΙΚΟΣ ΕΛΕΓΧΟΣ: Ισότιμη κατανομή Σαββάτων από τη βασική ροτά
-    saturdays = sorted([d for d in schedule.keys() if d.weekday() == 5 and start_date <= d <= end_date])
-    for _ in range(2): # Επαναληπτικές διορθώσεις για εξισορρόπηση
-        for sat in saturdays:
-            if sat in manual_assignments:
-                continue
-            current_doc = schedule[sat]
-            # Αν ο γιατρός έχει ήδη περισσότερα Σάββατα από άλλους, προσπαθούμε να το δώσουμε σε κάποιον με λιγότερα
-            doc_sats = _count_doctor_saturdays(current_doc, schedule, exclude_date=sat)
-            min_sats = min(_count_doctor_saturdays(doc, schedule, exclude_date=sat) for doc in DOCTORS)
-            
-            if doc_sats > min_sats + 1:
-                valid_docs = [doc for doc in DOCTORS if _count_doctor_saturdays(doc, schedule, exclude_date=sat) == min_sats and is_valid_assignment(doc, sat, schedule, exclude_date=sat, strict_monthly=False)]
-                if valid_docs:
-                    schedule[sat] = valid_docs[0]
-
-    # ΒΗΜΑ 2: Δίκαιη και ισότιμη κατανομή αργιών με βάση τις λιγότερες συνολικές αργίες και Σάββατα
-    holiday_dates = sorted([d for d in holiday_names.keys() if start_date <= d <= end_date])
-
-    for d in holiday_dates:
-        if d in manual_assignments:
+        
+        if current_date in manual_assignments:
+            schedule[current_date] = manual_assignments[current_date]
             continue
-        
-        valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=True)]
-        if not valid_docs:
-            valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=False)]
-        
-        if valid_docs:
-            # ΑΠΟΛΥΤΑ ΙΣΟΤΙΜΗ ΚΑΤΑΝΟΜΗ ΑΡΓΙΩΝ & ΣΑΒΒΑΤΩΝ
-            best_doc = min(valid_docs, key=lambda doc: (
-                _count_doctor_holidays(doc, schedule, holiday_names, exclude_date=d),
-                _count_doctor_saturdays(doc, schedule, exclude_date=d),
-                _total_shifts_in_month(doc, d, schedule, exclude_date=d)
-            ))
-            schedule[d] = best_doc
-
-    # Τελικός έλεγχος ισορροπίας μηνιαίων ορίων (4-5 εφημερίες)
-    for _ in range(3):
-        shift_counts = {doc: _total_shifts_in_month(doc, start_date, schedule) for doc in DOCTORS}
-        overloaded = [doc for doc, cnt in shift_counts.items() if cnt > 5]
-        underloaded = [doc for doc, cnt in shift_counts.items() if cnt < 4]
-        
-        if not overloaded and not underloaded:
-            break
             
-        for ov in overloaded:
-            for under in underloaded:
-                ov_dates = [d for d, doc in schedule.items() if doc == ov and d.weekday() not in (5, 6) and d not in holiday_names and d not in manual_assignments]
-                for od in ov_dates:
-                    if is_valid_assignment(under, od, schedule, exclude_date=od, strict_monthly=False):
-                        schedule[od] = under
-                        break
-                break
-
-    for d, doc in manual_assignments.items():
-        if d in schedule:
-            schedule[d] = doc
+        is_weekend = current_date.weekday() in (5, 6)
+        is_holiday = current_date in holiday_names
+        
+        # 1. Δοκιμή με κανονικά όρια (έως 1 Σάββατο & 1 Κυριακή ανά μήνα)
+        valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, current_date, schedule, holiday_names, strict_monthly=True, ignore_weekend_caps=False)]
+        
+        # 2. Αν δεν βρίσκουμε, χαλαρώνουμε τα όρια Σαββατοκύριακου (π.χ. σε μήνες με 5 Σ/Κ)
+        if not valid_docs:
+            valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, current_date, schedule, holiday_names, strict_monthly=True, ignore_weekend_caps=True)]
+            
+        # 3. Αν εξακολουθεί να μην υπάρχει, χαλαρώνουμε και το μηνιαίο όριο
+        if not valid_docs:
+            valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, current_date, schedule, holiday_names, strict_monthly=False, ignore_weekend_caps=True)]
+            
+        if not valid_docs:
+            valid_docs = DOCTORS
+            
+        # Επιλογή με κριτήριο ισότητας
+        best_doc = min(valid_docs, key=lambda doc: (
+            _saturdays_in_month(doc, current_date, schedule) if current_date.weekday() == 5 else 0,
+            _sundays_in_month(doc, current_date, schedule) if current_date.weekday() == 6 else 0,
+            _count_doctor_holidays(doc, schedule, holiday_names) if is_holiday else 0,
+            _total_shifts_in_month(doc, current_date, schedule),
+            _shifts_in_week(doc, current_date, schedule)
+        ))
+        
+        schedule[current_date] = best_doc
 
     return schedule, holiday_names
+
+def _count_doctor_holidays(doctor, schedule, holiday_names):
+    return sum(1 for d, doc_name in schedule.items() if doc_name == doctor and d in holiday_names)
 
 # ----------------------------
 # BALANCE & REPORTING
@@ -296,9 +278,6 @@ def compute_regular_holidays_summary(schedule, regular_holidays):
         })
     return pd.DataFrame(data)
 
-# ----------------------------
-# PDF HELPERS
-# ----------------------------
 def create_balance_pdf(df, start_date, end_date, filename="balance_summary.pdf"):
     pdf = FPDF(orientation="L", unit="mm", format="A4")
     pdf.add_page()
@@ -368,8 +347,6 @@ if "holiday_names" not in st.session_state:
     st.session_state.holiday_names = {}
 if "balance" not in st.session_state:
     st.session_state.balance = None
-if "initial_week" not in st.session_state:
-    st.session_state.initial_week = None
 if "start_date" not in st.session_state:
     st.session_state.start_date = datetime.date.today()
 
@@ -409,37 +386,23 @@ with left_col:
                 st.download_button("⬇️ Κατέβασε κατάσταση σε PDF", f, file_name=pdf_file)
 
 with right_col:
-    selected_date = st.date_input("Ημερομηνία έναρξης:", datetime.date.today())
-    week_dates = [selected_date - datetime.timedelta(days=selected_date.weekday()) + datetime.timedelta(days=i) for i in range(7)]
+    c1, c2 = st.columns(2)
+    with c1:
+        start_date = st.date_input("Start date", datetime.date.today())
+    with c2:
+        default_end = start_date + datetime.timedelta(days=30)
+        end_date = st.date_input("End date", default_end)
 
-    initial_week = {}
-    cols = st.columns(7)
-    for i, d in enumerate(week_dates):
-        with cols[i]:
-            initial_week[d] = st.selectbox(d.strftime("%a %d/%m"), DOCTORS, index=i % 7, key=f"doc_{d}")
-
-    if st.button("💾 Αποθήκευση Αρχικής Ρότας"):
-        st.session_state.initial_week = [initial_week[d] for d in sorted(initial_week)]
-        st.session_state.start_date = week_dates[0]
+    if st.button("🗓️ Δημιουργία Προγράμματος"):
+        st.session_state.start_date = start_date
+        sch, hols = generate_full_schedule(
+            start_date, end_date, 
+            manual_assignments=st.session_state.manual_assignments
+        )
+        st.session_state.schedule = sch
+        st.session_state.holiday_names = hols
+        st.session_state.balance = compute_balance(sch, holiday_dates=set(hols.keys()))
         st.rerun()
-
-    if st.session_state.initial_week:
-        c1, c2 = st.columns(2)
-        with c1:
-            start_date = st.date_input("Start date", st.session_state.start_date)
-        with c2:
-            default_end = start_date + datetime.timedelta(days=30)
-            end_date = st.date_input("End date", default_end)
-
-        if st.button("🗓️ Δημιουργία Προγράμματος"):
-            sch, hols = generate_full_schedule(
-                start_date, end_date, st.session_state.initial_week,
-                manual_assignments=st.session_state.manual_assignments
-            )
-            st.session_state.schedule = sch
-            st.session_state.holiday_names = hols
-            st.session_state.balance = compute_balance(sch, holiday_dates=set(hols.keys()))
-            st.rerun()
 
     if st.session_state.schedule:
         display_calendar(st.session_state.schedule, st.session_state.holiday_names)
