@@ -115,11 +115,9 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
     holiday_names = get_holidays_in_range(start_date, end_date)
     holiday_dates = set(holiday_names.keys())
     major_blocks = get_major_holiday_blocks_in_range(start_date, end_date)
-    all_major_dates = {d for block in major_blocks for d in block["dates"]}
 
     model = cp_model.CpModel()
     
-    # x[d, doc] = 1 αν ο/η doc εφημερεύει τη μέρα d
     x = {}
     for d in dates:
         for doc in DOCTORS:
@@ -129,18 +127,18 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
     for d in dates:
         model.Add(sum(x[(d, doc)] for doc in DOCTORS) == 1)
 
-    # 2. Χειροκίνητες αναθέσεις (Manual overrides)
+    # 2. Χειροκίνητες αναθέσεις
     for d, doc in manual_assignments.items():
         if start_date <= d <= end_date:
             model.Add(x[(d, doc)] == 1)
 
-    # 3. Αποφυγή κοντινών εφημεριών (min gap >= 2 μέρες μεταξύ ιδίου γιατρού)
+    # 3. Αποφυγή κοντινών εφημεριών (min gap >= 2 μέρες)
     for doc in DOCTORS:
         for i in range(len(dates)):
-            for j in range(i + 1, min(i + 3, len(dates))):  # Απόσταση μικρότερη από 3 ημέρες
+            for j in range(i + 1, min(i + 3, len(dates))):
                 model.Add(x[(dates[i], doc)] + x[(dates[j], doc)] <= 1)
 
-    # 4. Αυστηρός κανόνας: Μέγιστο 1 Σαββατοκύριακο ή Αργία ανά μήνα ανά γιατρό
+    # 4. Αυστηρός κανόνας: Μέγιστο 1 Σαββατοκύριακο (μη αργία) ή Αργία ανά μήνα ανά γιατρό
     months = sorted(list(set((d.year, d.month) for d in dates)))
     for year, month in months:
         month_special_dates = [
@@ -149,47 +147,45 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         ]
         if month_special_dates:
             for doc in DOCTORS:
-                # Το άθροισμα των εφημεριών σε Σ/Κ ή αργίες αυτού του μήνα να μην υπερβαίνει το 1
                 model.Add(sum(x[(d, doc)] for d in month_special_dates) <= 1)
 
-    # 5. Απόλυτη Ισότητα στα 7 Μεγάλα Πακέτα Εορτών
-    # Ομαδοποιούμε τα πακέτα ανά έτος στόχο και απαιτούμε κάθε γιατρός να παίρνει ακριβώς 1 πακέτο ανά έτος (ή ανάλογα με το εύρος)
+    # 5. Απόλυτη Ισότητα στα Μεγάλα Πακέτα Εορτών
     for block in major_blocks:
         block_dates = block["dates"]
-        # Αντιστοιχίζουμε κάθε block σε μια μεταβλητή "ποιος γιατρός πήρε ολόκληρο το block"
-        # Επειδή το block αποτελείται από συγκεκριμένες ημερομηνίες, όλοι οι γιατροί στο block πρέπει να είναι ο ίδιος.
         for doc in DOCTORS:
-            # Αν ο γιατρός πάρει την πρώτη μέρα, πρέπει να πάρει και τις υπόλοιπες του block
             for bd in block_dates[1:]:
                 model.Add(x[(block_dates[0], doc)] == x[(bd, doc)])
 
-    # Ισότητα στα μεγάλα πακέτα ανά έτος
     years_in_range = sorted(list(set(b["year"] for b in major_blocks)))
     for y in years_in_range:
         y_blocks = [b for b in major_blocks if b["year"] == y]
         if y_blocks:
             for doc in DOCTORS:
-                # Κάθε γιατρός παίρνει το πολύ 1 μεγάλο πακέτο ανά έτος (ή όσο αναλογεί)
                 doc_major_vars = [x[(b["dates"][0], doc)] for b in y_blocks]
                 if len(y_blocks) >= len(DOCTORS):
                     model.Add(sum(doc_major_vars) == 1)
                 else:
                     model.Add(sum(doc_major_vars) <= 1)
 
-    # 6. Ευθυγράμμιση με την αρχική ρότα στις καθημερινές (Δευτέρα-Πέμπτη) ως προς την προτίμηση
+    # 6. ΚΑΝΟΝΑΣ ΡΟΤΑΣ & ΑΡΓΙΩΝ:
+    # - Στις καθημερινές ΚΑΙ στα απλά Σαββατοκύριακα (που ΔΕΝ είναι αργίες): Η ρότα τηρείται αυστηρά.
+    # - Στις Δημόσιες Αργίες (είτε καθημερινή είτε Σ/Κ): Η ρότα σπάει και ανατίθεται μέσω solver για ισότητα.
+    
+    deviation_vars = []
     for i, d in enumerate(dates):
-        if d.weekday() not in (5, 6) and d not in holiday_dates:
+        # Αν η μέρα ΔΕΝ είναι δημόσια αργία (άρα είναι απλή καθημερινή ή απλό Σ/Κ):
+        if d not in holiday_dates:
             day_offset = (d - start_date).days
             week_num = day_offset // 7
             day_of_week = day_offset % 7
             doc_index = (day_of_week + (week_num * 2)) % len(initial_week)
-            preferred_doc = initial_week[doc_index]
-            # Δίνουμε bonus στον solver να προτιμάει τον βασικό γιατρό της ρότας αν δεν παραβιάζονται οι κανόνες
-            model.Maximize(x[(d, preferred_doc)])
+            rota_doc = initial_week[doc_index]
+            
+            # Κλειδώνουμε αυστηρά τη ρότα σε αυτές τις μέρες
+            model.Add(x[(d, rota_doc)] == 1)
 
-    # Επίλυση με CP-SAT Solver
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 10.0  # Όριο χρόνου για άμεσο αποτέλεσμα
+    solver.parameters.max_time_in_seconds = 15.0
     status = solver.Solve(model)
 
     schedule = {}
@@ -199,8 +195,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                 if solver.Value(x[(d, doc)]) == 1:
                     schedule[d] = doc
     else:
-        # Fallback αν υπάρχει υπερβολιός περιορισμός σε πολύ μικρό διάστημα
-        st.warning("⚠️ Ο solver δεν βρήκε αυστηρή βέλτιστη λύση με τα τρέχοντα φίλτρα. Εφαρμογή εναλλακτικής κατανομής...")
+        st.warning("⚠️ Ο solver δεν βρήκε λύση με τους τρέχοντες περιορισμούς. Εφαρμογή εναλλακτικής κατανομής...")
         for i, d in enumerate(dates):
             doc = DOCTORS[i % len(DOCTORS)]
             schedule[d] = doc
@@ -208,7 +203,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
     return schedule, holiday_names
 
 # ----------------------------
-# BALANCE & REPORTING (όπως πριν)
+# BALANCE & REPORTING
 # ----------------------------
 def compute_major_holidays_summary(schedule, start_date, end_date):
     blocks = get_major_holiday_blocks_in_range(start_date, end_date)
@@ -331,7 +326,7 @@ def display_calendar(schedule, holiday_names):
 # STREAMLIT UI
 # ----------------------------
 st.set_page_config(page_title="📅 Πρόγραμμα Εφημεριών", layout="wide")
-st.title("📅 Πρόγραμμα Εφημεριών Ακτινολόγων (με CP-SAT Solver)")
+st.title("📅 Πρόγραμμα Εφημεριών Ακτινολόγων (Solver με Ρότα & Αργίες)")
 st.markdown("<span style='font-size:14px; color:gray;'>© Γιώργος Μενοίκου, PhD</span>", unsafe_allow_html=True)
 
 if "manual_assignments" not in st.session_state:
@@ -406,8 +401,8 @@ with right_col:
             default_end = start_date + datetime.timedelta(days=30)
             end_date = st.date_input("End date", default_end)
 
-        if st.button("🗓️ Δημιουργία Προγράμματος (με Solver)"):
-            with st.spinner("Υπολογισμός βέλτιστου προγράμματος με τον CP-SAT Solver..."):
+        if st.button("🗓️ Δημιουργία Προγράμματος"):
+            with st.spinner("Υπολογισμός προγράμματος..."):
                 sch, hols = generate_full_schedule(
                     start_date, end_date, st.session_state.initial_week,
                     manual_assignments=st.session_state.manual_assignments
