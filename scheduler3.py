@@ -11,7 +11,7 @@ DOCTORS = ["Χριστίνα", "Αθηνά", "Μαρία", "Έλια", "Αλέξ
 
 DOCTOR_COLORS = {
     "Έλενα": (255, 182, 193),
-    "Εύα": (152, 251, 152),
+    "Εύа": (152, 251, 152),
     "Μαρία": (176, 196, 222),
     "Αθηνά": (255, 250, 205),
     "Αλέξανδρος": (221, 160, 221),
@@ -74,15 +74,6 @@ def _weekend_or_holiday_shifts_in_month(doctor, date, schedule, holiday_dates, e
         if doc == doctor and d.year == year and d.month == month:
             if d.weekday() in (5, 6) or d in holiday_dates:
                 count += 1
-    return count
-
-def _specific_weekday_count(doctor, weekday, schedule, exclude_date=None):
-    count = 0
-    for d, doc in schedule.items():
-        if d == exclude_date:
-            continue
-        if doc == doctor and d.weekday() == weekday:
-            count += 1
     return count
 
 def orthodox_easter(year):
@@ -154,6 +145,7 @@ def is_valid_assignment(doctor, date, schedule, holiday_dates, exclude_date=None
     if _shifts_in_week(doctor, date, schedule, exclude_date=exclude_date) > 2:
         return False
         
+    # ΑΠΟΣΤΑΚΤΙΚΟΣ ΚΑΝΟΝΑΣ: Μέγιστο 1 Σ/Κ ή Αργία ανά μήνα
     if date.weekday() in (5, 6) or date in holiday_dates:
         if _weekend_or_holiday_shifts_in_month(doctor, date, schedule, holiday_dates, exclude_date=exclude_date) > 0:
             return False
@@ -164,7 +156,7 @@ def is_valid_assignment(doctor, date, schedule, holiday_dates, exclude_date=None
     return True
 
 # ----------------------------
-# SCHEDULING LOGIC
+# REWRITTEN SCHEDULING LOGIC
 # ----------------------------
 def generate_full_schedule(start_date, end_date, initial_week, manual_assignments=None):
     manual_assignments = manual_assignments or {}
@@ -176,88 +168,83 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
     major_blocks = get_major_holiday_blocks_in_range(start_date, end_date)
     all_major_dates = {d for block in major_blocks for d in block["dates"]}
 
-    # VIMA 1: Topothetoume mono tis Defteres-Pemptes apo tin archiki rota. Afinoume kena ta S/K kai tis argies!
-    for day_offset in range(total_days):
-        current_date = start_date + datetime.timedelta(days=day_offset)
-        if current_date.weekday() not in (5, 6) and current_date not in holiday_dates:
-            week_num = day_offset // 7
-            day_of_week = day_offset % 7
-            doc_index = (day_of_week + (week_num * 2)) % len(initial_week)
-            schedule[current_date] = initial_week[doc_index]
-
+    # Ενσωμάτωση manual assignments από την αρχή
     for d, doc in manual_assignments.items():
         if start_date <= d <= end_date:
             schedule[d] = doc
 
-    xmas_doctors_by_year = {y: set() for y in range(start_date.year - 1, end_date.year + 2)}
-    doctor_yearly_major_count = {doc: {y: 0 for y in range(start_date.year, end_date.year + 2)} for doc in DOCTORS}
-
-    for block in major_blocks:
-        for d in block["dates"]:
-            if d in manual_assignments and d in schedule:
-                schedule[d] = manual_assignments[d]
-
-    # VIMA 2: Moirazoume ta megala paketa me apolyta isomeri seira (proteraiotita se auton pou den exei parei sto etos)
+    # ΒΗΜΑ 1: ΔΙΑΝΟΜΗ ΜΕΓΑΛΩΝ ΠΑΚΕΤΩΝ ΜΕ 100% ΙΣΟΤΗΤΑ (1 πακέτο ανά γιατρό ανά έτος)
+    doctor_yearly_major_count = {doc: {y: 0 for y in range(start_date.year - 1, end_date.year + 2)} for doc in DOCTORS}
+    
     for block in major_blocks:
         block_dates = block["dates"]
-        if any(bd in manual_assignments and bd in schedule for bd in block_dates):
+        if any(bd in schedule for bd in block_dates):
             continue
 
         block_year = block["year"]
         is_jan_1 = (len(block_dates) == 1 and block_dates[0].month == 1 and block_dates[0].day == 1)
         target_year = block_year if not is_jan_1 else block_year - 1
 
-        # Taksinomoume tous giatrous austira me vasi to posa paketa exoun ston sugkekrimeno chrono
-        sorted_docs = sorted(DOCTORS, key=lambda doc: (doctor_yearly_major_count[doc][target_year], sum(doctor_yearly_major_count[doc].values())))
+        # Βρίσκουμε ποιοι γιατροί ΔΕΝ έχουν πάρει ακόμα πακέτο φέτος
+        eligible_doctors = [doc for doc in DOCTORS if doctor_yearly_major_count[doc][target_year] == 0]
+        if not eligible_doctors:
+            eligible_doctors = DOCTORS  # Fallback αν κλείσει ο κύκλος
 
+        # Επιλέγουμε αυτόν που πληροί τους κανόνες υγείας προγράμματος (max_gap κ.λπ.)
         best_doc = None
-        for doc in sorted_docs:
-            if is_jan_1 and doc in xmas_doctors_by_year.get(target_year, set()):
-                continue
-            if all(is_valid_assignment(doc, bd, schedule, holiday_dates, exclude_date=bd, strict_monthly=False, max_gap=2) for bd in block_dates):
+        for doc in sorted(eligible_doctors, key=lambda d: sum(doctor_yearly_major_count[d].values())):
+            if all(is_valid_assignment(doc, bd, schedule, holiday_dates, exclude_date=bd, strict_monthly=False, max_gap=1) for bd in block_dates):
                 best_doc = doc
                 break
-
+        
         if not best_doc:
-            best_doc = sorted_docs[0] # An yparxei adiexodo, pairnoume ton ligotero fortomeno
+            best_doc = eligible_doctors[0]
 
         for bd in block_dates:
             schedule[bd] = best_doc
-        if block_dates[0].month == 12 and not is_jan_1:
-            xmas_doctors_by_year[block_year].add(best_doc)
-        
         doctor_yearly_major_count[best_doc][target_year] += 1
 
-    # VIMA 3: Moirazoume me chronologiki seira ola ta ypoloipa S/K, Paraskeves kai mikroteres argies
-    special_dates = sorted([start_date + datetime.timedelta(days=i) for i in range(total_days) if ((start_date + datetime.timedelta(days=i)).weekday() in (4, 5, 6) or (start_date + datetime.timedelta(days=i)) in holiday_dates) and (start_date + datetime.timedelta(days=i)) not in all_major_dates])
+    # ΒΗΜΑ 2: ΚΑΘΗΜΕΡΙΝΕΣ ΑΠΟ ΤΗΝ ΑΡΧΙΚΗ ΡΟΤΑ
+    for day_offset in range(total_days):
+        current_date = start_date + datetime.timedelta(days=day_offset)
+        if current_date not in schedule and current_date.weekday() not in (5, 6) and current_date not in holiday_dates:
+            week_num = day_offset // 7
+            day_of_week = day_offset % 7
+            doc_index = (day_of_week + (week_num * 2)) % len(initial_week)
+            doc = initial_week[doc_index]
+            
+            # Ελέγχουμε αν μπορεί να πάρει την καθημερινή
+            if not _has_nearby_shift(doc, current_date, schedule, max_gap=2):
+                schedule[current_date] = doc
+            else:
+                # Βρίσκουμε εναλλακτικό γιατρό με τα λιγότερα shifts στον μήνα
+                valid_docs = [d for d in DOCTORS if not _has_nearby_shift(d, current_date, schedule, max_gap=2)]
+                if not valid_docs:
+                    valid_docs = DOCTORS
+                best_doc = min(valid_docs, key=lambda d: _total_shifts_in_month(d, current_date, schedule))
+                schedule[current_date] = best_doc
+
+    # ΒΗΜΑ 3: ΥΠΟΛΟΙΠΕΣ ΕΙΔΙΚΕΣ ΗΜΕΡΕΣ (Σαββατοκύριακα & Μικρές Αργίες)
+    special_dates = sorted([start_date + datetime.timedelta(days=i) for i in range(total_days) if ((start_date + datetime.timedelta(days=i)).weekday() in (4, 5, 6) or (start_date + datetime.timedelta(days=i)) in holiday_dates) and (start_date + datetime.timedelta(days=i)) not in schedule])
 
     for d in special_dates:
-        if d in manual_assignments:
-            continue
-
         valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, holiday_dates, exclude_date=d, strict_monthly=True, max_gap=3)]
         if not valid_docs:
-            valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, holiday_dates, exclude_date=d, strict_monthly=False, max_gap=3)]
+            valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, holiday_dates, exclude_date=d, strict_monthly=False, max_gap=2)]
         
         if valid_docs:
             wd = d.weekday()
             best_doc = min(valid_docs, key=lambda doc: (
                 _weekend_or_holiday_shifts_in_month(doc, d, schedule, holiday_dates, exclude_date=d),
-                _specific_weekday_count(doc, wd, schedule, exclude_date=d),
                 _total_shifts_in_month(doc, d, schedule, exclude_date=d)
             ))
             schedule[d] = best_doc
+        else:
+            # Έσχατη λύση αν υπάρχει αυστηρό κόλλημα
+            best_doc = min(DOCTORS, key=lambda doc: _total_shifts_in_month(doc, d, schedule))
+            schedule[d] = best_doc
 
-    # VIMA 4: Symplirosi tychon kenon kathimerinon
-    for day_offset in range(total_days):
-        current_date = start_date + datetime.timedelta(days=day_offset)
-        if current_date not in schedule:
-            valid_docs = [doc for doc in DOCTORS if not _has_nearby_shift(doc, current_date, schedule, max_gap=2)]
-            if not valid_docs:
-                valid_docs = DOCTORS
-            best_doc = min(valid_docs, key=lambda doc: _total_shifts_in_month(doc, current_date, schedule))
-            schedule[current_date] = best_doc
-
+    # Επανεφαρμογή manual assignments στο τέλος για απόλυτη ισχύ
     for d, doc in manual_assignments.items():
         if start_date <= d <= end_date:
             schedule[d] = doc
