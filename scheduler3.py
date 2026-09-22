@@ -106,7 +106,7 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
 # ----------------------------
 # CP-SAT SCHEDULING LOGIC
 # ----------------------------
-def generate_full_schedule(start_date, end_date, initial_week, manual_assignments=None):
+def generate_full_schedule(start_date, end_date, rota_sequence, manual_assignments=None):
     manual_assignments = manual_assignments or {}
     
     total_days = (end_date - start_date).days + 1
@@ -138,8 +138,9 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             for j in range(i + 1, min(i + 3, len(dates))):
                 model.Add(x[(dates[i], doc)] + x[(dates[j], doc)] <= 1)
 
-    # 4. Αυστηρός κανόνας: Μέγιστο 1 Σαββατοκύριακο (μη αργία) ή Αργία ανά μήνα ανά γιατρό
+    # 4. ΕΛΑΣΤΙΚΟΣ ΚΑΝΟΝΑΣ: Επιθυμητό μέγιστο 1 Σαββατοκύριακο/αργία ανά μήνα (με δυνατότητα υπέρβασης μέσω ποινής)
     months = sorted(list(set((d.year, d.month) for d in dates)))
+    overtime_penalties = []
     for year, month in months:
         month_special_dates = [
             d for d in dates 
@@ -147,7 +148,9 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         ]
         if month_special_dates:
             for doc in DOCTORS:
-                model.Add(sum(x[(d, doc)] for d in month_special_dates) <= 1)
+                excess = model.NewIntVar(0, len(month_special_dates), f"excess_{doc}_{year}_{month}")
+                model.Add(sum(x[(d, doc)] for d in month_special_dates) - 1 <= excess)
+                overtime_penalties.append(excess)
 
     # 5. Απόλυτη Ισότητα στα Μεγάλα Πακέτα Εορτών
     for block in major_blocks:
@@ -167,25 +170,19 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                 else:
                     model.Add(sum(doc_major_vars) <= 1)
 
-    # 6. ΚΑΝΟΝΑΣ ΡΟΤΑΣ & ΑΡΓΙΩΝ:
-    # - Στις καθημερινές ΚΑΙ στα απλά Σαββατοκύριακα (που ΔΕΝ είναι αργίες): Η ρότα τηρείται αυστηρά.
-    # - Στις Δημόσιες Αργίες (είτε καθημερινή είτε Σ/Κ): Η ρότα σπάει και ανατίθεται μέσω solver για ισότητα.
-    
-    deviation_vars = []
+    # 6. ΕΦΑΡΜΟΓΗ ΡΟΤΑΣ ΜΕ ΒΑΣΗ ΤΗ ΣΕΙΡΑ:
+    # - Στις μη αργίες, ακολουθείται η ρότα. Στις αργίες σπάει για ισότητα.
     for i, d in enumerate(dates):
-        # Αν η μέρα ΔΕΝ είναι δημόσια αργία (άρα είναι απλή καθημερινή ή απλό Σ/Κ):
         if d not in holiday_dates:
-            day_offset = (d - start_date).days
-            week_num = day_offset // 7
-            day_of_week = day_offset % 7
-            doc_index = (day_of_week + (week_num * 2)) % len(initial_week)
-            rota_doc = initial_week[doc_index]
-            
-            # Κλειδώνουμε αυστηρά τη ρότα σε αυτές τις μέρες
+            rota_doc = rota_sequence[i % len(rota_sequence)]
             model.Add(x[(d, rota_doc)] == 1)
 
+    # Ελαχιστοποίηση τυχόν υπερβάσεων στα Σαββατοκύριακα ανά μήνα
+    if overtime_penalties:
+        model.Minimize(sum(overtime_penalties))
+
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 15.0
+    solver.parameters.max_time_in_seconds = 20.0
     status = solver.Solve(model)
 
     schedule = {}
@@ -195,7 +192,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                 if solver.Value(x[(d, doc)]) == 1:
                     schedule[d] = doc
     else:
-        st.warning("⚠️ Ο solver δεν βρήκε λύση με τους τρέχοντες περιορισμούς. Εφαρμογή εναλλακτικής κατανομής...")
+        st.warning("⚠️ Ο solver δεν βρήκε βέλτιστη λύση, εφαρμόζεται εναλλακτική κατανομή...")
         for i, d in enumerate(dates):
             doc = DOCTORS[i % len(DOCTORS)]
             schedule[d] = doc
@@ -326,7 +323,7 @@ def display_calendar(schedule, holiday_names):
 # STREAMLIT UI
 # ----------------------------
 st.set_page_config(page_title="📅 Πρόγραμμα Εφημεριών", layout="wide")
-st.title("📅 Πρόγραμμα Εφημεριών Ακτινολόγων (Solver με Ρότα & Αργίες)")
+st.title("📅 Πρόγραμμα Εφημεριών Ακτινολόγων (Ελαστικός Solver)")
 st.markdown("<span style='font-size:14px; color:gray;'>© Γιώργος Μενοίκου, PhD</span>", unsafe_allow_html=True)
 
 if "manual_assignments" not in st.session_state:
@@ -337,8 +334,8 @@ if "holiday_names" not in st.session_state:
     st.session_state.holiday_names = {}
 if "balance" not in st.session_state:
     st.session_state.balance = None
-if "initial_week" not in st.session_state:
-    st.session_state.initial_week = None
+if "rota_sequence" not in st.session_state:
+    st.session_state.rota_sequence = ["Χριστίνα", "Αθηνά", "Μαρία", "Έλια", "Αλέξανδρος", "Εύα", "Έλενα"]
 if "start_date" not in st.session_state:
     st.session_state.start_date = datetime.date.today()
 
@@ -379,38 +376,36 @@ with left_col:
                 st.download_button("⬇️ Κατέβασε κατάσταση σε PDF", f, file_name=pdf_file)
 
 with right_col:
-    selected_date = st.date_input("Ημερομηνία έναρξης:", datetime.date.today())
-    week_dates = [selected_date - datetime.timedelta(days=selected_date.weekday()) + datetime.timedelta(days=i) for i in range(7)]
-
-    initial_week = {}
+    st.subheader("🔄 Ορισμός Σειράς Ρότας")
+    rota_inputs = []
     cols = st.columns(7)
-    for i, d in enumerate(week_dates):
+    for i in range(7):
         with cols[i]:
-            initial_week[d] = st.selectbox(d.strftime("%a %d/%m"), DOCTORS, index=i % 7, key=f"doc_{d}")
+            doc_choice = st.selectbox(f"Θέση {i+1}", DOCTORS, index=i, key=f"rota_pos_{i}")
+            rota_inputs.append(doc_choice)
 
-    if st.button("💾 Αποθήκευση Αρχικής Ρότας"):
-        st.session_state.initial_week = [initial_week[d] for d in sorted(initial_week)]
-        st.session_state.start_date = week_dates[0]
-        st.rerun()
+    if st.button("💾 Αποθήκευση Σειράς Ρότας"):
+        st.session_state.rota_sequence = rota_inputs
+        st.success("Η σειρά της ρότας αποθηκεύτηκε επιτυχώς!")
 
-    if st.session_state.initial_week:
-        c1, c2 = st.columns(2)
-        with c1:
-            start_date = st.date_input("Start date", st.session_state.start_date)
-        with c2:
-            default_end = start_date + datetime.timedelta(days=30)
-            end_date = st.date_input("End date", default_end)
+    c1, c2 = st.columns(2)
+    with c1:
+        start_date = st.date_input("Start date", datetime.date.today())
+    with c2:
+        default_end = start_date + datetime.timedelta(days=365) # Δοκιμή π.χ. για 1 έτος άνετα
+        end_date = st.date_input("End date", default_end)
 
-        if st.button("🗓️ Δημιουργία Προγράμματος"):
-            with st.spinner("Υπολογισμός προγράμματος..."):
-                sch, hols = generate_full_schedule(
-                    start_date, end_date, st.session_state.initial_week,
-                    manual_assignments=st.session_state.manual_assignments
-                )
-                st.session_state.schedule = sch
-                st.session_state.holiday_names = hols
-                st.session_state.balance = compute_balance(sch, start_date, end_date, hols)
-                st.rerun()
+    if st.button("🗓️ Δημιουργία Προγράμματος"):
+        with st.spinner("Υπολογισμός προγράμματος..."):
+            sch, hols = generate_full_schedule(
+                start_date, end_date, st.session_state.rota_sequence,
+                manual_assignments=st.session_state.manual_assignments
+            )
+            st.session_state.schedule = sch
+            st.session_state.holiday_names = hols
+            st.session_state.start_date = start_date
+            st.session_state.balance = compute_balance(sch, start_date, end_date, hols)
+            st.rerun()
 
     if st.session_state.schedule:
         display_calendar(st.session_state.schedule, st.session_state.holiday_names)
