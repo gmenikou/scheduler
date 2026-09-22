@@ -1,1 +1,4 @@
+streamlit
+pandas
 fpdf2
+ortools
