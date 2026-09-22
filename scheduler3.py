@@ -65,6 +65,17 @@ def _total_shifts_in_month(doctor, date, schedule, exclude_date=None):
             total += 1
     return total
 
+def _weekend_or_holiday_shifts_in_month(doctor, date, schedule, holiday_dates, exclude_date=None):
+    year, month = date.year, date.month
+    count = 0
+    for d, doc in schedule.items():
+        if d == exclude_date:
+            continue
+        if doc == doctor and d.year == year and d.month == month:
+            if d.weekday() in (5, 6) or d in holiday_dates:
+                count += 1
+    return count
+
 def _specific_weekday_count(doctor, weekday, schedule, exclude_date=None):
     count = 0
     for d, doc in schedule.items():
@@ -146,12 +157,17 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
                 
     return blocks
 
-def is_valid_assignment(doctor, date, schedule, exclude_date=None, strict_monthly=True, max_gap=3):
+def is_valid_assignment(doctor, date, schedule, holiday_dates, exclude_date=None, strict_monthly=True, max_gap=3):
     if _has_nearby_shift(doctor, date, schedule, max_gap=max_gap):
         return False
     if _shifts_in_week(doctor, date, schedule, exclude_date=exclude_date) > 2:
         return False
         
+    # Αποτροπή ανάθεσης >1 Σαββατοκύριακου ή Αργίας στον ίδιο μήνα για τον ίδιο γιατρό (χωρίς εξαιρέσεις)
+    if date.weekday() in (5, 6) or date in holiday_dates:
+        if _weekend_or_holiday_shifts_in_month(doctor, date, schedule, holiday_dates, exclude_date=exclude_date) > 0:
+            return False
+
     if strict_monthly:
         if _total_shifts_in_month(doctor, date, schedule, exclude_date=exclude_date) > 5:
             return False
@@ -173,6 +189,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         schedule[current_date] = initial_week[doc_index]
 
     holiday_names = get_holidays_in_range(start_date, end_date)
+    holiday_dates = set(holiday_names.keys())
 
     for d, doc in manual_assignments.items():
         if d in schedule:
@@ -184,9 +201,9 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
     # ΒΗΜΑ 1: Κατανομή Παρασκευών, Σαββάτων και Κυριακών με ισότητα
     weekend_dates = sorted([d for d in schedule.keys() if d.weekday() in (4, 5, 6) and d not in manual_assignments and d not in all_major_dates])
     for d in weekend_dates:
-        valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=True, max_gap=3)]
+        valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, holiday_dates, exclude_date=d, strict_monthly=True, max_gap=3)]
         if not valid_docs:
-            valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=False, max_gap=3)]
+            valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, holiday_dates, exclude_date=d, strict_monthly=False, max_gap=3)]
         
         if valid_docs:
             wd = d.weekday()
@@ -223,7 +240,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 
             valid_docs = []
             for doc in eligible_docs:
-                if all(is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=False, max_gap=2) for d in block_dates):
+                if all(is_valid_assignment(doc, d, schedule, holiday_dates, exclude_date=d, strict_monthly=False, max_gap=2) for d in block_dates):
                     valid_docs.append(doc)
             
             if not valid_docs:
@@ -247,13 +264,13 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             doctor_yearly_major_count[best_doc][block_year - 1] += 1
 
     # ΒΗΜΑ 3: Κατανομή μικρών αργιών με αυστηρή ισότητα
-    regular_dates_in_range = sorted([d for d in holiday_names.keys() if d not in all_major_dates])
+    regular_dates_in_range = sorted([d for d in holiday_dates if d not in all_major_dates])
     for d in regular_dates_in_range:
         if d in manual_assignments:
             continue
-        valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=True, max_gap=3)]
+        valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, holiday_dates, exclude_date=d, strict_monthly=True, max_gap=3)]
         if not valid_docs:
-            valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, exclude_date=d, strict_monthly=False, max_gap=3)]
+            valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, holiday_dates, exclude_date=d, strict_monthly=False, max_gap=3)]
         
         if valid_docs:
             best_doc = min(valid_docs, key=lambda doc: (
@@ -271,7 +288,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
     return schedule, holiday_names
 
 # ----------------------------
-# BALANCE & REPORTING (ΑΚΡΙΒΗΣ ΥΠΟΛΟΓΙΣΜΟΣ)
+# BALANCE & REPORTING
 # ----------------------------
 def compute_major_holidays_summary(schedule, start_date, end_date):
     blocks = get_major_holiday_blocks_in_range(start_date, end_date)
@@ -323,7 +340,6 @@ def compute_balance(schedule, start_date, end_date, holiday_names):
     df.rename(columns={"index": "Doctor"}, inplace=True)
     df["Weekdays"] = df["Mon"] + df["Tue"] + df["Wed"] + df["Thu"]
     
-    # Υπολογισμός συνολικών αργιών απευθείας από τα αθροίσματα των 2 πινάκων αργιών για απόλυτη συμφωνία
     major_df = compute_major_holidays_summary(schedule, start_date, end_date)
     major_dict = dict(zip(major_df["Ακτινολόγος"], major_df["Σύνολο Πακέτων"]))
     
