@@ -3,6 +3,7 @@ import datetime
 import calendar
 import pandas as pd
 from fpdf import FPDF
+from ortools.sat.python import cp_model
 
 # ----------------------------
 # CONSTANTS & SETUP
@@ -11,7 +12,7 @@ DOCTORS = ["Χριστίνα", "Αθηνά", "Μαρία", "Έλια", "Αλέξ
 
 DOCTOR_COLORS = {
     "Έλενα": (255, 182, 193),
-    "Εύа": (152, 251, 152),
+    "Εύα": (152, 251, 152),
     "Μαρία": (176, 196, 222),
     "Αθηνά": (255, 250, 205),
     "Αλέξανδρος": (221, 160, 221),
@@ -39,43 +40,6 @@ FIXED_HOLIDAYS = [
 # ----------------------------
 # HELPER FUNCTIONS
 # ----------------------------
-def _week_monday(date):
-    return date - datetime.timedelta(days=date.weekday())
-
-def _has_nearby_shift(doctor, date, schedule, max_gap=3):
-    for d, doc in schedule.items():
-        if doc == doctor and d != date and abs((d - date).days) <= max_gap:
-            return True
-    return False
-
-def _shifts_in_week(doctor, date, schedule, exclude_date=None):
-    wk = _week_monday(date)
-    return sum(
-        1 for d, doc in schedule.items()
-        if doc == doctor and d != exclude_date and _week_monday(d) == wk
-    )
-
-def _total_shifts_in_month(doctor, date, schedule, exclude_date=None):
-    year, month = date.year, date.month
-    total = 0
-    for d, doc in schedule.items():
-        if d == exclude_date:
-            continue
-        if doc == doctor and d.year == year and d.month == month:
-            total += 1
-    return total
-
-def _weekend_or_holiday_shifts_in_month(doctor, date, schedule, holiday_dates, exclude_date=None):
-    year, month = date.year, date.month
-    count = 0
-    for d, doc in schedule.items():
-        if d == exclude_date:
-            continue
-        if doc == doctor and d.year == year and d.month == month:
-            if d.weekday() in (5, 6) or d in holiday_dates:
-                count += 1
-    return count
-
 def orthodox_easter(year):
     a = year % 4
     b = year % 7
@@ -139,120 +103,112 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
                 
     return blocks
 
-def is_valid_assignment(doctor, date, schedule, holiday_dates, exclude_date=None, strict_monthly=True, max_gap=3):
-    if _has_nearby_shift(doctor, date, schedule, max_gap=max_gap):
-        return False
-    if _shifts_in_week(doctor, date, schedule, exclude_date=exclude_date) > 2:
-        return False
-        
-    # ΑΠΟΣΤΑΚΤΙΚΟΣ ΚΑΝΟΝΑΣ: Μέγιστο 1 Σ/Κ ή Αργία ανά μήνα
-    if date.weekday() in (5, 6) or date in holiday_dates:
-        if _weekend_or_holiday_shifts_in_month(doctor, date, schedule, holiday_dates, exclude_date=exclude_date) > 0:
-            return False
-
-    if strict_monthly:
-        if _total_shifts_in_month(doctor, date, schedule, exclude_date=exclude_date) > 5:
-            return False
-    return True
-
 # ----------------------------
-# REWRITTEN SCHEDULING LOGIC
+# CP-SAT SCHEDULING LOGIC
 # ----------------------------
 def generate_full_schedule(start_date, end_date, initial_week, manual_assignments=None):
     manual_assignments = manual_assignments or {}
-    schedule = {}
     
     total_days = (end_date - start_date).days + 1
+    dates = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
+    
     holiday_names = get_holidays_in_range(start_date, end_date)
     holiday_dates = set(holiday_names.keys())
     major_blocks = get_major_holiday_blocks_in_range(start_date, end_date)
     all_major_dates = {d for block in major_blocks for d in block["dates"]}
 
-    # Ενσωμάτωση manual assignments από την αρχή
+    model = cp_model.CpModel()
+    
+    # x[d, doc] = 1 αν ο/η doc εφημερεύει τη μέρα d
+    x = {}
+    for d in dates:
+        for doc in DOCTORS:
+            x[(d, doc)] = model.NewBoolVar(f"x_{d}_{doc}")
+
+    # 1. Κάθε μέρα ακριβώς 1 γιατρός
+    for d in dates:
+        model.Add(sum(x[(d, doc)] for doc in DOCTORS) == 1)
+
+    # 2. Χειροκίνητες αναθέσεις (Manual overrides)
     for d, doc in manual_assignments.items():
         if start_date <= d <= end_date:
-            schedule[d] = doc
+            model.Add(x[(d, doc)] == 1)
 
-    # ΒΗΜΑ 1: ΔΙΑΝΟΜΗ ΜΕΓΑΛΩΝ ΠΑΚΕΤΩΝ ΜΕ 100% ΙΣΟΤΗΤΑ (1 πακέτο ανά γιατρό ανά έτος)
-    doctor_yearly_major_count = {doc: {y: 0 for y in range(start_date.year - 1, end_date.year + 2)} for doc in DOCTORS}
-    
+    # 3. Αποφυγή κοντινών εφημεριών (min gap >= 2 μέρες μεταξύ ιδίου γιατρού)
+    for doc in DOCTORS:
+        for i in range(len(dates)):
+            for j in range(i + 1, min(i + 3, len(dates))):  # Απόσταση μικρότερη από 3 ημέρες
+                model.Add(x[(dates[i], doc)] + x[(dates[j], doc)] <= 1)
+
+    # 4. Αυστηρός κανόνας: Μέγιστο 1 Σαββατοκύριακο ή Αργία ανά μήνα ανά γιατρό
+    months = sorted(list(set((d.year, d.month) for d in dates)))
+    for year, month in months:
+        month_special_dates = [
+            d for d in dates 
+            if d.year == year and d.month == month and (d.weekday() in (5, 6) or d in holiday_dates)
+        ]
+        if month_special_dates:
+            for doc in DOCTORS:
+                # Το άθροισμα των εφημεριών σε Σ/Κ ή αργίες αυτού του μήνα να μην υπερβαίνει το 1
+                model.Add(sum(x[(d, doc)] for d in month_special_dates) <= 1)
+
+    # 5. Απόλυτη Ισότητα στα 7 Μεγάλα Πακέτα Εορτών
+    # Ομαδοποιούμε τα πακέτα ανά έτος στόχο και απαιτούμε κάθε γιατρός να παίρνει ακριβώς 1 πακέτο ανά έτος (ή ανάλογα με το εύρος)
     for block in major_blocks:
         block_dates = block["dates"]
-        if any(bd in schedule for bd in block_dates):
-            continue
+        # Αντιστοιχίζουμε κάθε block σε μια μεταβλητή "ποιος γιατρός πήρε ολόκληρο το block"
+        # Επειδή το block αποτελείται από συγκεκριμένες ημερομηνίες, όλοι οι γιατροί στο block πρέπει να είναι ο ίδιος.
+        for doc in DOCTORS:
+            # Αν ο γιατρός πάρει την πρώτη μέρα, πρέπει να πάρει και τις υπόλοιπες του block
+            for bd in block_dates[1:]:
+                model.Add(x[(block_dates[0], doc)] == x[(bd, doc)])
 
-        block_year = block["year"]
-        is_jan_1 = (len(block_dates) == 1 and block_dates[0].month == 1 and block_dates[0].day == 1)
-        target_year = block_year if not is_jan_1 else block_year - 1
+    # Ισότητα στα μεγάλα πακέτα ανά έτος
+    years_in_range = sorted(list(set(b["year"] for b in major_blocks)))
+    for y in years_in_range:
+        y_blocks = [b for b in major_blocks if b["year"] == y]
+        if y_blocks:
+            for doc in DOCTORS:
+                # Κάθε γιατρός παίρνει το πολύ 1 μεγάλο πακέτο ανά έτος (ή όσο αναλογεί)
+                doc_major_vars = [x[(b["dates"][0], doc)] for b in y_blocks]
+                if len(y_blocks) >= len(DOCTORS):
+                    model.Add(sum(doc_major_vars) == 1)
+                else:
+                    model.Add(sum(doc_major_vars) <= 1)
 
-        # Βρίσκουμε ποιοι γιατροί ΔΕΝ έχουν πάρει ακόμα πακέτο φέτος
-        eligible_doctors = [doc for doc in DOCTORS if doctor_yearly_major_count[doc][target_year] == 0]
-        if not eligible_doctors:
-            eligible_doctors = DOCTORS  # Fallback αν κλείσει ο κύκλος
-
-        # Επιλέγουμε αυτόν που πληροί τους κανόνες υγείας προγράμματος (max_gap κ.λπ.)
-        best_doc = None
-        for doc in sorted(eligible_doctors, key=lambda d: sum(doctor_yearly_major_count[d].values())):
-            if all(is_valid_assignment(doc, bd, schedule, holiday_dates, exclude_date=bd, strict_monthly=False, max_gap=1) for bd in block_dates):
-                best_doc = doc
-                break
-        
-        if not best_doc:
-            best_doc = eligible_doctors[0]
-
-        for bd in block_dates:
-            schedule[bd] = best_doc
-        doctor_yearly_major_count[best_doc][target_year] += 1
-
-    # ΒΗΜΑ 2: ΚΑΘΗΜΕΡΙΝΕΣ ΑΠΟ ΤΗΝ ΑΡΧΙΚΗ ΡΟΤΑ
-    for day_offset in range(total_days):
-        current_date = start_date + datetime.timedelta(days=day_offset)
-        if current_date not in schedule and current_date.weekday() not in (5, 6) and current_date not in holiday_dates:
+    # 6. Ευθυγράμμιση με την αρχική ρότα στις καθημερινές (Δευτέρα-Πέμπτη) ως προς την προτίμηση
+    for i, d in enumerate(dates):
+        if d.weekday() not in (5, 6) and d not in holiday_dates:
+            day_offset = (d - start_date).days
             week_num = day_offset // 7
             day_of_week = day_offset % 7
             doc_index = (day_of_week + (week_num * 2)) % len(initial_week)
-            doc = initial_week[doc_index]
-            
-            # Ελέγχουμε αν μπορεί να πάρει την καθημερινή
-            if not _has_nearby_shift(doc, current_date, schedule, max_gap=2):
-                schedule[current_date] = doc
-            else:
-                # Βρίσκουμε εναλλακτικό γιατρό με τα λιγότερα shifts στον μήνα
-                valid_docs = [d for d in DOCTORS if not _has_nearby_shift(d, current_date, schedule, max_gap=2)]
-                if not valid_docs:
-                    valid_docs = DOCTORS
-                best_doc = min(valid_docs, key=lambda d: _total_shifts_in_month(d, current_date, schedule))
-                schedule[current_date] = best_doc
+            preferred_doc = initial_week[doc_index]
+            # Δίνουμε bonus στον solver να προτιμάει τον βασικό γιατρό της ρότας αν δεν παραβιάζονται οι κανόνες
+            model.Maximize(x[(d, preferred_doc)])
 
-    # ΒΗΜΑ 3: ΥΠΟΛΟΙΠΕΣ ΕΙΔΙΚΕΣ ΗΜΕΡΕΣ (Σαββατοκύριακα & Μικρές Αργίες)
-    special_dates = sorted([start_date + datetime.timedelta(days=i) for i in range(total_days) if ((start_date + datetime.timedelta(days=i)).weekday() in (4, 5, 6) or (start_date + datetime.timedelta(days=i)) in holiday_dates) and (start_date + datetime.timedelta(days=i)) not in schedule])
+    # Επίλυση με CP-SAT Solver
+    solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = 10.0  # Όριο χρόνου για άμεσο αποτέλεσμα
+    status = solver.Solve(model)
 
-    for d in special_dates:
-        valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, holiday_dates, exclude_date=d, strict_monthly=True, max_gap=3)]
-        if not valid_docs:
-            valid_docs = [doc for doc in DOCTORS if is_valid_assignment(doc, d, schedule, holiday_dates, exclude_date=d, strict_monthly=False, max_gap=2)]
-        
-        if valid_docs:
-            wd = d.weekday()
-            best_doc = min(valid_docs, key=lambda doc: (
-                _weekend_or_holiday_shifts_in_month(doc, d, schedule, holiday_dates, exclude_date=d),
-                _total_shifts_in_month(doc, d, schedule, exclude_date=d)
-            ))
-            schedule[d] = best_doc
-        else:
-            # Έσχατη λύση αν υπάρχει αυστηρό κόλλημα
-            best_doc = min(DOCTORS, key=lambda doc: _total_shifts_in_month(doc, d, schedule))
-            schedule[d] = best_doc
-
-    # Επανεφαρμογή manual assignments στο τέλος για απόλυτη ισχύ
-    for d, doc in manual_assignments.items():
-        if start_date <= d <= end_date:
+    schedule = {}
+    if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
+        for d in dates:
+            for doc in DOCTORS:
+                if solver.Value(x[(d, doc)]) == 1:
+                    schedule[d] = doc
+    else:
+        # Fallback αν υπάρχει υπερβολιός περιορισμός σε πολύ μικρό διάστημα
+        st.warning("⚠️ Ο solver δεν βρήκε αυστηρή βέλτιστη λύση με τα τρέχοντα φίλτρα. Εφαρμογή εναλλακτικής κατανομής...")
+        for i, d in enumerate(dates):
+            doc = DOCTORS[i % len(DOCTORS)]
             schedule[d] = doc
 
     return schedule, holiday_names
 
 # ----------------------------
-# BALANCE & REPORTING
+# BALANCE & REPORTING (όπως πριν)
 # ----------------------------
 def compute_major_holidays_summary(schedule, start_date, end_date):
     blocks = get_major_holiday_blocks_in_range(start_date, end_date)
@@ -317,9 +273,6 @@ def compute_balance(schedule, start_date, end_date, holiday_names):
     df["Total"] = df["Weekdays"] + df["Fri"] + df["Sat"] + df["Sun"]
     return df[["Doctor", "Weekdays", "Fri", "Sat", "Sun", "Αργίες", "Total"]]
 
-# ----------------------------
-# PDF HELPERS
-# ----------------------------
 def create_balance_pdf(df, start_date, end_date, filename="balance_summary.pdf"):
     pdf = FPDF(orientation="L", unit="mm", format="A4")
     pdf.add_page()
@@ -378,7 +331,7 @@ def display_calendar(schedule, holiday_names):
 # STREAMLIT UI
 # ----------------------------
 st.set_page_config(page_title="📅 Πρόγραμμα Εφημεριών", layout="wide")
-st.title("📅 Πρόγραμμα Εφημεριών Ακτινολόγων")
+st.title("📅 Πρόγραμμα Εφημεριών Ακτινολόγων (με CP-SAT Solver)")
 st.markdown("<span style='font-size:14px; color:gray;'>© Γιώργος Μενοίκου, PhD</span>", unsafe_allow_html=True)
 
 if "manual_assignments" not in st.session_state:
@@ -453,15 +406,16 @@ with right_col:
             default_end = start_date + datetime.timedelta(days=30)
             end_date = st.date_input("End date", default_end)
 
-        if st.button("🗓️ Δημιουργία Προγράμματος"):
-            sch, hols = generate_full_schedule(
-                start_date, end_date, st.session_state.initial_week,
-                manual_assignments=st.session_state.manual_assignments
-            )
-            st.session_state.schedule = sch
-            st.session_state.holiday_names = hols
-            st.session_state.balance = compute_balance(sch, start_date, end_date, hols)
-            st.rerun()
+        if st.button("🗓️ Δημιουργία Προγράμματος (με Solver)"):
+            with st.spinner("Υπολογισμός βέλτιστου προγράμματος με τον CP-SAT Solver..."):
+                sch, hols = generate_full_schedule(
+                    start_date, end_date, st.session_state.initial_week,
+                    manual_assignments=st.session_state.manual_assignments
+                )
+                st.session_state.schedule = sch
+                st.session_state.holiday_names = hols
+                st.session_state.balance = compute_balance(sch, start_date, end_date, hols)
+                st.rerun()
 
     if st.session_state.schedule:
         display_calendar(st.session_state.schedule, st.session_state.holiday_names)
