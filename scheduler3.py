@@ -138,7 +138,7 @@ def generate_full_schedule(start_date, end_date, rota_sequence, manual_assignmen
             for j in range(i + 1, min(i + 3, len(dates))):
                 model.Add(x[(dates[i], doc)] + x[(dates[j], doc)] <= 1)
 
-    # 4. ΕΛΑΣΤΙΚΟΣ ΚΑΝΟΝΑΣ: Επιθυμητό μέγιστο 1 Σαββατοκύριακο/αργία ανά μήνα (με δυνατότητα υπέρβασης μέσω ποινής)
+    # 4. ΕΛΑΣΤΙΚΟΣ ΚΑΝΟΝΑΣ: Επιθυμητό μέγιστο 1 Σαββατοκύριακο/αργία ανά μήνα ανά γιατρό
     months = sorted(list(set((d.year, d.month) for d in dates)))
     overtime_penalties = []
     for year, month in months:
@@ -170,19 +170,31 @@ def generate_full_schedule(start_date, end_date, rota_sequence, manual_assignmen
                 else:
                     model.Add(sum(doc_major_vars) <= 1)
 
-    # 6. ΕΦΑΡΜΟΓΗ ΡΟΤΑΣ ΜΕ ΒΑΣΗ ΤΗ ΣΕΙΡΑ:
-    # - Στις μη αργίες, ακολουθείται η ρότα. Στις αργίες σπάει για ισότητα.
+    # 6. ΣΥΝΕΧΗΣ ΚΥΚΛΙΚΗ ΡΟΤΑ (Προχωράει μέρα-μέρα κυκλικά σε όλο το εύρος)
+    rota_penalties = []
     for i, d in enumerate(dates):
-        if d not in holiday_dates:
-            rota_doc = rota_sequence[i % len(rota_sequence)]
-            model.Add(x[(d, rota_doc)] == 1)
+        expected_doc = rota_sequence[i % len(rota_sequence)]
+        # Δίνουμε μεγάλη προτεραιότητα στη ρότα μέσω soft constraint ώστε να κυλάει ομαλά
+        match_var = model.NewBoolVar(f"match_{i}")
+        model.Add(x[(d, expected_doc)] == 1).OnlyEnforceIf(match_var)
+        model.Add(x[(d, expected_doc)] == 0).OnlyEnforceIf(match_var.Not())
+        
+        # Αν είναι αργία, επιτρέπουμε να σπάει πιο εύκολα η ρότα για να μοιραστούν οι αργίες δίκαια
+        weight = 5 if d in holiday_dates else 1
+        pen = model.NewIntVar(0, weight, f"pen_{i}")
+        model.Add(pen == 0).OnlyEnforceIf(match_var)
+        model.Add(pen == weight).OnlyEnforceIf(match_var.Not())
+        rota_penalties.append(pen)
 
-    # Ελαχιστοποίηση τυχόν υπερβάσεων στα Σαββατοκύριακα ανά μήνα
+    # Ελαχιστοποίηση αποκλίσεων από τη ρότα και τα Σαββατοκύριακα
+    total_cost = sum(rota_penalties)
     if overtime_penalties:
-        model.Minimize(sum(overtime_penalties))
+        total_cost += sum(overtime_penalties) * 10  # μεγαλύτερη βαρύτητα στην ισότητα των ΣΚ/Αργιών
+        
+    model.Minimize(total_cost)
 
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 20.0
+    solver.parameters.max_time_in_seconds = 30.0
     status = solver.Solve(model)
 
     schedule = {}
@@ -323,7 +335,7 @@ def display_calendar(schedule, holiday_names):
 # STREAMLIT UI
 # ----------------------------
 st.set_page_config(page_title="📅 Πρόγραμμα Εφημεριών", layout="wide")
-st.title("📅 Πρόγραμμα Εφημεριών Ακτινολόγων (Ελαστικός Solver)")
+st.title("📅 Πρόγραμμα Εφημεριών Ακτινολόγων (Κυλιόμενη Ρότα & Κανόνες)")
 st.markdown("<span style='font-size:14px; color:gray;'>© Γιώργος Μενοίκου, PhD</span>", unsafe_allow_html=True)
 
 if "manual_assignments" not in st.session_state:
@@ -392,7 +404,7 @@ with right_col:
     with c1:
         start_date = st.date_input("Start date", datetime.date.today())
     with c2:
-        default_end = start_date + datetime.timedelta(days=365) # Δοκιμή π.χ. για 1 έτος άνετα
+        default_end = start_date + datetime.timedelta(days=365)
         end_date = st.date_input("End date", default_end)
 
     if st.button("🗓️ Δημιουργία Προγράμματος"):
