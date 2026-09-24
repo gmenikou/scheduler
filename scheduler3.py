@@ -96,6 +96,32 @@ def _special_count_in_month(doctor, date, schedule, holiday_dates, exclude_date=
     )
 
 
+def _month_stats(doctor, date, schedule, exclude_date=None):
+    total, has_sat, has_sun = 0, False, False
+    for d, doc in schedule.items():
+        if d == exclude_date or doc != doctor:
+            continue
+        if d.year == date.year and d.month == date.month:
+            total += 1
+            if d.weekday() == 5:
+                has_sat = True
+            elif d.weekday() == 6:
+                has_sun = True
+    return total, has_sat, has_sun
+
+
+def _within_month_cap(doctor, date, schedule, exclude_date=None):
+    """Max 5 shifts per month; max 4 if the doctor has both a Saturday and a Sunday that month."""
+    total, has_sat, has_sun = _month_stats(doctor, date, schedule, exclude_date)
+    total += 1
+    if date.weekday() == 5:
+        has_sat = True
+    elif date.weekday() == 6:
+        has_sun = True
+    limit = 4 if (has_sat and has_sun) else 5
+    return total <= limit
+
+
 def orthodox_easter(year):
     a = year % 4
     b = year % 7
@@ -170,7 +196,7 @@ def is_valid_assignment(doctor, date, schedule, holiday_dates, exclude_date=None
                                exclude_date=exclude_date) >= max_special:
         return False
     if strict_monthly:
-        if _total_shifts_in_month(doctor, date, schedule, exclude_date=exclude_date) >= 5:
+        if not _within_month_cap(doctor, date, schedule, exclude_date=exclude_date):
             return False
     return True
 
@@ -188,6 +214,28 @@ def find_weekend_violations(schedule):
             days = ", ".join(x.strftime("%d/%m") for x in dates)
             msgs.append(f"{doc}: {len(dates)} {kind} τον {m:02d}/{y} ({days})")
     return msgs
+
+
+def find_month_cap_violations(schedule):
+    stats = defaultdict(lambda: [0, False, False])
+    for d, doc in schedule.items():
+        st_ = stats[(doc, d.year, d.month)]
+        st_[0] += 1
+        if d.weekday() == 5:
+            st_[1] = True
+        elif d.weekday() == 6:
+            st_[2] = True
+    msgs = []
+    for (doc, y, m), (total, sat, sun) in sorted(stats.items(), key=lambda kv: (kv[0][1], kv[0][2], kv[0][0])):
+        if total > 5:
+            msgs.append(f"{doc}: {total} εφημερίες τον {m:02d}/{y} (μέγιστο 5)")
+        elif sat and sun and total > 4:
+            msgs.append(f"{doc}: Σάββατο & Κυριακή με {total} εφημερίες τον {m:02d}/{y} (μέγιστο 4)")
+    return msgs
+
+
+def find_all_violations(schedule):
+    return find_weekend_violations(schedule) + find_month_cap_violations(schedule)
 
 
 # ----------------------------
@@ -230,7 +278,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         best_doc = None
         for doc in candidates:
             if all(is_valid_assignment(doc, bd, schedule, holiday_dates, exclude_date=bd,
-                                       strict_monthly=False, max_gap=1) for bd in block_dates):
+                                       strict_monthly=True, max_gap=1) for bd in block_dates):
                 best_doc = doc
                 break
 
@@ -243,22 +291,41 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             schedule[bd] = best_doc
         doctor_yearly_major_count[best_doc][target_year] += 1
 
-    # STEP 2: remaining special days (Fri, Sat, Sun, holidays) BEFORE weekdays
+    # STEP 2: remaining special days BEFORE weekdays.
+    # Order: minor holidays first (shared equally), then Sat/Sun, then Fridays.
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
+    all_major_dates = {d for block in major_blocks for d in block["dates"]}
+    minor_dates = {d for d in holiday_dates if d not in all_major_dates}
+
+    def _minor_total(doc, exclude):
+        return sum(1 for dd, dc in schedule.items()
+                   if dc == doc and dd in minor_dates and dd != exclude)
+
+    def _has_other_weekend_day(doc, d):
+        if d.weekday() not in (5, 6):
+            return False
+        other = 6 if d.weekday() == 5 else 5
+        return any(dc == doc and dd.weekday() == other
+                   and dd.year == d.year and dd.month == d.month
+                   for dd, dc in schedule.items())
+
     special_dates = [
         d for d in all_days
         if d not in schedule and (d.weekday() in (4, 5, 6) or d in holiday_dates)
     ]
+    special_dates.sort(key=lambda d: (0 if d in minor_dates else 1 if d.weekday() in (5, 6) else 2, d))
 
     for d in special_dates:
         chosen = None
         for max_special, gap in [(1, 3), (1, 2), (1, 1), (1, 0), (2, 1), (2, 0)]:
             valid = [doc for doc in DOCTORS if is_valid_assignment(
                 doc, d, schedule, holiday_dates, exclude_date=d,
-                strict_monthly=False, max_gap=gap, max_special=max_special)]
+                strict_monthly=True, max_gap=gap, max_special=max_special)]
             if valid:
                 chosen = min(valid, key=lambda doc: (
+                    _minor_total(doc, d) if d in minor_dates else 0,
                     _special_count_in_month(doc, d, schedule, holiday_dates, exclude_date=d),
+                    _has_other_weekend_day(doc, d),
                     _total_shifts_in_month(doc, d, schedule, exclude_date=d)))
                 if _special_count_in_month(chosen, d, schedule, holiday_dates, exclude_date=d) >= 1:
                     warnings.append(
@@ -267,35 +334,55 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                 break
         if chosen is None:
             chosen = min(DOCTORS, key=lambda doc: (
+                not _within_month_cap(doc, d, schedule, exclude_date=d),
                 _special_count_in_month(doc, d, schedule, holiday_dates, exclude_date=d),
                 _total_shifts_in_month(doc, d, schedule, exclude_date=d)))
             warnings.append(f"{d.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
         schedule[d] = chosen
 
-    # STEP 3: weekdays (Mon-Thu) from the initial rota
+    # STEP 3: weekdays (Mon-Thu) from the initial rota, respecting the monthly cap
     start_monday = _week_monday(start_date)
     for current_date in all_days:
         if current_date in schedule:
             continue
         week_num = (_week_monday(current_date) - start_monday).days // 7
         doc_index = (current_date.weekday() + week_num * 2) % len(initial_week)
-        doc = initial_week[doc_index]
+        rota_doc = initial_week[doc_index]
 
-        if not _has_nearby_shift(doc, current_date, schedule, max_gap=2):
-            schedule[current_date] = doc
-        else:
-            valid_docs = [d for d in DOCTORS if not _has_nearby_shift(d, current_date, schedule, max_gap=2)]
-            if not valid_docs:
-                valid_docs = DOCTORS
-            schedule[current_date] = min(
-                valid_docs, key=lambda d: _total_shifts_in_month(d, current_date, schedule))
+        chosen = None
+        for gap in (2, 1, 0):
+            valid = [doc for doc in DOCTORS if is_valid_assignment(
+                doc, current_date, schedule, holiday_dates, exclude_date=current_date,
+                strict_monthly=True, max_gap=gap)]
+            if not valid:
+                continue
+            totals = {doc: _total_shifts_in_month(doc, current_date, schedule) for doc in valid}
+            lowest = min(totals.values())
+            if rota_doc in valid and totals[rota_doc] <= lowest + 1:
+                chosen = rota_doc
+            else:
+                chosen = min(valid, key=lambda doc: totals[doc])
+            break
+        if chosen is None:
+            chosen = min(DOCTORS, key=lambda doc: (
+                not _within_month_cap(doc, current_date, schedule, exclude_date=current_date),
+                _total_shifts_in_month(doc, current_date, schedule)))
+            warnings.append(f"{current_date.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
+        schedule[current_date] = chosen
 
     # Re-apply manual assignments so they always win
     for d, doc in manual_assignments.items():
         if start_date <= d <= end_date:
             schedule[d] = doc
 
-    warnings += find_weekend_violations(schedule)
+    if minor_dates:
+        mc = {doc: sum(1 for dd, dc in schedule.items() if dc == doc and dd in minor_dates)
+              for doc in DOCTORS}
+        if max(mc.values()) - min(mc.values()) > 1:
+            warnings.append("Οι μικρές αργίες δεν μοιράστηκαν ισόποσα: " +
+                            ", ".join(f"{doc} {n}" for doc, n in mc.items()))
+
+    warnings += find_all_violations(schedule)
     return schedule, holiday_names, warnings
 
 
@@ -462,7 +549,7 @@ with left_col:
             st.session_state.balance = compute_balance(
                 st.session_state.schedule, st.session_state.start_date, end_d,
                 st.session_state.holiday_names)
-            st.session_state.warnings = find_weekend_violations(st.session_state.schedule)
+            st.session_state.warnings = find_all_violations(st.session_state.schedule)
             st.success(f"Ο/Η {manual_doctor} ανατέθηκε στις {manual_date.strftime('%d/%m/%Y')}")
             st.rerun()
 
