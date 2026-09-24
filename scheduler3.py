@@ -50,77 +50,139 @@ def _week_monday(date):
     return date - datetime.timedelta(days=date.weekday())
 
 
-def _has_nearby_shift(doctor, date, schedule, max_gap=3):
-    for d, doc in schedule.items():
-        if doc == doctor and d != date and abs((d - date).days) <= max_gap:
-            return True
-    return False
+class ScheduleIndex:
+    """The schedule plus running counters, so every rule check is a dictionary lookup
+    instead of a scan over all assigned days (keeps generation linear in the range length)."""
 
+    def __init__(self, holiday_dates, minor_dates=frozenset()):
+        self.assign = {}                    # date -> doctor (this is the schedule itself)
+        self.holiday_dates = holiday_dates
+        self.minor_dates = minor_dates
+        self.doc_dates = defaultdict(set)   # doctor -> set of dates
+        self.week = {}                      # (doctor, monday) -> shifts
+        self.month = {}                     # (doctor, year, month) -> shifts
+        self.bucket = {}                    # (doctor, year, month, 'sat'|'sun'|'hol') -> shifts
+        self.wd = {}                        # (doctor, weekday) -> shifts in the whole range
+        self.minor = {}                     # doctor -> minor holidays in the whole range
 
-def _shifts_in_week(doctor, date, schedule, exclude_date=None):
-    wk = _week_monday(date)
-    return sum(
-        1 for d, doc in schedule.items()
-        if doc == doctor and d != exclude_date and _week_monday(d) == wk
-    )
+    # ---- bookkeeping ----
+    def bucket_of(self, d):
+        """Any Saturday -> 'sat', any Sunday -> 'sun' (holiday or not),
+        holiday on Mon-Fri -> 'hol', otherwise None."""
+        if d.weekday() == 5:
+            return "sat"
+        if d.weekday() == 6:
+            return "sun"
+        if d in self.holiday_dates:
+            return "hol"
+        return None
 
+    def _bump(self, store, key, delta):
+        store[key] = store.get(key, 0) + delta
 
-def _total_shifts_in_month(doctor, date, schedule, exclude_date=None):
-    return sum(
-        1 for d, doc in schedule.items()
-        if d != exclude_date and doc == doctor
-        and d.year == date.year and d.month == date.month
-    )
+    def _apply(self, d, doc, delta):
+        self._bump(self.week, (doc, _week_monday(d)), delta)
+        self._bump(self.month, (doc, d.year, d.month), delta)
+        b = self.bucket_of(d)
+        if b:
+            self._bump(self.bucket, (doc, d.year, d.month, b), delta)
+        self._bump(self.wd, (doc, d.weekday()), delta)
+        if d in self.minor_dates:
+            self._bump(self.minor, doc, delta)
 
+    def add(self, d, doc):
+        if d in self.assign:
+            self.remove(d)
+        self.assign[d] = doc
+        self.doc_dates[doc].add(d)
+        self._apply(d, doc, +1)
 
-def _special_bucket(date, holiday_dates):
-    """Any Saturday -> 'sat', any Sunday -> 'sun' (holiday or not),
-    holiday on Mon-Fri -> 'hol', otherwise None."""
-    if date.weekday() == 5:
-        return "sat"
-    if date.weekday() == 6:
-        return "sun"
-    if date in holiday_dates:
-        return "hol"
-    return None
+    def remove(self, d):
+        doc = self.assign.pop(d)
+        self.doc_dates[doc].discard(d)
+        self._apply(d, doc, -1)
 
+    def _ex(self, doc, exclude_date):
+        """exclude_date only matters if it is currently assigned to this doctor."""
+        if exclude_date is not None and self.assign.get(exclude_date) == doc:
+            return exclude_date
+        return None
 
-def _special_count_in_month(doctor, date, schedule, holiday_dates, exclude_date=None):
-    bucket = _special_bucket(date, holiday_dates)
-    if bucket is None:
-        return 0
-    return sum(
-        1 for d, doc in schedule.items()
-        if doc == doctor and d != exclude_date
-        and d.year == date.year and d.month == date.month
-        and _special_bucket(d, holiday_dates) == bucket
-    )
+    # ---- queries (same meaning as the old scanning helpers) ----
+    def has_nearby_shift(self, doc, date, max_gap=3):
+        dates = self.doc_dates.get(doc)
+        if not dates:
+            return False
+        one_day = datetime.timedelta(days=1)
+        for k in range(1, max_gap + 1):
+            delta = one_day * k
+            if (date + delta) in dates or (date - delta) in dates:
+                return True
+        return False
 
+    def shifts_in_week(self, doc, date, exclude_date=None):
+        wk = _week_monday(date)
+        n = self.week.get((doc, wk), 0)
+        ex = self._ex(doc, exclude_date)
+        if ex is not None and _week_monday(ex) == wk:
+            n -= 1
+        return n
 
-def _month_stats(doctor, date, schedule, exclude_date=None):
-    total, has_sat, has_sun = 0, False, False
-    for d, doc in schedule.items():
-        if d == exclude_date or doc != doctor:
-            continue
-        if d.year == date.year and d.month == date.month:
-            total += 1
-            if d.weekday() == 5:
-                has_sat = True
-            elif d.weekday() == 6:
-                has_sun = True
-    return total, has_sat, has_sun
+    def total_in_month(self, doc, date, exclude_date=None):
+        n = self.month.get((doc, date.year, date.month), 0)
+        ex = self._ex(doc, exclude_date)
+        if ex is not None and ex.year == date.year and ex.month == date.month:
+            n -= 1
+        return n
 
+    def _bucket_count(self, doc, date, bucket, exclude_date=None):
+        n = self.bucket.get((doc, date.year, date.month, bucket), 0)
+        ex = self._ex(doc, exclude_date)
+        if (ex is not None and ex.year == date.year and ex.month == date.month
+                and self.bucket_of(ex) == bucket):
+            n -= 1
+        return n
 
-def _within_month_cap(doctor, date, schedule, exclude_date=None):
-    """Max 5 shifts per month; max 4 if the doctor has both a Saturday and a Sunday that month."""
-    total, has_sat, has_sun = _month_stats(doctor, date, schedule, exclude_date)
-    total += 1
-    if date.weekday() == 5:
-        has_sat = True
-    elif date.weekday() == 6:
-        has_sun = True
-    limit = 4 if (has_sat and has_sun) else 5
-    return total <= limit
+    def special_count(self, doc, date, exclude_date=None):
+        b = self.bucket_of(date)
+        return 0 if b is None else self._bucket_count(doc, date, b, exclude_date)
+
+    def month_stats(self, doc, date, exclude_date=None):
+        total = self.total_in_month(doc, date, exclude_date)
+        has_sat = self._bucket_count(doc, date, "sat", exclude_date) > 0
+        has_sun = self._bucket_count(doc, date, "sun", exclude_date) > 0
+        return total, has_sat, has_sun
+
+    def within_month_cap(self, doc, date, exclude_date=None):
+        """Max 5 shifts per month; max 4 if the doctor has both a Saturday and a Sunday that month."""
+        total, has_sat, has_sun = self.month_stats(doc, date, exclude_date)
+        total += 1
+        if date.weekday() == 5:
+            has_sat = True
+        elif date.weekday() == 6:
+            has_sun = True
+        return total <= (4 if (has_sat and has_sun) else 5)
+
+    def weekday_total(self, doc, d):
+        """Fridays / Saturdays / Sundays (same weekday as d) the doctor has in the whole range."""
+        if d.weekday() not in (4, 5, 6):
+            return 0
+        n = self.wd.get((doc, d.weekday()), 0)
+        if self.assign.get(d) == doc:
+            n -= 1
+        return n
+
+    def minor_total(self, doc, exclude=None):
+        n = self.minor.get(doc, 0)
+        if exclude in self.minor_dates and self.assign.get(exclude) == doc:
+            n -= 1
+        return n
+
+    def has_other_weekend_day(self, doc, d):
+        if d.weekday() not in (5, 6):
+            return False
+        other = "sun" if d.weekday() == 5 else "sat"
+        return self.bucket.get((doc, d.year, d.month, other), 0) > 0
 
 
 def orthodox_easter(year):
@@ -186,18 +248,17 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
     return blocks
 
 
-def is_valid_assignment(doctor, date, schedule, holiday_dates, exclude_date=None,
+def is_valid_assignment(doctor, date, idx, exclude_date=None,
                         strict_monthly=True, max_gap=3, max_special=1):
-    if max_gap > 0 and _has_nearby_shift(doctor, date, schedule, max_gap=max_gap):
+    if max_gap > 0 and idx.has_nearby_shift(doctor, date, max_gap=max_gap):
         return False
-    if _shifts_in_week(doctor, date, schedule, exclude_date=exclude_date) >= 2:
+    if idx.shifts_in_week(doctor, date, exclude_date=exclude_date) >= 2:
         return False
     # Max 1 Saturday, 1 Sunday, 1 weekday-holiday per month (holidays on Sat/Sun count as Sat/Sun)
-    if _special_count_in_month(doctor, date, schedule, holiday_dates,
-                               exclude_date=exclude_date) >= max_special:
+    if idx.special_count(doctor, date, exclude_date=exclude_date) >= max_special:
         return False
     if strict_monthly:
-        if not _within_month_cap(doctor, date, schedule, exclude_date=exclude_date):
+        if not idx.within_month_cap(doctor, date, exclude_date=exclude_date):
             return False
     return True
 
@@ -260,18 +321,22 @@ def find_all_violations(schedule):
 def _generate_once(start_date, end_date, initial_week, manual_assignments=None, order=None):
     order = order or list(DOCTORS)
     manual_assignments = manual_assignments or {}
-    schedule = {}
     warnings = []
 
     total_days = (end_date - start_date).days + 1
     holiday_names = get_holidays_in_range(start_date, end_date)
     holiday_dates = set(holiday_names.keys())
     major_blocks = get_major_holiday_blocks_in_range(start_date, end_date)
+    all_major_dates = {d for block in major_blocks for d in block["dates"]}
+    minor_dates = {d for d in holiday_dates if d not in all_major_dates}
+
+    idx = ScheduleIndex(holiday_dates, minor_dates)
+    schedule = idx.assign
 
     # Manual assignments go in first
     for d, doc in manual_assignments.items():
         if start_date <= d <= end_date:
-            schedule[d] = doc
+            idx.add(d, doc)
 
     # STEP 1: major holiday packages (1 package per doctor per year)
     doctor_yearly_major_count = {
@@ -294,45 +359,24 @@ def _generate_once(start_date, end_date, initial_week, manual_assignments=None, 
 
         best_doc = None
         for doc in candidates:
-            if all(is_valid_assignment(doc, bd, schedule, holiday_dates, exclude_date=bd,
+            if all(is_valid_assignment(doc, bd, idx, exclude_date=bd,
                                        strict_monthly=True, max_gap=2) for bd in block_dates):
                 best_doc = doc
                 break
 
         if not best_doc:
             best_doc = min(candidates, key=lambda doc: (
-                sum(_has_nearby_shift(doc, bd, schedule, max_gap=2) for bd in block_dates),
-                sum(_special_count_in_month(doc, bd, schedule, holiday_dates) for bd in block_dates)))
+                sum(idx.has_nearby_shift(doc, bd, max_gap=2) for bd in block_dates),
+                sum(idx.special_count(doc, bd) for bd in block_dates)))
             warnings.append(f"{block['name']}: ανατέθηκε χωρίς πλήρη τήρηση κανόνων ({best_doc})")
 
         for bd in block_dates:
-            schedule[bd] = best_doc
+            idx.add(bd, best_doc)
         doctor_yearly_major_count[best_doc][target_year] += 1
 
     # STEP 2: remaining special days BEFORE weekdays.
     # Order: minor holidays first (shared equally), then Sat/Sun, then Fridays.
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
-    all_major_dates = {d for block in major_blocks for d in block["dates"]}
-    minor_dates = {d for d in holiday_dates if d not in all_major_dates}
-
-    def _minor_total(doc, exclude):
-        return sum(1 for dd, dc in schedule.items()
-                   if dc == doc and dd in minor_dates and dd != exclude)
-
-    def _weekday_total(doc, d):
-        """How many Fridays / Saturdays / Sundays (same weekday as d) the doctor has in the whole range."""
-        if d.weekday() not in (4, 5, 6):
-            return 0
-        return sum(1 for dd, dc in schedule.items()
-                   if dc == doc and dd != d and dd.weekday() == d.weekday())
-
-    def _has_other_weekend_day(doc, d):
-        if d.weekday() not in (5, 6):
-            return False
-        other = 6 if d.weekday() == 5 else 5
-        return any(dc == doc and dd.weekday() == other
-                   and dd.year == d.year and dd.month == d.month
-                   for dd, dc in schedule.items())
 
     special_dates = [
         d for d in all_days
@@ -344,28 +388,28 @@ def _generate_once(start_date, end_date, initial_week, manual_assignments=None, 
         chosen = None
         for max_special, gap in [(1, 3), (1, 2), (2, 3), (2, 2)]:
             valid = [doc for doc in order if is_valid_assignment(
-                doc, d, schedule, holiday_dates, exclude_date=d,
+                doc, d, idx, exclude_date=d,
                 strict_monthly=True, max_gap=gap, max_special=max_special)]
             if valid:
                 chosen = min(valid, key=lambda doc: (
-                    _minor_total(doc, d) if d in minor_dates else 0,
-                    _weekday_total(doc, d),
-                    _special_count_in_month(doc, d, schedule, holiday_dates, exclude_date=d),
-                    _has_other_weekend_day(doc, d),
-                    _total_shifts_in_month(doc, d, schedule, exclude_date=d)))
-                if _special_count_in_month(chosen, d, schedule, holiday_dates, exclude_date=d) >= 1:
+                    idx.minor_total(doc, d) if d in minor_dates else 0,
+                    idx.weekday_total(doc, d),
+                    idx.special_count(doc, d, exclude_date=d),
+                    idx.has_other_weekend_day(doc, d),
+                    idx.total_in_month(doc, d, exclude_date=d)))
+                if idx.special_count(chosen, d, exclude_date=d) >= 1:
                     warnings.append(
                         f"{d.strftime('%d/%m/%Y')}: ο/η {chosen} έχει 2η ίδια ημέρα "
                         f"(Σάββατο/Κυριακή/αργία) τον μήνα")
                 break
         if chosen is None:
             chosen = min(order, key=lambda doc: (
-                _has_nearby_shift(doc, d, schedule, max_gap=2),
-                not _within_month_cap(doc, d, schedule, exclude_date=d),
-                _special_count_in_month(doc, d, schedule, holiday_dates, exclude_date=d),
-                _total_shifts_in_month(doc, d, schedule, exclude_date=d)))
+                idx.has_nearby_shift(doc, d, max_gap=2),
+                not idx.within_month_cap(doc, d, exclude_date=d),
+                idx.special_count(doc, d, exclude_date=d),
+                idx.total_in_month(doc, d, exclude_date=d)))
             warnings.append(f"{d.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
-        schedule[d] = chosen
+        idx.add(d, chosen)
 
     # STEP 3: weekdays (Mon-Thu) from the initial rota, respecting the monthly cap
     start_monday = _week_monday(start_date)
@@ -379,7 +423,7 @@ def _generate_once(start_date, end_date, initial_week, manual_assignments=None, 
         chosen = None
         for gap in (2,):
             valid = [doc for doc in order if is_valid_assignment(
-                doc, current_date, schedule, holiday_dates, exclude_date=current_date,
+                doc, current_date, idx, exclude_date=current_date,
                 strict_monthly=True, max_gap=gap)]
             if not valid:
                 continue
@@ -387,21 +431,21 @@ def _generate_once(start_date, end_date, initial_week, manual_assignments=None, 
             # assignments are already final here, so the limits are known.
             rem = {}
             for doc in valid:
-                tot, hs, hu = _month_stats(doc, current_date, schedule)
+                tot, hs, hu = idx.month_stats(doc, current_date)
                 rem[doc] = (4 if (hs and hu) else 5) - tot
             best = max(rem.values())
             if rota_doc in valid and rem[rota_doc] >= best - 1:
                 chosen = rota_doc
             else:
-                chosen = min(valid, key=lambda doc: (-rem[doc], _total_shifts_in_month(doc, current_date, schedule)))
+                chosen = min(valid, key=lambda doc: (-rem[doc], idx.total_in_month(doc, current_date)))
             break
         if chosen is None:
             chosen = min(order, key=lambda doc: (
-                _has_nearby_shift(doc, current_date, schedule, max_gap=2),
-                not _within_month_cap(doc, current_date, schedule, exclude_date=current_date),
-                _total_shifts_in_month(doc, current_date, schedule)))
+                idx.has_nearby_shift(doc, current_date, max_gap=2),
+                not idx.within_month_cap(doc, current_date, exclude_date=current_date),
+                idx.total_in_month(doc, current_date)))
             warnings.append(f"{current_date.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
-        schedule[current_date] = chosen
+        idx.add(current_date, chosen)
 
     # Re-apply manual assignments so they always win
     for d, doc in manual_assignments.items():
