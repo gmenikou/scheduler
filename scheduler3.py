@@ -446,49 +446,45 @@ def compute_regular_holidays_chronological(schedule, regular_holidays):
     return pd.DataFrame(data)
 
 
-def compute_doctor_chronological_schedule(schedule, start_date, end_date, holiday_names):
-    """Αναλυτική λίστα ομαδοποιημένη ανά ιατρό, με σπασμένα πακέτα, ημερολογιακή σειρά και στήλες: Ακτινολόγος, Ημερομηνία Αργίας, Περιγραφή Αργίας"""
+def compute_doctor_summary_table(schedule, start_date, end_date, holiday_names):
+    """Δημιουργεί ενιαίο πίνακα όπου κάθε γραμμή αντιστοιχεί σε έναν γιατρό και περιέχει όλες τις αργίες του ταξινομημένες ημερολογιακά"""
     major_blocks = get_major_holiday_blocks_in_range(start_date, end_date)
     all_major_dates = {d for block in major_blocks for d in block["dates"]}
     major_lookup = {d: block["name"] for block in major_blocks for d in block["dates"]}
     
-    doctor_schedules = {doc: [] for doc in DOCTORS}
+    # Συλλογή όλων των αργιών (μεγάλων και μικρών) ανά γιατρό
+    doctor_holidays = {doc: [] for doc in DOCTORS}
     
     sorted_dates = sorted([d for d in schedule.keys() if start_date <= d <= end_date])
     for d in sorted_dates:
         doc = schedule[d]
-        if doc not in doctor_schedules:
+        if doc not in doctor_holidays:
             continue
             
-        weekday_str = GREEK_WEEKDAY_LABELS[d.weekday()]
-        
-        if d in all_major_dates:
-            desc = f"Μεγάλη Εορτή: {major_lookup.get(d, 'Πακέτο')}"
-        elif d in holiday_names:
-            desc = f"Μικρή Αργία: {holiday_names[d]}"
-        elif d.weekday() == 5:
-            desc = "Σάββατο"
-        elif d.weekday() == 6:
-            desc = "Κυριακή"
-        else:
-            desc = "Καθημερινή"
+        is_holiday = (d in all_major_dates) or (d in holiday_names)
+        if is_holiday:
+            weekday_str = GREEK_WEEKDAY_LABELS[d.weekday()]
+            if d in all_major_dates:
+                desc = f"Μεγάλη Εορτή: {major_lookup.get(d, 'Πακέτο')}"
+            else:
+                desc = f"Μικρή Αργία: {holiday_names[d]}"
+                
+            doctor_holidays[doc].append({
+                "date_obj": d,
+                "text": f"{d.strftime('%d/%m/%Y')} ({weekday_str}) - {desc}"
+            })
             
-        doctor_schedules[doc].append({
-            "date_obj": d,
+    summary_rows = []
+    for doc in DOCTORS:
+        hols = sorted(doctor_holidays[doc], key=lambda x: x["date_obj"])
+        hols_str = "<br>".join([h["text"] for h in hols]) if hols else "Καμία αργία"
+        summary_rows.append({
             "Ακτινολόγος": doc,
-            "Ημερομηνία Αργίας": f"{d.strftime('%d/%m/%Y')} ({weekday_str})",
-            "Περιγραφή Αργίας": desc
+            "Συγκεντρωτικές Αργίες (Ημερολογιακή Σειρά)": hols_str,
+            "Σύνολο": len(hols)
         })
         
-    formatted_doctor_schedules = {}
-    for doc, items in doctor_schedules.items():
-        df_doc = pd.DataFrame(items)
-        if not df_doc.empty:
-            df_doc = df_doc.sort_values("date_obj")
-            df_doc = df_doc[["Ακτινολόγος", "Ημερομηνία Αργίας", "Περιγραφή Αργίας"]].reset_index(drop=True)
-        formatted_doctor_schedules[doc] = df_doc
-        
-    return formatted_doctor_schedules
+    return pd.DataFrame(summary_rows)
 
 
 def compute_balance(schedule, start_date, end_date, holiday_names):
@@ -747,22 +743,17 @@ with left_col:
                     regular_df = compute_regular_holidays_chronological(st.session_state.schedule, regular_hols)
                     st.dataframe(regular_df, use_container_width=True)
 
-        # Ομαδοποιημένη προοπτική ανά ιατρό (με καρτέλες για κάθε γιατρό) και ταξινόμηση χρονολογικά
+        # Συγκεντρωτικός πίνανας ανά ιατρό με όλες τις αργίες τους χρονολογικά ταξινομημένες ανά γραμμή
         if st.session_state.schedule:
             st.markdown("---")
-            st.markdown("### 👨‍⚕️👩‍⚕️ Ομαδοποιημένο Πρόγραμμα ανά Ιατρό")
-            doc_schedules = compute_doctor_chronological_schedule(
+            st.markdown("### 👨‍⚕️👩‍⚕️ Συγκεντρωτικές Αργίες ανά Ιατρό (Ημερολογιακή Σειρά)")
+            doc_summary_df = compute_doctor_summary_table(
                 st.session_state.schedule, st.session_state.start_date, end_d, st.session_state.holiday_names
             )
-            doc_tabs = st.tabs(DOCTORS)
-            for idx, doc_name in enumerate(DOCTORS):
-                with doc_tabs[idx]:
-                    d_df = doc_schedules.get(doc_name, pd.DataFrame())
-                    if not d_df.empty:
-                        st.dataframe(d_df, use_container_width=True, height=250)
-                        st.caption(f"Συνολικές Εφημερίες Ιατρού: **{len(d_df)}**")
-                    else:
-                        st.info("Δεν υπάρχουν εφημερίες για αυτόν τον ιατρό στην επιλεγμένη περίοδο.")
+            st.markdown(
+                doc_summary_df.to_html(escape=False, index=False),
+                unsafe_allow_html=True
+            )
 
         st.markdown("---")
         try:
