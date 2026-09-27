@@ -267,71 +267,41 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         if start_date <= d <= end_date:
             schedule[d] = doc
 
-    cycles_dict = defaultdict(list)
-    for block in major_blocks:
-        cycles_dict[block["cycle_id"]].append(block)
+    # Διορθωμένη λογική: Κατανόηση συνολικών μεγάλων εορτών χρονολογικά με αυστηρό global round-robin ανά πακέτο
+    sorted_major_blocks = sorted(major_blocks, key=lambda b: (b["dates"][0], b["order"]))
+    
+    def _major_total(doc):
+        return sum(1 for b in sorted_major_blocks if any(schedule.get(d) == doc for d in b["dates"]))
 
-    sorted_cycles = sorted(cycles_dict.keys())
-    base_doctors = list(DOCTORS)
-
-    cycle_doctor_assignments = defaultdict(set)
+    # Παρακολούθηση ποιος πήρε ποιο πακέτο ανά κύκλο για να αποφεύγονται οι συνεχείς επαναλήψεις
     historical_package_assignments = {}
 
-    for cycle_idx, c_id in enumerate(sorted_cycles):
-        cycle_blocks = sorted(cycles_dict[c_id], key=lambda b: b["order"])
-        shifted_doctors = base_doctors[cycle_idx % len(base_doctors):] + base_doctors[:cycle_idx % len(base_doctors)]
-        available_doctors = list(shifted_doctors)
+    for block_idx, block in enumerate(sorted_major_blocks):
+        block_dates = block["dates"]
+        if any(bd in schedule for bd in block_dates):
+            continue
         
-        for b_idx, block in enumerate(cycle_blocks):
-            block_dates = block["dates"]
-            if any(bd in schedule for bd in block_dates):
-                continue
-            
-            base_name = block["base_name"]
-            
-            valid_candidates = [
-                doc for doc in available_doctors 
-                if doc not in cycle_doctor_assignments[c_id]
-                and historical_package_assignments.get((doc, base_name)) != c_id - 1
-            ]
-            
-            if not valid_candidates:
-                valid_candidates = available_doctors
+        base_name = block["base_name"]
+        primary_date = block_dates[0]
+        
+        # Επιλογή ιατρού με βάση το ποιος έχει τις λιγότερες μεγάλες αργίες συνολικά μέχρι τώρα (strict round-robin)
+        valid_candidates = [
+            doc for doc in DOCTORS
+            if is_valid_assignment(doc, primary_date, schedule, holiday_dates, exclude_date=None, 
+                                   strict_monthly=True, min_gap=3, max_special=1, avoid_consecutive_weekends=True)
+        ]
+        
+        if not valid_candidates:
+            valid_candidates = list(DOCTORS)
 
-            if not valid_candidates:
-                valid_candidates = list(DOCTORS)
-            if not available_doctors:
-                available_doctors = list(DOCTORS)
+        # Διαλογή με προτεραιότητα στον γιατρό με τις λιγότερες μεγάλες αργίες
+        assigned_doc = min(valid_candidates, key=lambda d: (
+            _major_total(d),
+            _total_shifts_in_month(d, primary_date, schedule, holiday_dates=holiday_dates)
+        ))
 
-            assigned_doc = valid_candidates[0] if valid_candidates else DOCTORS[0]
-                
-            if assigned_doc in available_doctors:
-                available_doctors.remove(assigned_doc)
-                
-            cycle_doctor_assignments[c_id].add(assigned_doc)
-            historical_package_assignments[(assigned_doc, base_name)] = c_id
-            
-            primary_date = block_dates[0]
-            if not is_valid_assignment(assigned_doc, primary_date, schedule, holiday_dates, exclude_date=None, 
-                                       strict_monthly=True, min_gap=3, max_special=1, avoid_consecutive_weekends=True):
-                safe_alternatives = [
-                    d for d in DOCTORS 
-                    if d not in cycle_doctor_assignments[c_id] and
-                    is_valid_assignment(d, primary_date, schedule, holiday_dates, exclude_date=None,
-                                           strict_monthly=True, min_gap=3, max_special=1, avoid_consecutive_weekends=True)
-                ]
-                if safe_alternatives:
-                    assigned_doc = safe_alternatives[0]
-                else:
-                    safe_any = [
-                        d for d in DOCTORS 
-                        if is_valid_assignment(d, primary_date, schedule, holiday_dates, exclude_date=None,
-                                               strict_monthly=True, min_gap=3, max_special=1, avoid_consecutive_weekends=True)
-                    ]
-                    assigned_doc = safe_any[0] if safe_any else min(DOCTORS, key=lambda d: _total_shifts_in_month(d, primary_date, schedule, holiday_dates=holiday_dates))
-
-            for bd in block_dates:
-                schedule[bd] = assigned_doc
+        for bd in block_dates:
+            schedule[bd] = assigned_doc
 
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
     all_major_dates = {d for block in major_blocks for d in block["dates"]}
