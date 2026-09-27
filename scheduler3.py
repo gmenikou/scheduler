@@ -407,7 +407,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 
 
 # ----------------------------
-# CHRONOLOGICAL SUMMARY FUNCTIONS (ΣΠΑΣΙΜΟ ΠΑΚΕΤΩΝ ΗΜΕΡΟΛΟΓΙΑΚΑ)
+# CHRONOLOGICAL SUMMARY FUNCTIONS
 # ----------------------------
 def compute_major_holidays_chronological_flat(schedule, start_date, end_date):
     blocks = get_major_holiday_blocks_in_range(start_date, end_date)
@@ -419,12 +419,16 @@ def compute_major_holidays_chronological_flat(schedule, start_date, end_date):
             doc = schedule.get(d, "-")
             weekday_str = GREEK_WEEKDAY_LABELS[d.weekday()]
             data.append({
+                "date_obj": d,
                 "Ημερομηνία": d.strftime('%d/%m/%Y'),
                 "Ημέρα": weekday_str,
                 "Μεγάλη Εορτή / Πακέτο": block["name"],
                 "Ακτινολόγος": doc,
             })
-    return pd.DataFrame(data)
+    df = pd.DataFrame(data)
+    if not df.empty:
+        df = df.sort_values("date_obj").drop(columns=["date_obj"]).reset_index(drop=True)
+    return df
 
 
 def compute_regular_holidays_chronological(schedule, regular_holidays):
@@ -443,7 +447,7 @@ def compute_regular_holidays_chronological(schedule, regular_holidays):
 
 
 def compute_doctor_chronological_schedule(schedule, start_date, end_date, holiday_names):
-    """Δημιουργεί αναλυτική ημερολογιακή λίστα εφημεριών ανά ιατρό προοπτικά"""
+    """Αναλυτική λίστα ανά ιατρό με σπασμένα πακέτα, ημερολογιακή σειρά και στήλες: Ακτινολόγος, Ημερομηνία, Περιγραφή"""
     major_blocks = get_major_holiday_blocks_in_range(start_date, end_date)
     all_major_dates = {d for block in major_blocks for d in block["dates"]}
     major_lookup = {d: block["name"] for block in major_blocks for d in block["dates"]}
@@ -458,25 +462,35 @@ def compute_doctor_chronological_schedule(schedule, start_date, end_date, holida
             
         weekday_str = GREEK_WEEKDAY_LABELS[d.weekday()]
         
-        # Καθορισμός τύπου εφημερίας
+        # Καθορισμός τύπου / περιγραφής αργίας
         if d in all_major_dates:
-            shift_type = f"Μεγάλη Εορτή ({major_lookup.get(d, 'Πακέτο')})"
+            desc = f"Μεγάλη Εορτή: {major_lookup.get(d, 'Πακέτο')}"
         elif d in holiday_names:
-            shift_type = f"Μικρή Αργία ({holiday_names[d]})"
+            desc = f"Μικρή Αργία: {holiday_names[d]}"
         elif d.weekday() == 5:
-            shift_type = "Σάββατο"
+            desc = "Σάββατο"
         elif d.weekday() == 6:
-            shift_type = "Κυριακή"
+            desc = "Κυριακή"
         else:
-            shift_type = "Καθημερινή"
+            desc = "Καθημερινή"
             
         doctor_schedules[doc].append({
-            "Ημερομηνία": d.strftime('%d/%m/%Y'),
-            "Ημέρα": weekday_str,
-            "Τύπος Εφημερίας": shift_type
+            "date_obj": d,
+            "Ακτινολόγος": doc,
+            "Ημερομηνία Αργίας": f"{d.strftime('%d/%m/%Y')} ({weekday_str})",
+            "Περιγραφή Αργίας": desc
         })
         
-    return doctor_schedules
+    # Επεξεργασία DataFrame ανά ιατρό για σωστή χρονολογική ταξινόμηση
+    formatted_doctor_schedules = {}
+    for doc, items in doctor_schedules.items():
+        df_doc = pd.DataFrame(items)
+        if not df_doc.empty:
+            df_doc = df_doc.sort_values("date_obj")
+            df_doc = df_doc[["Ακτινολόγος", "Ημερομηνία Αργίας", "Περιγραφή Αργίας"]].reset_index(drop=True)
+        formatted_doctor_schedules[doc] = df_doc
+        
+    return formatted_doctor_schedules
 
 
 def compute_balance(schedule, start_date, end_date, holiday_names):
@@ -540,7 +554,7 @@ def create_major_holidays_pdf(schedule, start_date, end_date):
     pdf.add_font("DejaVu", "B", "DejaVuSans-Bold.ttf")
 
     pdf.set_font("DejaVu", "B", 14)
-    pdf.cell(0, 10, "Ημερολογιακή Ανάλυση Μεγάλων Εορτών (Σπασμένο ανά Ημερομηνία)", align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 10, "Ημερολογιακή Ανάλυση Μεγάλων Εορτών (Σπασμένα Πακέτα)", align="C", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("DejaVu", "", 10)
     pdf.cell(0, 6, f"Περίοδος: {start_date.strftime('%d/%m/%Y')} – {end_date.strftime('%d/%m/%Y')}",
              align="C", new_x="LMARGIN", new_y="NEXT")
@@ -735,7 +749,7 @@ with left_col:
                     regular_df = compute_regular_holidays_chronological(st.session_state.schedule, regular_hols)
                     st.dataframe(regular_df, use_container_width=True)
 
-        # ΝΕΟ: Αναλυτική Προοπτική Ανά Ιατρό
+        # Αναλυτική Προοπτική Ανά Ιατρό με τη νέα σειρά στηλών και χρονολογική κατάταξη
         if st.session_state.schedule:
             st.markdown("---")
             st.markdown("### 👨‍⚕️👩‍⚕️ Προοπτικό Πρόγραμμα ανά Ιατρό")
@@ -745,11 +759,10 @@ with left_col:
             doc_tabs = st.tabs(DOCTORS)
             for idx, doc_name in enumerate(DOCTORS):
                 with doc_tabs[idx]:
-                    d_items = doc_schedules.get(doc_name, [])
-                    if d_items:
-                        d_df = pd.DataFrame(d_items)
+                    d_df = doc_schedules.get(doc_name, pd.DataFrame())
+                    if not d_df.empty:
                         st.dataframe(d_df, use_container_width=True, height=250)
-                        st.caption(f"Συνολικές Εφημερίες Ιατρού: **{len(d_items)}**")
+                        st.caption(f"Συνολικές Εφημερίες Ιατρού: **{len(d_df)}**")
                     else:
                         st.info("Δεν υπάρχουν εφημερίες για αυτόν τον ιατρό στην επιλεγμένη περίοδο.")
 
