@@ -87,7 +87,7 @@ def _shifts_in_week(doctor, date, schedule, exclude_date=None):
     )
 
 
-def _total_shifts_in_month(doctor, date, schedule, exclude_date=None, holiday_dates=None):
+def _total_shifts_in_month(doctor, date, schedule, exclude_date=None):
     return sum(
         1 for d, doc in schedule.items()
         if d != exclude_date and doc == doctor
@@ -268,7 +268,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 
     for d, doc in manual_assignments.items():
         if start_date <= d <= end_date:
-            schedule[d] = doc
+                    schedule[d] = doc
 
     cycles_dict = defaultdict(list)
     for block in major_blocks:
@@ -277,14 +277,12 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
     sorted_cycles = sorted(cycles_dict.keys())
     base_doctors = list(DOCTORS)
     
-    assigned_packages_history = defaultdict(set)
+    # Καθολικός μετρητής ανάθεσης πακέτων ανά ιατρό για αποφυγή ανισορροπίας
+    doctor_major_counts = {doc: 0 for doc in DOCTORS}
 
     for cycle_idx, c_id in enumerate(sorted_cycles):
         cycle_blocks = sorted(cycles_dict[c_id], key=lambda b: b["order"])
-        shift_amount = cycle_idx % len(base_doctors)
-        rotated_doctors = base_doctors[shift_amount:] + base_doctors[:shift_amount]
         
-        doc_pointer = 0
         for block in cycle_blocks:
             block_dates = block["dates"]
             if any(bd in schedule for bd in block_dates):
@@ -292,21 +290,22 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             
             primary_date = block_dates[0]
             
-            assigned_doc = None
-            for _ in range(len(DOCTORS)):
-                candidate = rotated_doctors[doc_pointer % len(rotated_doctors)]
-                doc_pointer += 1
-                
-                if candidate not in assigned_packages_history[c_id]:
-                    if is_valid_assignment(candidate, primary_date, schedule, holiday_dates, exclude_date=None, 
-                                           strict_monthly=True, min_gap=3, max_special=1, avoid_consecutive_weekends=True):
-                        assigned_doc = candidate
-                        break
+            # Επιλογή ιατρού με τις λιγότερες μεγάλες αργίες συνολικά και έπειτα βάσει κυκλικής σειράς
+            valid_candidates = [
+                doc for doc in DOCTORS
+                if is_valid_assignment(doc, primary_date, schedule, holiday_dates, exclude_date=None, 
+                                       strict_monthly=True, min_gap=3, max_special=1, avoid_consecutive_weekends=True)
+            ]
             
-            if assigned_doc is None:
-                assigned_doc = rotated_doctors[(doc_pointer - 1) % len(rotated_doctors)]
+            if not valid_candidates:
+                valid_candidates = list(DOCTORS)
 
-            assigned_packages_history[c_id].add(assigned_doc)
+            assigned_doc = min(valid_candidates, key=lambda d: (
+                doctor_major_counts[d],
+                _total_shifts_in_month(d, primary_date, schedule, exclude_date=None)
+            ))
+
+            doctor_major_counts[assigned_doc] += 1
 
             for bd in block_dates:
                 schedule[bd] = assigned_doc
@@ -862,7 +861,7 @@ with right_col:
     if st.button("💾 Αποθήκευση Αρχικής Ρότας"):
         st.session_state.initial_week = [initial_week[d] for d in sorted(initial_week)]
         st.session_state.start_date = week_dates[0]
-        st.success("I arxiki rota apothikeytike epityxws!")
+        st.success("Η αρχική ρότα αποθηκεύτηκε επιτυχώς!")
         st.rerun()
 
     if st.session_state.initial_week:
