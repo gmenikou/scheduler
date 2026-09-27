@@ -274,38 +274,27 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 
         base_name = block["base_name"]
         block_year = block["year"]
-        
-        # Ενιαία αντιμετώπιση χειμερινής περιόδου (Δεκέμβριος - Ιανουάριος ανήκουν στην ίδια εορταστική σεζόν)
-        is_jan = (len(block_dates) == 1 and block_dates[0].month == 1)
-        target_year = block_year if not is_jan else block_year - 1
-        c_id = get_cycle_id(target_year)
+        c_id = get_cycle_id(block_year)
 
-        # 1. Αυστηρός κανόνας: Κανένας γιατρός πάνω από 1 μεγάλο πακέτο ανά ημερολογιακό έτος/σεζόν
-        # και επιπλέον να μην έχει πάρει άλλο πακέτο Χριστουγέννων/Πρωτοχρονιάς στην ίδια χειμερινή περίοδο
-        winter_season_years = {target_year, target_year + 1}
-        
+        # Επιτρέπεται ο συνδυασμός Πρωτοχρονιάς (1/1) με Χριστούγεννα (ή άλλες εορτές Δεκεμβρίου) του ίδιου ημερολογιακού έτους
+        is_jan_1 = (base_name == "Πρωτοχρονιά")
+
         eligible = [
             doc for doc in DOCTORS 
-            if doctor_yearly_major_count[doc][target_year] == 0 
-            and doctor_package_cycle_counts[doc][c_id][base_name] == 0
-            and sum(doctor_yearly_major_count[doc][y] for y in winter_season_years) == 0
+            if doctor_package_cycle_counts[doc][c_id][base_name] == 0 
+            and (
+                doctor_yearly_major_count[doc][block_year] == 0 
+                or (is_jan_1 and doctor_yearly_major_count[doc][block_year] == 1)
+            )
         ]
         
-        # 2. Fallback: Χαλάρωση του κύκλου 7ετίας αλλά διατήρηση της αποφυγής διπλού πακέτου στην ίδια σεζόν/έτος
+        # Fallback: διατήρηση αποφυγής επανάληψης εντός 7ετίας (c_id == 0)
         if not eligible:
             eligible = [
                 doc for doc in DOCTORS 
-                if doctor_yearly_major_count[doc][target_year] == 0
-                and sum(doctor_yearly_major_count[doc][y] for y in winter_season_years) == 0
+                if doctor_package_cycle_counts[doc][c_id][base_name] == 0
             ]
         
-        # 3. Τελευταίο fallback
-        if not eligible:
-            eligible = [
-                doc for doc in DOCTORS 
-                if sum(doctor_yearly_major_count[doc][y] for y in winter_season_years) == 0
-            ]
-            
         if not eligible:
             eligible = DOCTORS
 
@@ -324,7 +313,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 
         for bd in block_dates:
             schedule[bd] = best_doc
-        doctor_yearly_major_count[best_doc][target_year] += 1
+        doctor_yearly_major_count[best_doc][block_year] += 1
         doctor_package_cycle_counts[best_doc][c_id][base_name] += 1
 
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
