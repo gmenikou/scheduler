@@ -255,13 +255,16 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         if start_date <= d <= end_date:
             schedule[d] = doc
 
+    base_start_year = start_date.year
+    
+    def get_cycle_id(year):
+        return (year - base_start_year) // 7
+
+    doctor_package_cycle_counts = {
+        doc: defaultdict(lambda: {pt: 0 for pt in MAJOR_PACKAGE_BASE_NAMES}) for doc in DOCTORS
+    }
     doctor_yearly_major_count = {
         doc: {y: 0 for y in range(start_date.year - 1, end_date.year + 2)} for doc in DOCTORS
-    }
-    
-    # Παρακολούθηση ποιος γιατρός έχει πάρει ποιο πακέτο ανά κύκλο 7ετίας (ξεκινάμε από το 2026)
-    doctor_package_type_counts = {
-        doc: {pt: 0 for pt in MAJOR_PACKAGE_BASE_NAMES} for doc in DOCTORS
     }
 
     for block in major_blocks:
@@ -273,20 +276,19 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         block_year = block["year"]
         is_jan_1 = (len(block_dates) == 1 and block_dates[0].month == 1 and block_dates[0].day == 1)
         target_year = block_year if not is_jan_1 else block_year - 1
+        c_id = get_cycle_id(target_year)
 
-        # Αυστηρός κανόνας: Επιτρέπονται ΜΟΝΟ γιατροί που ΔΕΝ έχουν ξαναπάρει αυτό το πακέτο στη τρέχουσα 7ετία
         eligible = [
             doc for doc in DOCTORS 
             if doctor_yearly_major_count[doc][target_year] == 0 
-            and doctor_package_type_counts[doc][base_name] == 0
+            and doctor_package_cycle_counts[doc][c_id][base_name] == 0
         ]
         
-        # Αν εξαντληθούν οι αυστηρά διαθέσιμοι, χαλαρώνουμε μόνο ως προς το έτος, αλλά ποτέ ως προς το ίδιο πακέτο
         if not eligible:
-            eligible = [doc for doc in DOCTORS if doctor_package_type_counts[doc][base_name] == 0]
+            eligible = [doc for doc in DOCTORS if doctor_package_cycle_counts[doc][c_id][base_name] == 0]
         
         if not eligible:
-            eligible = DOCTORS # Έσχατη λύση αν κλείσει κύκλος
+            eligible = DOCTORS
 
         candidates = sorted(eligible, key=lambda d: sum(doctor_yearly_major_count[d].values()))
 
@@ -304,7 +306,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         for bd in block_dates:
             schedule[bd] = best_doc
         doctor_yearly_major_count[best_doc][target_year] += 1
-        doctor_package_type_counts[best_doc][base_name] += 1
+        doctor_package_cycle_counts[best_doc][c_id][base_name] += 1
 
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
     all_major_dates = {d for block in major_blocks for d in block["dates"]}
@@ -790,7 +792,8 @@ with right_col:
         with c1:
             start_date = st.date_input("Start date", st.session_state.start_date)
         with c2:
-            end_date = st.date_input("End date", start_date + datetime.timedelta(days=30))
+            # Χωρίς αυτόματη προσθήκη 3ετίας· ξεκινάει από την ίδια μέρα ή ό,τι ορίσεις εσύ
+            end_date = st.date_input("End date", start_date)
 
         if st.button("🗓️ Δημιουργία Προγράμματος"):
             sch, hols, warns = generate_full_schedule(
