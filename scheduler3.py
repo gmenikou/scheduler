@@ -263,28 +263,31 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
     holiday_dates = set(holiday_names.keys())
     major_blocks = get_major_holiday_blocks_in_range(start_date, end_date)
 
+    # 1. Εισαγωγή αρχικής ρότας (initial_week) στις πρώτες 7 ημέρες από το start_date
+    if initial_week and isinstance(initial_week, (list, tuple)) and len(initial_week) >= 7:
+        week_start_monday = start_date - datetime.timedelta(days=start_date.weekday())
+        for i in range(7):
+            d = week_start_monday + datetime.timedelta(days=i)
+            if start_date <= d <= end_date:
+                schedule[d] = initial_week[i]
+
+    # 2. Εισαγωγή χειρονακτικών αναθέσεων
     for d, doc in manual_assignments.items():
         if start_date <= d <= end_date:
             schedule[d] = doc
 
-    # Διορθωμένη λογική: Κατανόηση συνολικών μεγάλων εορτών χρονολογικά με αυστηρό global round-robin ανά πακέτο
     sorted_major_blocks = sorted(major_blocks, key=lambda b: (b["dates"][0], b["order"]))
     
     def _major_total(doc):
         return sum(1 for b in sorted_major_blocks if any(schedule.get(d) == doc for d in b["dates"]))
-
-    # Παρακολούθηση ποιος πήρε ποιο πακέτο ανά κύκλο για να αποφεύγονται οι συνεχείς επαναλήψεις
-    historical_package_assignments = {}
 
     for block_idx, block in enumerate(sorted_major_blocks):
         block_dates = block["dates"]
         if any(bd in schedule for bd in block_dates):
             continue
         
-        base_name = block["base_name"]
         primary_date = block_dates[0]
         
-        # Επιλογή ιατρού με βάση το ποιος έχει τις λιγότερες μεγάλες αργίες συνολικά μέχρι τώρα (strict round-robin)
         valid_candidates = [
             doc for doc in DOCTORS
             if is_valid_assignment(doc, primary_date, schedule, holiday_dates, exclude_date=None, 
@@ -294,7 +297,6 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         if not valid_candidates:
             valid_candidates = list(DOCTORS)
 
-        # Διαλογή με προτεραιότητα στον γιατρό με τις λιγότερες μεγάλες αργίες
         assigned_doc = min(valid_candidates, key=lambda d: (
             _major_total(d),
             _total_shifts_in_month(d, primary_date, schedule, holiday_dates=holiday_dates)
@@ -331,7 +333,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                         avoid_consecutive_weekends=avoid_cons)]
                     if valid:
                         chosen = min(valid, key=lambda doc: (
-                            _minor_total(doc, d) if is_minor_holiday else 0,  # Ισομερής κατανομή μικρών αργιών
+                            _minor_total(doc, d) if is_minor_holiday else 0,
                             _global_weekday_total(doc, wd, schedule, exclude_date=d),
                             _special_count_in_month(doc, d, schedule, holiday_dates, exclude_date=d),
                             _total_shifts_in_month(doc, d, schedule, exclude_date=d, holiday_dates=holiday_dates)
@@ -380,6 +382,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             warnings.append(f"{current_date.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
         schedule[current_date] = chosen
 
+    # Επανάληψη χειρονακτικών αναθέσεων στο τέλος για απόλυτη προτεραιότητα
     for d, doc in manual_assignments.items():
         if start_date <= d <= end_date:
             schedule[d] = doc
@@ -451,7 +454,6 @@ def compute_balance(schedule, start_date, end_date, holiday_names):
     df["Weekdays"] = df["Mon"] + df["Tue"] + df["Wed"] + df["Thu"]
 
     major_blocks = get_major_holiday_blocks_in_range(start_date, end_date)
-    all_major_dates = {d for block in major_blocks for d in block["dates"]}
     
     major_counts = defaultdict(int)
     for block in major_blocks:
@@ -460,6 +462,7 @@ def compute_balance(schedule, start_date, end_date, holiday_names):
             if doc in DOCTORS:
                 major_counts[doc] += 1
 
+    all_major_dates = {d for block in major_blocks for d in block["dates"]}
     regular_hols = {d: n for d, n in holiday_names.items() if d not in all_major_dates}
     regular_counts = defaultdict(int)
     for d in regular_hols:
@@ -785,7 +788,6 @@ with left_col:
         st.dataframe(st.session_state.balance, use_container_width=True, height=260)
 
         if st.session_state.schedule:
-            # 1. Μεγάλες Εορτές ανά Ιατρό
             st.markdown("### 🎄🐣 Κατάσταση Μεγάλων Εορτών ανά Ιατρό")
             major_doctor_df = compute_major_holidays_by_doctor(
                 st.session_state.schedule, st.session_state.start_date, end_d)
@@ -794,7 +796,6 @@ with left_col:
             pdf_major_bytes = create_major_holidays_pdf_by_doctor(st.session_state.schedule, st.session_state.start_date, end_d)
             st.download_button("📄 Κατέβασε Μεγάλες Εορτές ανά Ιατρό σε PDF", pdf_major_bytes, file_name="major_holidays_by_doctor.pdf", mime="application/pdf")
 
-            # 2. Επιλογή Έτους για Λήψη Μεγάλων Εορτών Συγκεκριμένου Έτους
             st.markdown("### 📅 Εξαγωγή Μεγάλων Εορτών ανά Έτος")
             min_y = min(d.year for d in st.session_state.schedule.keys())
             max_y = max(d.year for d in st.session_state.schedule.keys())
@@ -810,7 +811,6 @@ with left_col:
             regular_hols = {d: n for d, n in st.session_state.holiday_names.items()
                             if d not in all_major_dates}
             if regular_hols:
-                # 3. Μικρές Αργίες
                 st.markdown("### 🎈 Κατάσταση Μικρών Αργιών")
                 regular_df = compute_regular_holidays_chronological(st.session_state.schedule, regular_hols)
                 st.dataframe(regular_df, use_container_width=True, height=200)
@@ -835,7 +835,12 @@ with left_col:
                 st.error(f"Σφάλμα δημιουργίας ημερολογίου PDF: {e}")
 
 with right_col:
-    selected_date = st.date_input("Ημερομηνία έναρξης:", datetime.date.today())
+    selected_date = st.date_input("Ημερομηνία έναρξης:", st.session_state.start_date)
+    
+    if selected_date != st.session_state.start_date:
+        st.session_state.start_date = selected_date
+        st.rerun()
+
     week_dates = [selected_date - datetime.timedelta(days=selected_date.weekday())
                   + datetime.timedelta(days=i) for i in range(7)]
 
@@ -848,14 +853,15 @@ with right_col:
     if st.button("💾 Αποθήκευση Αρχικής Ρότας"):
         st.session_state.initial_week = [initial_week[d] for d in sorted(initial_week)]
         st.session_state.start_date = week_dates[0]
+        st.success("Η αρχική ρότα αποθηκεύτηκε επιτυχώς!")
         st.rerun()
 
     if st.session_state.initial_week:
         c1, c2 = st.columns(2)
         with c1:
-            start_date = st.date_input("Start date", st.session_state.start_date)
+            start_date = st.date_input("Start date", value=st.session_state.start_date)
         with c2:
-            end_date = st.date_input("End date", start_date)
+            end_date = st.date_input("End date", value=start_date + datetime.timedelta(days=365))
 
         if st.button("🗓️ Δημιουργία Προγράμματος"):
             sch, hols, warns = generate_full_schedule(
