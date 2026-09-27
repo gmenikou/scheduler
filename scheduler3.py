@@ -479,13 +479,21 @@ def compute_balance(schedule, start_date, end_date, holiday_names):
     df["Weekdays"] = df["Mon"] + df["Tue"] + df["Wed"] + df["Thu"]
 
     major_blocks = get_major_holiday_blocks_in_range(start_date, end_date)
-    major_flat_df = compute_major_holidays_by_doctor(schedule, start_date, end_date)
-    major_counts = major_flat_df["Ακτινολόγος"].value_counts().to_dict() if not major_flat_df.empty else {}
-
     all_major_dates = {d for block in major_blocks for d in block["dates"]}
+    
+    major_counts = defaultdict(int)
+    for block in major_blocks:
+        for d in block["dates"]:
+            doc = schedule.get(d)
+            if doc in DOCTORS:
+                major_counts[doc] += 1
+
     regular_hols = {d: n for d, n in holiday_names.items() if d not in all_major_dates}
-    regular_df = compute_regular_holidays_chronological(schedule, regular_hols)
-    regular_counts = regular_df["Ακτινολόγος"].value_counts().to_dict() if not regular_df.empty else {}
+    regular_counts = defaultdict(int)
+    for d in regular_hols:
+        doc = schedule.get(d)
+        if doc in DOCTORS:
+            regular_counts[doc] += 1
 
     df["Αργίες"] = df["Doctor"].apply(lambda doc: major_counts.get(doc, 0) + regular_counts.get(doc, 0))
     df["Total"] = df["Weekdays"] + df["Fri"] + df["Sat"] + df["Sun"]
