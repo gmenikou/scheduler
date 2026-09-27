@@ -278,15 +278,12 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         target_year = block_year if not is_jan_1 else block_year - 1
         c_id = get_cycle_id(target_year)
 
-        # Αυστηρός κανόνας: Κανένας γιατρός πάνω από 1 πακέτο μεγάλων αργιών στο ίδιο έτος (0 στο target_year)
-        # Καθώς και να μην έχει ξαναπιάσει το ίδιο πακέτο στον τρέχοντα κύκλο 7 ετών
         eligible = [
             doc for doc in DOCTORS 
             if doctor_yearly_major_count[doc][target_year] == 0 
             and doctor_package_cycle_counts[doc][c_id][base_name] == 0
         ]
         
-        # Αν δεν βρεθούν με τον παραπάνω συνδυασμό, χαλαρώνουμε πρώτα τον κύκλο αλλά κρατάμε αυστηρά το 1 ανά έτος
         if not eligible:
             eligible = [
                 doc for doc in DOCTORS 
@@ -745,10 +742,12 @@ with left_col:
             st.rerun()
 
     if st.session_state.balance is not None and not st.session_state.balance.empty:
+        # ΑΣΦΑΛΗΣ ΟΡΙΣΜΟΣ ΤΗΣ end_d ΕΔΩ
+        end_d = max(st.session_state.schedule.keys()) if st.session_state.schedule else st.session_state.start_date
+
         st.dataframe(st.session_state.balance, use_container_width=True, height=260)
 
         if st.session_state.schedule:
-            end_d = max(st.session_state.schedule.keys())
             st.markdown("### 🎄🐣 Κατάσταση Πακέτων Μεγάλων Εορτών")
             major_df = compute_major_holidays_summary(
                 st.session_state.schedule, st.session_state.start_date, end_d)
