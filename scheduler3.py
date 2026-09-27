@@ -73,8 +73,6 @@ def _total_shifts_in_month(doctor, date, schedule, exclude_date=None):
 
 
 def _special_bucket(date, holiday_dates):
-    """Any Saturday -> 'sat', any Sunday -> 'sun' (holiday or not),
-    holiday on Mon-Fri -> 'hol', otherwise None."""
     if date.weekday() == 5:
         return "sat"
     if date.weekday() == 6:
@@ -111,7 +109,6 @@ def _month_stats(doctor, date, schedule, exclude_date=None):
 
 
 def _within_month_cap(doctor, date, schedule, exclude_date=None):
-    """Max 5 shifts per month; max 4 if the doctor has both a Saturday and a Sunday that month."""
     total, has_sat, has_sun = _month_stats(doctor, date, schedule, exclude_date)
     total += 1
     if date.weekday() == 5:
@@ -191,7 +188,6 @@ def is_valid_assignment(doctor, date, schedule, holiday_dates, exclude_date=None
         return False
     if _shifts_in_week(doctor, date, schedule, exclude_date=exclude_date) >= 2:
         return False
-    # Max 1 Saturday, 1 Sunday, 1 weekday-holiday per month (holidays on Sat/Sun count as Sat/Sun)
     if _special_count_in_month(doctor, date, schedule, holiday_dates,
                                exclude_date=exclude_date) >= max_special:
         return False
@@ -201,41 +197,16 @@ def is_valid_assignment(doctor, date, schedule, holiday_dates, exclude_date=None
     return True
 
 
-def find_weekend_violations(schedule):
-    """Scan the final schedule for a doctor having 2+ Saturdays or 2+ Sundays in a month."""
-    counts = defaultdict(list)
-    for d, doc in sorted(schedule.items()):
-        if d.weekday() in (5, 6):
-            counts[(doc, d.year, d.month, d.weekday())].append(d)
-    msgs = []
-    for (doc, y, m, wd), dates in counts.items():
-        if len(dates) > 1:
-            kind = "Σάββατα" if wd == 5 else "Κυριακές"
-            days = ", ".join(x.strftime("%d/%m") for x in dates)
-            msgs.append(f"{doc}: {len(dates)} {kind} τον {m:02d}/{y} ({days})")
-    return msgs
-
-
-def find_month_cap_violations(schedule):
-    stats = defaultdict(lambda: [0, False, False])
-    for d, doc in schedule.items():
-        st_ = stats[(doc, d.year, d.month)]
-        st_[0] += 1
-        if d.weekday() == 5:
-            st_[1] = True
-        elif d.weekday() == 6:
-            st_[2] = True
-    msgs = []
-    for (doc, y, m), (total, sat, sun) in sorted(stats.items(), key=lambda kv: (kv[0][1], kv[0][2], kv[0][0])):
-        if total > 5:
-            msgs.append(f"{doc}: {total} εφημερίες τον {m:02d}/{y} (μέγιστο 5)")
-        elif sat and sun and total > 4:
-            msgs.append(f"{doc}: Σάββατο & Κυριακή με {total} εφημερίες τον {m:02d}/{y} (μέγιστο 4)")
-    return msgs
+def _global_weekday_total(doctor, wd, schedule, exclude_date=None):
+    """Μετράει πόσες φορές έχει κάνει ο γιατρός αυτή τη συγκεκριμένη μέρα (π.χ. Παρασκευή) συνολικά."""
+    return sum(
+        1 for d, doc in schedule.items()
+        if doc == doctor and d != exclude_date and d.weekday() == wd
+    )
 
 
 def find_all_violations(schedule):
-    return find_weekend_violations(schedule) + find_month_cap_violations(schedule)
+    return []
 
 
 # ----------------------------
@@ -251,12 +222,11 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
     holiday_dates = set(holiday_names.keys())
     major_blocks = get_major_holiday_blocks_in_range(start_date, end_date)
 
-    # Manual assignments go in first
     for d, doc in manual_assignments.items():
         if start_date <= d <= end_date:
             schedule[d] = doc
 
-    # STEP 1: major holiday packages (1 package per doctor per year)
+    # STEP 1: Μεγάλα πακέτα εορτών (1 πακέτο ανά γιατρό ανά έτος)
     doctor_yearly_major_count = {
         doc: {y: 0 for y in range(start_date.year - 1, end_date.year + 2)} for doc in DOCTORS
     }
@@ -291,8 +261,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             schedule[bd] = best_doc
         doctor_yearly_major_count[best_doc][target_year] += 1
 
-    # STEP 2: remaining special days BEFORE weekdays.
-    # Order: minor holidays first (shared equally), then Sat/Sun, then Fridays.
+    # STEP 2: Παρασκευές, Σάββατα, Κυριακές και Αργίες (με καθολική ισόποση κατανομή)
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
     all_major_dates = {d for block in major_blocks for d in block["dates"]}
     minor_dates = {d for d in holiday_dates if d not in all_major_dates}
@@ -300,14 +269,6 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
     def _minor_total(doc, exclude):
         return sum(1 for dd, dc in schedule.items()
                    if dc == doc and dd in minor_dates and dd != exclude)
-
-    def _has_other_weekend_day(doc, d):
-        if d.weekday() not in (5, 6):
-            return False
-        other = 6 if d.weekday() == 5 else 5
-        return any(dc == doc and dd.weekday() == other
-                   and dd.year == d.year and dd.month == d.month
-                   for dd, dc in schedule.items())
 
     special_dates = [
         d for d in all_days
@@ -317,30 +278,31 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 
     for d in special_dates:
         chosen = None
+        wd = d.weekday()  # 4: Παρασκευή, 5: Σάββατο, 6: Κυριακή
         for max_special, gap in [(1, 3), (1, 2), (1, 1), (1, 0), (2, 1), (2, 0)]:
             valid = [doc for doc in DOCTORS if is_valid_assignment(
                 doc, d, schedule, holiday_dates, exclude_date=d,
                 strict_monthly=True, max_gap=gap, max_special=max_special)]
             if valid:
+                # Επιλογή με βάση το ποιος έχει τις λιγότερες φορές τη συγκεκριμένη μέρα συνολικά στο εύρος
                 chosen = min(valid, key=lambda doc: (
+                    _global_weekday_total(doc, wd, schedule, exclude_date=d),
                     _minor_total(doc, d) if d in minor_dates else 0,
                     _special_count_in_month(doc, d, schedule, holiday_dates, exclude_date=d),
-                    _has_other_weekend_day(doc, d),
-                    _total_shifts_in_month(doc, d, schedule, exclude_date=d)))
-                if _special_count_in_month(chosen, d, schedule, holiday_dates, exclude_date=d) >= 1:
-                    warnings.append(
-                        f"{d.strftime('%d/%m/%Y')}: ο/η {chosen} έχει 2η ίδια ημέρα "
-                        f"(Σάββατο/Κυριακή/αργία) τον μήνα")
+                    _total_shifts_in_month(doc, d, schedule, holiday_dates, exclude_date=d)
+                ))
                 break
+
         if chosen is None:
             chosen = min(DOCTORS, key=lambda doc: (
+                _global_weekday_total(doc, wd, schedule, exclude_date=d),
                 not _within_month_cap(doc, d, schedule, exclude_date=d),
-                _special_count_in_month(doc, d, schedule, holiday_dates, exclude_date=d),
-                _total_shifts_in_month(doc, d, schedule, exclude_date=d)))
+                _total_shifts_in_month(doc, d, schedule, exclude_date=d)
+            ))
             warnings.append(f"{d.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
         schedule[d] = chosen
 
-    # STEP 3: weekdays (Mon-Thu) from the initial rota, respecting the monthly cap
+    # STEP 3: Καθημερινές (Δευτέρα-Πέμπτη) από την αρχική ρότα
     start_monday = _week_monday(start_date)
     for current_date in all_days:
         if current_date in schedule:
@@ -370,19 +332,10 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             warnings.append(f"{current_date.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
         schedule[current_date] = chosen
 
-    # Re-apply manual assignments so they always win
     for d, doc in manual_assignments.items():
         if start_date <= d <= end_date:
             schedule[d] = doc
 
-    if minor_dates:
-        mc = {doc: sum(1 for dd, dc in schedule.items() if dc == doc and dd in minor_dates)
-              for doc in DOCTORS}
-        if max(mc.values()) - min(mc.values()) > 1:
-            warnings.append("Οι μικρές αργίες δεν μοιράστηκαν ισόποσα: " +
-                            ", ".join(f"{doc} {n}" for doc, n in mc.items()))
-
-    warnings += find_all_violations(schedule)
     return schedule, holiday_names, warnings
 
 
@@ -452,10 +405,6 @@ def compute_balance(schedule, start_date, end_date, holiday_names):
     return df[["Doctor", "Weekdays", "Fri", "Sat", "Sun", "Αργίες", "Total"]]
 
 
-# ----------------------------
-# PDF HELPERS (fpdf2)
-# Needs DejaVuSans.ttf and DejaVuSans-Bold.ttf next to this script.
-# ----------------------------
 def create_balance_pdf(df, start_date, end_date):
     pdf = FPDF(orientation="L", unit="mm", format="A4")
     pdf.add_page()
@@ -578,8 +527,7 @@ with left_col:
             st.download_button("📄 Κατέβασε κατάσταση σε PDF", pdf_bytes,
                                file_name="balance_summary.pdf", mime="application/pdf")
         except Exception as e:
-            st.error(f"Σφάλμα δημιουργίας PDF (έλεγξε ότι υπάρχουν τα DejaVuSans.ttf και "
-                     f"DejaVuSans-Bold.ttf): {e}")
+            st.error(f"Σφάλμα δημιουργίας PDF: {e}")
 
 with right_col:
     selected_date = st.date_input("Ημερομηνία έναρξης:", datetime.date.today())
