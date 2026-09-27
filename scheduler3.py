@@ -476,7 +476,6 @@ def create_major_holidays_pdf(schedule, start_date, end_date):
         pdf.cell(col_widths[0], 12, str(row["Ακτινολόγος"]), border=1, align="C")
         pdf.cell(col_widths[1], 12, str(row["Σύνολο Πακέτων"]), border=1, align="C")
         
-        # Multicell για τις λεπτομέρειες αν είναι πολλές γραμμές
         x = pdf.get_x()
         y = pdf.get_y()
         pdf.multi_cell(col_widths[2], 6, str(row["Ανατεθειμένα Πακέτα"]), border=1)
@@ -533,57 +532,6 @@ def create_calendar_pdf(schedule, holiday_names):
 
     for (year, month), month_sched in sorted(months_data.items()):
         pdf.add_page()
-        
-        # Τίτλος Μηνός
-        pdf.set_font("DejaVu", "B", 16)
-        pdf.cell(0, 10, f"Πρόγραμμα Εφημεριών - {GREEK_MONTHS[month]} {year}", align="C", new_x="LMARGIN", new_y="NEXT")
-        pdf.ln(4)
-
-        # Επικεφαλίδες εβδομάδας
-        col_width = 38
-        row_height = 22
-        pdf.set_font("DejaVu", "B", 11)
-        for d_label in GREEK_WEEKDAY_LABELS:
-            pdf.cell(col_width, 8, d_label, border=1, align="C")
-        pdf.ln()
-
-        cal = calendar.Calendar(firstweekday=0)
-        weeks = cal.monthdatescalendar(year, month)
-
-        pdf.set_font("DejaVu", "", 10)
-        for week in weeks:
-            for day in week:
-                if day.month == month:
-                    doc = month_sched.get(day, "")
-                    is_hol = day in holiday_names
-                    hol_text = f" ({holiday_names[day][:10]})" if is_hol else ""
-                    cell_text = f"{day.day}" + (f" - {doc}" if doc else "") + hol_text
-                    
-                    if is_hol:
-                        pdf.set_fill_color(255, 230, 230)
-                    else:
-                        pdf.set_fill_color(245, 245, 245)
-                        
-                    pdf.cell(col_width, row_height, txt=str(day.day), border=1, align="T", fill=True)
-                else:
-                    pdf.cell(col_width, row_height, txt="", border=1, fill=False)
-            pdf.ln()
-            # Τυπώνουμε τα ονόματα των γιατρών ξεχωριστά από κάτω στο ίδιο κελί ή σε υπο-γραμμή για καθαρότητα
-            current_x = pdf.get_x()
-            current_y = pdf.get_y() - row_height
-            # Ξαναπερνάμε την εβδομάδα για τα ονόματα
-            pdf.set_x(current_x) # reset X
-            
-            # Απλούστερη και καθαρότερη σχεδίαση κελιών ημερολογίου ανά εβδομάδα:
-        # (Ενσωματωμένο block για ορθή διάταξη ημερολογίου ανά μήνα σε landscape)
-    
-    # Εναλλακτικά, ασφαλής κατασκευή μηνιαίου ημερολογίου ανά σελίδα:
-    pdf = FPDF(orientation="L", unit="mm", format="A4")
-    pdf.add_font("DejaVu", "", "DejaVuSans.ttf")
-    pdf.add_font("DejaVu", "B", "DejaVuSans-Bold.ttf")
-
-    for (year, month), month_sched in sorted(months_data.items()):
-        pdf.add_page()
         pdf.set_font("DejaVu", "B", 16)
         pdf.cell(0, 10, f"Πρόγραμμα Εφημεριών – {GREEK_MONTHS[month]} {year}", align="C", new_x="LMARGIN", new_y="NEXT")
         pdf.ln(5)
@@ -598,7 +546,6 @@ def create_calendar_pdf(schedule, holiday_names):
         weeks = cal.monthdatescalendar(year, month)
 
         for week in weeks:
-            # Ύψος κελιού εβδομάδας
             start_y = pdf.get_y()
             for day in week:
                 if day.month == month:
@@ -613,7 +560,7 @@ def create_calendar_pdf(schedule, holiday_names):
                     pdf.set_xy(pdf.get_x() + col_w, start_y)
                 else:
                     pdf.cell(col_w, 20, "", border=1)
-            pdf.ln(20) # αλλαγή γραμμής για την επόμενη εβδομάδα
+            pdf.ln(20)
             
     return bytes(pdf.output())
 
@@ -699,7 +646,6 @@ with left_col:
                 st.session_state.schedule, st.session_state.start_date, end_d)
             st.dataframe(major_df, use_container_width=True, height=200)
             
-            # Κουμπί PDF Μεγάλων Εορτών
             pdf_major_bytes = create_major_holidays_pdf(st.session_state.schedule, st.session_state.start_date, end_d)
             st.download_button("📄 PDF Μεγάλων Εορτών", pdf_major_bytes, file_name="major_holidays.pdf", mime="application/pdf")
 
@@ -713,7 +659,6 @@ with left_col:
                     regular_df = compute_regular_holidays_summary(st.session_state.schedule, regular_hols)
                     st.dataframe(regular_df, use_container_width=True)
                     
-                    # Κουμπί PDF Μικρών Αργιών
                     pdf_reg_bytes = create_regular_holidays_pdf(st.session_state.schedule, st.session_state.holiday_names, st.session_state.start_date, end_d)
                     st.download_button("📄 PDF Μικρών Αργιών", pdf_reg_bytes, file_name="regular_holidays.pdf", mime="application/pdf")
 
