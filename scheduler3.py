@@ -298,7 +298,12 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             if not valid_candidates:
                 valid_candidates = available_doctors
 
-            assigned_doc = valid_candidates[0] if valid_candidates else available_doctors[0]
+            if not valid_candidates:
+                valid_candidates = list(DOCTORS)
+            if not available_doctors:
+                available_doctors = list(DOCTORS)
+
+            assigned_doc = valid_candidates[0] if valid_candidates else DOCTORS[0]
                 
             if assigned_doc in available_doctors:
                 available_doctors.remove(assigned_doc)
@@ -561,7 +566,7 @@ def create_major_holidays_pdf_by_doctor(schedule, start_date, end_date):
                 pdf.cell(col_widths[1], 8, item["Μεγάλη Εορτή / Πακέτο"], border=1, align="L")
                 pdf.ln()
         else:
-            pdf.cell(col_widths[0] + col_widths[1], 8, "Καμία μεγάλη εορτή / πακέτο", border=1, align="C")
+            pdf.cell(col_widths[0] + col_widths[1], 8, "Καμία μεγάλη εορτή", border=1, align="C")
             pdf.ln()
 
     return bytes(pdf.output())
@@ -809,7 +814,7 @@ with left_col:
             pdf_major_bytes = create_major_holidays_pdf_by_doctor(st.session_state.schedule, st.session_state.start_date, end_d)
             st.download_button("📄 Κατέβασε Μεγάλες Εορτές ανά Ιατρό σε PDF", pdf_major_bytes, file_name="major_holidays_by_doctor.pdf", mime="application/pdf")
 
-            # 2. ΝΕΟ: Επιλογή Έτους για Λήψη Μεγάλων Εορτών Συγκεκριμένου Έτους
+            # 2. Επιλογή Έτους για Λήψη Μεγάλων Εορτών Συγκεκριμένου Έτους
             st.markdown("### 📅 Εξαγωγή Μεγάλων Εορτών ανά Έτος")
             min_y = min(d.year for d in st.session_state.schedule.keys())
             max_y = max(d.year for d in st.session_state.schedule.keys())
@@ -817,7 +822,7 @@ with left_col:
             
             selected_pdf_year = st.selectbox("Επιλέξτε Έτος", available_years, key="pdf_year_select")
             pdf_yearly_bytes = create_yearly_major_holidays_pdf(st.session_state.schedule, selected_pdf_year, st.session_state.start_date, end_d)
-            st.download_button(f"📄 Κατέβασε Μεγάλες Εορτών Έτους {selected_pdf_year} σε PDF", pdf_yearly_bytes, file_name=f"major_holidays_{selected_pdf_year}.pdf", mime="application/pdf")
+            st.download_button(f"📄 Κατέβασε Μεγάλων Εορτών Έτους {selected_pdf_year} σε PDF", pdf_yearly_bytes, file_name=f"major_holidays_{selected_pdf_year}.pdf", mime="application/pdf")
 
         if st.session_state.holiday_names:
             major_blocks = get_major_holiday_blocks_in_range(st.session_state.start_date, end_d)
