@@ -496,7 +496,7 @@ def compute_balance(schedule, start_date, end_date, holiday_names):
             regular_counts[doc] += 1
 
     df["Αργίες"] = df["Doctor"].apply(lambda doc: major_counts.get(doc, 0) + regular_counts.get(doc, 0))
-    df["Total"] = df["Weekdays"] + df["Fri"] + df["Sat"] + df["Sun"]
+    df["Total"] = df["Weekdays"] + df["Fri"] + df["Sat"] + df["Sun"] + df["Αργίες"]
     return df[["Doctor", "Weekdays", "Fri", "Sat", "Sun", "Αργίες", "Total"]]
 
 
