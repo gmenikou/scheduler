@@ -411,7 +411,6 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 # ----------------------------
 def compute_major_holidays_chronological(schedule, start_date, end_date):
     blocks = get_major_holiday_blocks_in_range(start_date, end_date)
-    # Ταξινόμηση ημερολογιακά βάσει της πρώτης ημερομηνίας του πακέτου
     sorted_blocks = sorted(blocks, key=lambda b: b["dates"][0])
     
     data = []
@@ -452,7 +451,7 @@ def compute_balance(schedule, start_date, end_date, holiday_names):
 
     major_blocks = get_major_holiday_blocks_in_range(start_date, end_date)
     major_df = compute_major_holidays_chronological(schedule, start_date, end_date)
-    major_counts = major_df["Ακτινολόγος"].value_missions if "Ακτινολόγος" in major_df else major_df["Ακτινολόγος"].value_counts().to_dict()
+    major_counts = major_df["Ακτινολόγος"].value_counts().to_dict() if not major_df.empty else {}
 
     all_major_dates = {d for block in major_blocks for d in block["dates"]}
     regular_hols = {d: n for d, n in holiday_names.items() if d not in all_major_dates}
@@ -788,6 +787,7 @@ with right_col:
         with st.expander("⚠️ Προειδοποιήσεις / Παραβάσεις Κανόνων", expanded=False):
             for w in st.session_state.warnings:
                 st.warning(w)
+
     if st.session_state.get("schedule") is not None:
         st.markdown("---")
         st.subheader("📅 Μηνιαίο Πρόγραμμα Εφημεριών")
