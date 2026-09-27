@@ -350,6 +350,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
     for d in special_dates:
         chosen = None
         wd = d.weekday()
+        is_minor_holiday = d in minor_dates
         
         for avoid_cons in (True, False):
             for min_gap in (3, 2, 1, 0):
@@ -360,8 +361,8 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                         avoid_consecutive_weekends=avoid_cons)]
                     if valid:
                         chosen = min(valid, key=lambda doc: (
+                            _minor_total(doc, d) if is_minor_holiday else 0,  # Ισομερής κατανομή μικρών αργιών
                             _global_weekday_total(doc, wd, schedule, exclude_date=d),
-                            _minor_total(doc, d) if d in minor_dates else 0,
                             _special_count_in_month(doc, d, schedule, holiday_dates, exclude_date=d),
                             _total_shifts_in_month(doc, d, schedule, exclude_date=d, holiday_dates=holiday_dates)
                         ))
@@ -373,6 +374,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 
         if chosen is None:
             chosen = min(DOCTORS, key=lambda doc: (
+                _minor_total(doc, d) if is_minor_holiday else 0,
                 _global_weekday_total(doc, wd, schedule, exclude_date=d),
                 not _within_month_cap(doc, d, schedule, exclude_date=d),
                 _total_shifts_in_month(doc, d, schedule, exclude_date=d, holiday_dates=holiday_dates)
