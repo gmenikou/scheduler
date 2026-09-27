@@ -202,8 +202,13 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
             valid_dates = [d for d in dates if start_date <= d <= end_date]
             if valid_dates:
                 primary_date = valid_dates[0]
-                # Κύκλος Σεπτεμβρίου: Από 1η Σεπτεμβρίου του έτους έως 31 Αυγούστου του επόμενου
-                cycle_id = primary_date.year if primary_date.month >= 9 else primary_date.year - 1
+                # Λειτουργικός κύκλος Σεπτεμβρίου: 1η Σεπτεμβρίου έτους X έως 31 Αυγούστου έτους X+1
+                # Οι γιορτές του Ιανουαρίου (π.χ. 1/1) ανήκουν στον κύκλο που ξεκίνησε τον Σεπτέμβριο του προηγούμενου έτους.
+                if primary_date.month < 9:
+                    cycle_id = primary_date.year - 1
+                else:
+                    cycle_id = primary_date.year
+
                 blocks.append({
                     "name": f"{base_name} {year}",
                     "base_name": base_name,
@@ -244,7 +249,7 @@ def find_all_violations(schedule):
 
 
 # ----------------------------
-# SCHEDULING LOGIC (SMART SEP-TO-SEP SHIFT ROTATION)
+# SCHEDULING LOGIC (SEP-TO-SEP CYCLE & STRICT SAFETY HIERARCHY)
 # ----------------------------
 def generate_full_schedule(start_date, end_date, initial_week, manual_assignments=None):
     manual_assignments = manual_assignments or {}
@@ -260,7 +265,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         if start_date <= d <= end_date:
             schedule[d] = doc
 
-    # Ομαδοποίηση πακέτων ανά κύκλο Σεπτεμβρίου – Αυγούστου
+    # 1. Ομαδοποίηση πακέτων ανά λειτουργικό κύκλο Σεπτεμβρίου – Αυγούστου
     cycles_dict = defaultdict(list)
     for block in major_blocks:
         cycles_dict[block["cycle_id"]].append(block)
@@ -274,7 +279,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
     for cycle_idx, c_id in enumerate(sorted_cycles):
         cycle_blocks = sorted(cycles_dict[c_id], key=lambda b: b["order"])
         
-        # Βασική μετατόπιση 7ετίας
+        # Μετατόπιση (shift) της 7ετούς ρότας γιατρών ανά κύκλο
         shifted_doctors = base_doctors[cycle_idx % len(base_doctors):] + base_doctors[:cycle_idx % len(base_doctors)]
         available_doctors = list(shifted_doctors)
         
@@ -298,6 +303,24 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             available_doctors.remove(assigned_doc)
             historical_package_assignments[(assigned_doc, base_name)] = c_id
             
+            # ΕΛΕΓΧΟΣ ΙΕΡΑΡΧΙΑΣ ΑΣΦΑΛΕΙΑΣ: 
+            # Οι βασικοί κανόνες (min_gap κ.λπ.) είναι ανώτεροι. Αν η ανάθεση παραβιάζει 
+            # σκληρούς περιορισμούς, ο αλγόριθμος υποχωρεί και αναθέτει σε όποιον γιατρό «βγαίνει» ασφαλής.
+            primary_date = block_dates[0]
+            if not is_valid_assignment(assigned_doc, primary_date, schedule, holiday_dates, exclude_date=None, 
+                                       strict_monthly=True, min_gap=3, max_special=1, avoid_consecutive_weekends=True):
+                # Βρίσκουμε εναλλακτικό ασφαλή γιατρό
+                safe_alternatives = [
+                    d for d in DOCTORS 
+                    if is_valid_assignment(d, primary_date, schedule, holiday_dates, exclude_date=None,
+                                           strict_monthly=True, min_gap=3, max_special=1, avoid_consecutive_weekends=True)
+                ]
+                if safe_alternatives:
+                    assigned_doc = safe_alternatives[0]
+                else:
+                    # Αν δεν υπάρχει απολύτως καμία επιλογή χωρίς παραβίαση, υποχωρούμε πλήρως στον λιγότερο επιβαρυμένο
+                    assigned_doc = min(DOCTORS, key=lambda d: _total_shifts_in_month(d, primary_date, schedule, holiday_dates=holiday_dates))
+
             for bd in block_dates:
                 schedule[bd] = assigned_doc
 
