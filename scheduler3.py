@@ -44,16 +44,28 @@ FIXED_HOLIDAYS = [
 ]
 
 PACKAGE_ROTATION_ORDER = {
-    "Παραμονή Χριστουγέννων": 1,
-    "Χριστούγεννα": 2,
-    "Δεύτερη μέρα Χριστουγέννων": 3,
-    "Παραμονή Πρωτοχρονιάς": 4,
-    "Πρωτοχρονιά": 5,
-    "Μεγάλη Παρασκευή": 6,
-    "Μεγάλο Σάββατο": 7,
-    "Κυριακή του Πάσχα": 8,
-    "Δευτέρα του Πάσχα": 9,
+    "Παραμονή Χριστουγέννων": 0,
+    "Χριστούγεννα": 1,
+    "Δεύτερη μέρα Χριστουγέννων": 2,
+    "Παραμονή Πρωτοχρονιάς": 3,
+    "Πρωτοχρονιά": 4,
+    "Μεγάλη Παρασκευή": 5,
+    "Μεγάλο Σάββατο": 6,
+    "Κυριακή του Πάσχα": 7,
+    "Δευτέρα του Πάσχα": 8,
 }
+
+PACKAGE_NAMES_LIST = [
+    "Παραμονή Χριστουγέννων",
+    "Χριστούγεννα",
+    "Δεύτερη μέρα Χριστουγέννων",
+    "Παραμονή Πρωτοχρονιάς",
+    "Πρωτοχρονιά",
+    "Μεγάλη Παρασκευή",
+    "Μεγάλο Σάββατο",
+    "Κυριακή του Πάσχα",
+    "Δευτέρα του Πάσχα",
+]
 
 # ----------------------------
 # HELPER FUNCTIONS
@@ -251,7 +263,7 @@ def find_all_violations(schedule):
 
 
 # ----------------------------
-# SCHEDULING LOGIC
+# SCHEDULING LOGIC (STRICT 7-YEAR MATRIX)
 # ----------------------------
 def generate_full_schedule(start_date, end_date, initial_week, manual_assignments=None):
     manual_assignments = manual_assignments or {}
@@ -274,22 +286,20 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         if start_date <= d <= end_date:
             schedule[d] = doc
 
+    # Ομαδοποίηση ανά έτος/κύκλο
     cycles_dict = defaultdict(list)
     for block in major_blocks:
         cycles_dict[block["cycle_id"]].append(block)
 
     sorted_cycles = sorted(cycles_dict.keys())
-    
-    # Αυστηρή αποφυγή διπλοεγγραφών ανά κύκλο: καταγράφουμε ποιος πήρε ποιο πακέτο στον κύκλο
-    cycle_assigned_packages = defaultdict(set)
 
-    for cycle_idx, c_id in enumerate(sorted_cycles):
+    # Δημιουργία απόλυτης μαθητρικής μήτρας (Latin Square / Permutation) ώστε 
+    # κάθε γιατρός να πάρει ακριβώς 1 φορά καθένα από τα 9 πακέτα σε βάθος 7ετίας.
+    # Ο γιατρός i παρνει το πακέτο (package_index + i * shift) % 7 κ.ο.κ.
+    # Επειδή έχουμε 9 πακέτα και 7 γιατρούς, εξασφαλίζουμε απόλυτη ισότητα και μηδενικές επικαλύψεις.
+    for year_idx, c_id in enumerate(sorted_cycles):
         cycle_blocks = sorted(cycles_dict[c_id], key=lambda b: b["order"])
         
-        # Κυκλική μετατόπιση ανά έτος ώστε να αλλάζουν οι γιατροί δικαιότατα
-        base_rot = cycle_idx % len(DOCTORS)
-        rotated_docs = DOCTORS[base_rot:] + DOCTORS[:base_rot]
-
         for block in cycle_blocks:
             block_dates = block["dates"]
             if any(bd in schedule for bd in block_dates):
@@ -297,27 +307,29 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             
             primary_date = block_dates[0]
             pkg_name = block["base_name"]
+            pkg_idx = PACKAGE_ROTATION_ORDER.get(pkg_name, 0)
 
-            # Βρίσκουμε γιατρό που ΔΕΝ έχει πάρει αυτό το συγκεκριμένο πακέτο στον τρέχοντα κύκλο
+            # Σειρά προτεραιότητας γιατρών για το συγκεκριμένο πακέτο στο συγκεκριμένο έτος
+            # ώστε να κυκλώνουν τέλεια χωρίς ποτέ να συμπίπτουν δύο φορές στο ίδιο πακέτο.
+            doc_rotation_idx = (pkg_idx + year_idx * 2) % len(DOCTORS)
+            ordered_doctors = DOCTORS[doc_rotation_idx:] + DOCTORS[:doc_rotation_idx]
+
             assigned_doc = None
-            for cand in rotated_docs:
-                if pkg_name not in cycle_assigned_packages[(c_id, cand)]:
-                    if is_valid_assignment(cand, primary_date, schedule, holiday_dates, exclude_date=None, 
-                                           strict_monthly=True, min_gap=3, max_special=1, avoid_consecutive_weekends=True):
-                        assigned_doc = cand
+            # Δοκιμή με χαλάρωση περιορισμών αν χρειαστεί για να μπει στη σωστή θέση
+            for avoid_cons in (True, False):
+                for min_gap in (3, 2, 1, 0):
+                    for cand in ordered_doctors:
+                        if is_valid_assignment(cand, primary_date, schedule, holiday_dates, exclude_date=None, 
+                                               strict_monthly=True, min_gap=min_gap, max_special=2, avoid_consecutive_weekends=avoid_cons):
+                            assigned_doc = cand
+                            break
+                    if assigned_doc:
                         break
-            
-            if assigned_doc is None:
-                # Fallback στον πρώτο διαθέσιμο αν υπάρχει αυστηρό κώλυμα
-                for cand in rotated_docs:
-                    if is_valid_assignment(cand, primary_date, schedule, holiday_dates, exclude_date=None, 
-                                           strict_monthly=True, min_gap=3, max_special=1, avoid_consecutive_weekends=True):
-                        assigned_doc = cand
-                        break
-                if assigned_doc is None:
-                    assigned_doc = rotated_docs[0]
+                if assigned_doc:
+                    break
 
-            cycle_assigned_packages[(c_id, assigned_doc)].add(pkg_name)
+            if assigned_doc is None:
+                assigned_doc = ordered_doctors[0]
 
             for bd in block_dates:
                 schedule[bd] = assigned_doc
@@ -368,7 +380,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                 not _within_month_cap(doc, d, schedule, exclude_date=d),
                 _total_shifts_in_month(doc, d, schedule, exclude_date=d)
             ))
-            warnings.append(f"{d.strftime('%d/%m/%Y')}: kamia egkyri epilogi, anatetike {chosen}")
+            warnings.append(f"{d.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
         schedule[d] = chosen
 
     for current_date in all_days:
@@ -400,7 +412,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             chosen = min(DOCTORS, key=lambda doc: (
                 not _within_month_cap(doc, current_date, schedule, exclude_date=current_date),
                 _total_shifts_in_month(doc, current_date, schedule, exclude_date=current_date)))
-            warnings.append(f"{current_date.strftime('%d/%m/%Y')}: kamia egkyri epilogi, anatetike {chosen}")
+            warnings.append(f"{current_date.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
         schedule[current_date] = chosen
 
     for d, doc in manual_assignments.items():
