@@ -64,7 +64,7 @@ def _shifts_in_week(doctor, date, schedule, exclude_date=None):
     )
 
 
-def _total_shifts_in_month(doctor, date, schedule, exclude_date=None):
+def _total_shifts_in_month(doctor, date, schedule, exclude_date=None, holiday_dates=None):
     return sum(
         1 for d, doc in schedule.items()
         if d != exclude_date and doc == doctor
@@ -287,7 +287,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                     _global_weekday_total(doc, wd, schedule, exclude_date=d),
                     _minor_total(doc, d) if d in minor_dates else 0,
                     _special_count_in_month(doc, d, schedule, holiday_dates, exclude_date=d),
-                    _total_shifts_in_month(doc, d, schedule, holiday_dates, exclude_date=d)
+                    _total_shifts_in_month(doc, d, schedule, exclude_date=d, holiday_dates=holiday_dates)
                 ))
                 break
 
@@ -295,7 +295,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             chosen = min(DOCTORS, key=lambda doc: (
                 _global_weekday_total(doc, wd, schedule, exclude_date=d),
                 not _within_month_cap(doc, d, schedule, exclude_date=d),
-                _total_shifts_in_month(doc, d, schedule, holiday_dates, exclude_date=d)
+                _total_shifts_in_month(doc, d, schedule, exclude_date=d, holiday_dates=holiday_dates)
             ))
             warnings.append(f"{d.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
         schedule[d] = chosen
@@ -316,7 +316,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                 strict_monthly=True, max_gap=gap)]
             if not valid:
                 continue
-            totals = {doc: _total_shifts_in_month(doc, current_date, schedule) for doc in valid}
+            totals = {doc: _total_shifts_in_month(doc, current_date, schedule, holiday_dates=holiday_dates) for doc in valid}
             lowest = min(totals.values())
             if rota_doc in valid and totals[rota_doc] <= lowest + 1:
                 chosen = rota_doc
@@ -326,7 +326,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         if chosen is None:
             chosen = min(DOCTORS, key=lambda doc: (
                 not _within_month_cap(doc, current_date, schedule, exclude_date=current_date),
-                _total_shifts_in_month(doc, current_date, schedule)))
+                _total_shifts_in_month(doc, current_date, schedule, holiday_dates=holiday_dates)))
             warnings.append(f"{current_date.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
         schedule[current_date] = chosen
 
