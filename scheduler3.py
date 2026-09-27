@@ -278,14 +278,20 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         target_year = block_year if not is_jan_1 else block_year - 1
         c_id = get_cycle_id(target_year)
 
+        # Αυστηρός κανόνας: Κανένας γιατρός πάνω από 1 πακέτο μεγάλων αργιών στο ίδιο έτος (0 στο target_year)
+        # Καθώς και να μην έχει ξαναπιάσει το ίδιο πακέτο στον τρέχοντα κύκλο 7 ετών
         eligible = [
             doc for doc in DOCTORS 
             if doctor_yearly_major_count[doc][target_year] == 0 
             and doctor_package_cycle_counts[doc][c_id][base_name] == 0
         ]
         
+        # Αν δεν βρεθούν με τον παραπάνω συνδυασμό, χαλαρώνουμε πρώτα τον κύκλο αλλά κρατάμε αυστηρά το 1 ανά έτος
         if not eligible:
-            eligible = [doc for doc in DOCTORS if doctor_package_cycle_counts[doc][c_id][base_name] == 0]
+            eligible = [
+                doc for doc in DOCTORS 
+                if doctor_yearly_major_count[doc][target_year] == 0
+            ]
         
         if not eligible:
             eligible = DOCTORS
@@ -513,7 +519,6 @@ def create_major_holidays_pdf(schedule, start_date, end_date):
         count = str(row["Σύνολο Πακέτων"])
         details = str(row["Ανατεθειμένα Πακέτα"])
         
-        # Ακριβής υπολογισμός ύψους για την αποφυγή επικαλύψεων
         lines = details.split("\n")
         total_lines = 0
         for line in lines:
@@ -802,7 +807,6 @@ with right_col:
         with c1:
             start_date = st.date_input("Start date", st.session_state.start_date)
         with c2:
-            # Τώρα το End date ξεκινάει από την ίδια ημερομηνία χωρίς αυτόματο περιορισμό 3 ετών
             end_date = st.date_input("End date", start_date)
 
         if st.button("🗓️ Δημιουργία Προγράμματος"):
