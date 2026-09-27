@@ -49,9 +49,10 @@ def _week_monday(date):
     return date - datetime.timedelta(days=date.weekday())
 
 
-def _has_nearby_shift(doctor, date, schedule, max_gap=3):
+def _has_nearby_shift(doctor, date, schedule, min_gap=3):
+    """Ελέγχει αν ο γιατρός έχει εφημερία σε απόσταση μικρότερη από min_gap ημέρες."""
     for d, doc in schedule.items():
-        if doc == doctor and d != date and abs((d - date).days) <= max_gap:
+        if doc == doctor and d != date and abs((d - date).days) <= min_gap:
             return True
     return False
 
@@ -183,8 +184,8 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
 
 
 def is_valid_assignment(doctor, date, schedule, holiday_dates, exclude_date=None,
-                        strict_monthly=True, max_gap=3, max_special=1):
-    if max_gap > 0 and _has_nearby_shift(doctor, date, schedule, max_gap=max_gap):
+                        strict_monthly=True, min_gap=3, max_special=1):
+    if _has_nearby_shift(doctor, date, schedule, min_gap=min_gap):
         return False
     if _shifts_in_week(doctor, date, schedule, exclude_date=exclude_date) >= 2:
         return False
@@ -247,7 +248,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         best_doc = None
         for doc in candidates:
             if all(is_valid_assignment(doc, bd, schedule, holiday_dates, exclude_date=bd,
-                                       strict_monthly=True, max_gap=1) for bd in block_dates):
+                                       strict_monthly=True, min_gap=1) for bd in block_dates):
                 best_doc = doc
                 break
 
@@ -260,7 +261,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             schedule[bd] = best_doc
         doctor_yearly_major_count[best_doc][target_year] += 1
 
-    # STEP 2: Παρασκευές, Σάββατα, Κυριακές και Αργίες (με καθολική ισόποση κατανομή)
+    # STEP 2: Παρασκευές, Σάββατα, Κυριακές και Αργίες
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
     all_major_dates = {d for block in major_blocks for d in block["dates"]}
     minor_dates = {d for d in holiday_dates if d not in all_major_dates}
@@ -278,17 +279,21 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
     for d in special_dates:
         chosen = None
         wd = d.weekday()  # 4: Παρασκευή, 5: Σάββατο, 6: Κυριακή
-        for max_special, gap in [(1, 3), (1, 2), (1, 1), (1, 0), (2, 1), (2, 0)]:
-            valid = [doc for doc in DOCTORS if is_valid_assignment(
-                doc, d, schedule, holiday_dates, exclude_date=d,
-                strict_monthly=True, max_gap=gap, max_special=max_special)]
-            if valid:
-                chosen = min(valid, key=lambda doc: (
-                    _global_weekday_total(doc, wd, schedule, exclude_date=d),
-                    _minor_total(doc, d) if d in minor_dates else 0,
-                    _special_count_in_month(doc, d, schedule, holiday_dates, exclude_date=d),
-                    _total_shifts_in_month(doc, d, schedule, exclude_date=d, holiday_dates=holiday_dates)
-                ))
+        # Ιδανικό κενό 3 ημερών, αν δεν βρεθεί λύση υποχωρούμε σταδιακά σε 2 και 1 μέρα (μόνο σε απόλυτη ανάγκη)
+        for min_gap in (3, 2, 1, 0):
+            for max_special in (1, 2):
+                valid = [doc for doc in DOCTORS if is_valid_assignment(
+                    doc, d, schedule, holiday_dates, exclude_date=d,
+                    strict_monthly=True, min_gap=min_gap, max_special=max_special)]
+                if valid:
+                    chosen = min(valid, key=lambda doc: (
+                        _global_weekday_total(doc, wd, schedule, exclude_date=d),
+                        _minor_total(doc, d) if d in minor_dates else 0,
+                        _special_count_in_month(doc, d, schedule, holiday_dates, exclude_date=d),
+                        _total_shifts_in_month(doc, d, schedule, exclude_date=d, holiday_dates=holiday_dates)
+                    ))
+                    break
+            if chosen:
                 break
 
         if chosen is None:
@@ -300,7 +305,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             warnings.append(f"{d.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
         schedule[d] = chosen
 
-    # STEP 3: Καθημερινές (Δευτέρα-Πέμπτη) από την αρχική ρότα
+    # STEP 3: Καθημερινές (Δευτέρα-Πέμπτη) από την αρχική ρότα (με ιδανικό κενό 3 ημερών)
     start_monday = _week_monday(start_date)
     for current_date in all_days:
         if current_date in schedule:
@@ -310,10 +315,10 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         rota_doc = initial_week[doc_index]
 
         chosen = None
-        for gap in (2, 1, 0):
+        for min_gap in (3, 2, 1, 0):
             valid = [doc for doc in DOCTORS if is_valid_assignment(
                 doc, current_date, schedule, holiday_dates, exclude_date=current_date,
-                strict_monthly=True, max_gap=gap)]
+                strict_monthly=True, min_gap=min_gap)]
             if not valid:
                 continue
             totals = {doc: _total_shifts_in_month(doc, current_date, schedule, holiday_dates=holiday_dates) for doc in valid}
@@ -323,6 +328,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             else:
                 chosen = min(valid, key=lambda doc: totals[doc])
             break
+
         if chosen is None:
             chosen = min(DOCTORS, key=lambda doc: (
                 not _within_month_cap(doc, current_date, schedule, exclude_date=current_date),
