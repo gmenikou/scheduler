@@ -263,9 +263,6 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
     doctor_package_cycle_counts = {
         doc: defaultdict(lambda: {pt: 0 for pt in MAJOR_PACKAGE_BASE_NAMES}) for doc in DOCTORS
     }
-    doctor_yearly_major_count = {
-        doc: {y: 0 for y in range(start_date.year - 1, end_date.year + 2)} for doc in DOCTORS
-    }
 
     for block in major_blocks:
         block_dates = block["dates"]
@@ -276,30 +273,18 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         block_year = block["year"]
         c_id = get_cycle_id(block_year)
 
-        # STRICT ROTATION RULES:
-        # 1. Κανένας γιατρός δεν παίρνει πάνω από 1 μεγάλο πακέτο στο ίδιο ημερολογιακό έτος.
-        # 2. Κανένας γιατρός δεν ξαναπαίρνει το ΙΔΙΟ πακέτο στον ίδιο 7ετή κύκλο (c_id).
+        # Elegxos mono tou 7etous kyklou (epitrepetai pleon kai 1/1 kai 31/12 ston idio xrono an xreiastei)
         eligible = [
             doc for doc in DOCTORS 
             if doctor_package_cycle_counts[doc][c_id][base_name] == 0 
-            and doctor_yearly_major_count[doc][block_year] == 0
         ]
-        
-        # Εάν για κάποιο λόγο αδειάσουν όλοι, επιτρέπουμε αυστηρά μόνο όσους δεν έχουν πάρει πακέτο φέτος, 
-        # αποφεύγοντας όμως να δώσουμε το ίδιο ακριβώς πακέτο στον ίδιο γιατρό στον ίδιο κύκλο αν γίνεται.
-        if not eligible:
-            eligible = [
-                doc for doc in DOCTORS 
-                if doctor_yearly_major_count[doc][block_year] == 0
-            ]
 
         if not eligible:
             eligible = DOCTORS
 
-        # Ταξινόμηση υποψηφίων ώστε να προτιμώνται όσοι έχουν τα λιγότερα συνολικά πακέτα στον κύκλο/έτος
         candidates = sorted(
             eligible, 
-            key=lambda d: (sum(doctor_yearly_major_count[d].values()), sum(doctor_package_cycle_counts[d][c_id].values()))
+            key=lambda d: sum(doctor_package_cycle_counts[d][c_id].values())
         )
 
         best_doc = None
@@ -311,11 +296,10 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 
         if not best_doc:
             best_doc = candidates[0]
-            warnings.append(f"{block['name']}: ανατέθηκε χωρίς πλήρη τήρηση κανόνων ({best_doc})")
+            warnings.append(f"{block['name']}: anetethike xoris pliri tirisi kanonwn ({best_doc})")
 
         for bd in block_dates:
             schedule[bd] = best_doc
-        doctor_yearly_major_count[best_doc][block_year] += 1
         doctor_package_cycle_counts[best_doc][c_id][base_name] += 1
 
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
@@ -362,7 +346,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                 not _within_month_cap(doc, d, schedule, exclude_date=d),
                 _total_shifts_in_month(doc, d, schedule, exclude_date=d, holiday_dates=holiday_dates)
             ))
-            warnings.append(f"{d.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
+            warnings.append(f"{d.strftime('%d/%m/%Y')}: kamia egkyri epilogi, anetethike {chosen}")
         schedule[d] = chosen
 
     for current_date in all_days:
@@ -390,7 +374,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             chosen = min(DOCTORS, key=lambda doc: (
                 not _within_month_cap(doc, current_date, schedule, exclude_date=current_date),
                 _total_shifts_in_month(doc, current_date, schedule, exclude_date=current_date, holiday_dates=holiday_dates)))
-            warnings.append(f"{current_date.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
+            warnings.append(f"{current_date.strftime('%d/%m/%Y')}: kamia egkyri epilogi, anetethike {chosen}")
         schedule[current_date] = chosen
 
     for d, doc in manual_assignments.items():
