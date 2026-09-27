@@ -12,7 +12,7 @@ DOCTORS = ["Χριστίνα", "Αθηνά", "Μαρία", "Έλια", "Αλέξ
 
 DOCTOR_COLORS = {
     "Έλενα": (255, 182, 193),
-    "Εύа": (152, 251, 152),
+    "Εύα": (152, 251, 152),
     "Μαρία": (176, 196, 222),
     "Αθηνά": (255, 250, 205),
     "Αλέξανδρος": (221, 160, 221),
@@ -41,6 +41,16 @@ FIXED_HOLIDAYS = [
     (12, 25, "Χριστούγεννα"),
     (12, 26, "Δεύτερη μέρα Χριστουγέννων"),
     (12, 31, "Παραμονή Πρωτοχρονιάς"),
+]
+
+MAJOR_PACKAGE_BASE_NAMES = [
+    "Χριστούγεννα",
+    "Πρωτοχρονιά",
+    "Κυριακή του Πάσχα",
+    "Δευτέρα του Πάσχα",
+    "Παραμονή Χριστουγέννων & Μεγάλο Σάββατο",
+    "2η Χριστουγέννων & Μεγάλη Παρασκευή",
+    "Παραμονή Πρωτοχρονιάς"
 ]
 
 # ----------------------------
@@ -179,19 +189,24 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
         mon_e = easter + datetime.timedelta(days=1)
 
         year_blocks = [
-            ([datetime.date(year, 12, 25)], f"Χριστούγεννα {year}"),
-            ([datetime.date(year, 1, 1)], f"Πρωτοχρονιά {year}"),
-            ([sun_e], f"Κυριακή του Πάσχα {year}"),
-            ([mon_e], f"Δευτέρα του Πάσχα {year}"),
-            ([datetime.date(year, 12, 24), s_sat], f"Παραμονή Χριστουγέννων & Μεγάλο Σάββατο {year}"),
-            ([datetime.date(year, 12, 26), g_fri], f"2η Χριστουγέννων & Μεγάλη Παρασκευή {year}"),
-            ([datetime.date(year, 12, 31)], f"Παραμονή Πρωτοχρονιάς {year}"),
+            ([datetime.date(year, 12, 25)], "Χριστούγεννα"),
+            ([datetime.date(year, 1, 1)], "Πρωτοχρονιά"),
+            ([sun_e], "Κυριακή του Πάσχα"),
+            ([mon_e], "Δευτέρα του Πάσχα"),
+            ([datetime.date(year, 12, 24), s_sat], "Παραμονή Χριστουγέννων & Μεγάλο Σάββατο"),
+            ([datetime.date(year, 12, 26), g_fri], "2η Χριστουγέννων & Μεγάλη Παρασκευή"),
+            ([datetime.date(year, 12, 31)], "Παραμονή Πρωτοχρονιάς"),
         ]
 
-        for dates, name in year_blocks:
+        for dates, base_name in year_blocks:
             valid_dates = [d for d in dates if start_date <= d <= end_date]
             if valid_dates:
-                blocks.append({"name": name, "dates": valid_dates, "year": year})
+                blocks.append({
+                    "name": f"{base_name} {year}",
+                    "base_name": base_name,
+                    "dates": valid_dates,
+                    "year": year
+                })
     return blocks
 
 
@@ -243,20 +258,29 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
     doctor_yearly_major_count = {
         doc: {y: 0 for y in range(start_date.year - 1, end_date.year + 2)} for doc in DOCTORS
     }
+    doctor_package_type_counts = {
+        doc: {pt: 0 for pt in MAJOR_PACKAGE_BASE_NAMES} for doc in DOCTORS
+    }
 
     for block in major_blocks:
         block_dates = block["dates"]
         if any(bd in schedule for bd in block_dates):
             continue
 
+        base_name = block["base_name"]
         block_year = block["year"]
         is_jan_1 = (len(block_dates) == 1 and block_dates[0].month == 1 and block_dates[0].day == 1)
         target_year = block_year if not is_jan_1 else block_year - 1
 
         eligible = [doc for doc in DOCTORS if doctor_yearly_major_count[doc][target_year] == 0]
         others = [doc for doc in DOCTORS if doc not in eligible]
-        by_load = lambda d: sum(doctor_yearly_major_count[d].values())
-        candidates = sorted(eligible, key=by_load) + sorted(others, key=by_load)
+
+        def candidate_score(doc):
+            type_count = doctor_package_type_counts[doc].get(base_name, 0)
+            total_major = sum(doctor_yearly_major_count[doc].values())
+            return (type_count, total_major)
+
+        candidates = sorted(eligible, key=candidate_score) + sorted(others, key=candidate_score)
 
         best_doc = None
         for doc in candidates:
@@ -266,13 +290,13 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                 break
 
         if not best_doc:
-            best_doc = min(candidates, key=lambda doc: sum(
-                _special_count_in_month(doc, bd, schedule, holiday_dates) for bd in block_dates))
+            best_doc = candidates[0]
             warnings.append(f"{block['name']}: ανατέθηκε χωρίς πλήρη τήρηση κανόνων ({best_doc})")
 
         for bd in block_dates:
             schedule[bd] = best_doc
         doctor_yearly_major_count[best_doc][target_year] += 1
+        doctor_package_type_counts[best_doc][base_name] += 1
 
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
     all_major_dates = {d for block in major_blocks for d in block["dates"]}
@@ -345,7 +369,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         if chosen is None:
             chosen = min(DOCTORS, key=lambda doc: (
                 not _within_month_cap(doc, current_date, schedule, exclude_date=current_date),
-                _total_shifts_in_month(doc, current_date, schedule, holiday_dates=holiday_dates)))
+                _total_shifts_in_month(doc, current_date, schedule, exclude_date=date, holiday_dates=holiday_dates) if 'date' in locals() else 0))
             warnings.append(f"{current_date.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
         schedule[current_date] = chosen
 
@@ -423,7 +447,7 @@ def compute_balance(schedule, start_date, end_date, holiday_names):
 
 
 # ----------------------------
-# PDF EXPORT HELPERS (FIXED)
+# PDF EXPORT HELPERS
 # ----------------------------
 def create_balance_pdf(df, start_date, end_date):
     pdf = FPDF(orientation="L", unit="mm", format="A4")
@@ -492,10 +516,7 @@ def create_major_holidays_pdf(schedule, start_date, end_date):
         pdf.cell(col_widths[0], row_h, name, border=1, align="C")
         pdf.cell(col_widths[1], row_h, count, border=1, align="C")
         
-        x_pos = pdf.get_x()
-        y_pos = pdf.get_y()
         pdf.multi_cell(col_widths[2], 6, details, border=1, align="L")
-        
         pdf.set_xy(x_start, y_start + row_h)
         
     return bytes(pdf.output())
@@ -547,7 +568,6 @@ def create_regular_holidays_pdf(schedule, holiday_names, start_date, end_date):
         pdf.cell(col_widths[1], row_h, count, border=1, align="C")
         
         pdf.multi_cell(col_widths[2], 6, details, border=1, align="L")
-        
         pdf.set_xy(x_start, y_start + row_h)
         
     return bytes(pdf.output())
