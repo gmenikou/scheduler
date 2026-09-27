@@ -273,7 +273,6 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         block_year = block["year"]
         c_id = get_cycle_id(block_year)
 
-        # Elegxos mono tou 7etous kyklou (epitrepetai pleon kai 1/1 kai 31/12 ston idio xrono an xreiastei)
         eligible = [
             doc for doc in DOCTORS 
             if doctor_package_cycle_counts[doc][c_id][base_name] == 0 
@@ -290,7 +289,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         best_doc = None
         for doc in candidates:
             if all(is_valid_assignment(doc, bd, schedule, holiday_dates, exclude_date=bd,
-                                       strict_monthly=True, min_gap=1, avoid_consecutive_weekends=False) for bd in block_dates):
+                                        strict_monthly=True, min_gap=1, avoid_consecutive_weekends=False) for bd in block_dates):
                 best_doc = doc
                 break
 
@@ -809,8 +808,15 @@ with right_col:
             st.session_state.balance = compute_balance(sch, start_date, end_date, hols)
             st.rerun()
 
-    for w in st.session_state.get("warnings", []):
-        st.warning(w)
+    # ----------------------------
+    # DISPLAY WARNINGS & CALENDAR
+    # ----------------------------
+    if st.session_state.warnings:
+        with st.expander("⚠️ Προειδοποιήσεις / Παραβάσεις Κανόνων", expanded=False):
+            for w in st.session_state.warnings:
+                st.warning(w)
 
     if st.session_state.schedule:
+        st.markdown("---")
+        st.subheader("📅 Μηνιαίο Πρόγραμμα Εφημεριών")
         display_calendar(st.session_state.schedule, st.session_state.holiday_names)
