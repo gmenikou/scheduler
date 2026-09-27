@@ -43,15 +43,17 @@ FIXED_HOLIDAYS = [
     (12, 31, "Παραμονή Πρωτοχρονιάς"),
 ]
 
-MAJOR_PACKAGE_BASE_NAMES = [
-    "Χριστούγεννα",
-    "Πρωτοχρονιά",
-    "Κυριακή του Πάσχα",
-    "Δευτέρα του Πάσχα",
-    "Παραμονή Χριστουγέννων & Μεγάλο Σάββατο",
-    "2η Χριστουγέννων & Μεγάλη Παρασκευή",
-    "Παραμονή Πρωτοχρονιάς"
-]
+# Σειρά προτεραιότητας πακέτων όπως ζητήθηκε:
+# 1: Χριστούγεννα, 2: Πάσχα 1, 3: Κοινό 1, 4: Χριστ. 2, 5: Πάσχα 2, 6: Κοινό 2, 7: Χριστ. 3 (Παραμονή Πρωτοχρονιάς)
+PACKAGE_ROTATION_ORDER = {
+    "Χριστούγεννα": 1,
+    "Κυριακή του Πάσχα": 2,
+    "Παραμονή Χριστουγέννων & Μεγάλο Σάββατο": 3,
+    "Πρωτοχρονιά": 4,
+    "Δευτέρα του Πάσχα": 5,
+    "2η Χριστουγέννων & Μεγάλη Παρασκευή": 6,
+    "Παραμονή Πρωτοχρονιάς": 7,
+}
 
 # ----------------------------
 # HELPER FUNCTIONS
@@ -190,10 +192,10 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
 
         year_blocks = [
             ([datetime.date(year, 12, 25)], "Χριστούγεννα"),
-            ([datetime.date(year, 1, 1)], "Πρωτοχρονιά"),
             ([sun_e], "Κυριακή του Πάσχα"),
-            ([mon_e], "Δευτέρα του Πάσχα"),
             ([datetime.date(year, 12, 24), s_sat], "Παραμονή Χριστουγέννων & Μεγάλο Σάββατο"),
+            ([datetime.date(year, 1, 1)], "Πρωτοχρονιά"),
+            ([mon_e], "Δευτέρα του Πάσχα"),
             ([datetime.date(year, 12, 26), g_fri], "2η Χριστουγέννων & Μεγάλη Παρασκευή"),
             ([datetime.date(year, 12, 31)], "Παραμονή Πρωτοχρονιάς"),
         ]
@@ -201,12 +203,20 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
         for dates, base_name in year_blocks:
             valid_dates = [d for d in dates if start_date <= d <= end_date]
             if valid_dates:
+                # Καθορισμός κύκλου Σεπτεμβρίου για ταξινόμηση
+                primary_date = valid_dates[0]
+                cycle_id = primary_date.year if primary_date.month >= 9 else primary_date.year - 1
                 blocks.append({
                     "name": f"{base_name} {year}",
                     "base_name": base_name,
                     "dates": valid_dates,
-                    "year": year
+                    "year": year,
+                    "cycle_id": cycle_id,
+                    "order": PACKAGE_ROTATION_ORDER.get(base_name, 99)
                 })
+                
+    # Ταξινόμηση ανά κύκλο Σεπτεμβρίου και στη συνέχεια με βάση τη σειρά ροτας που ορίσατε
+    blocks.sort(key=lambda b: (b["cycle_id"], b["order"]))
     return blocks
 
 
@@ -239,19 +249,8 @@ def find_all_violations(schedule):
 
 
 # ----------------------------
-# SCHEDULING LOGIC (SEPTEMBER-TO-SEPTEMBER ROTATION)
+# SCHEDULING LOGIC (STRICT ROTATION SEQUENCE)
 # ----------------------------
-def get_september_cycle_id(date):
-    return date.year if date.month >= 9 else date.year - 1
-
-
-def get_package_season_type(base_name):
-    if "Πάσχα" in base_name:
-        return "Easter"
-    else:
-        return "Christmas"
-
-
 def generate_full_schedule(start_date, end_date, initial_week, manual_assignments=None):
     manual_assignments = manual_assignments or {}
     schedule = {}
@@ -266,9 +265,8 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         if start_date <= d <= end_date:
             schedule[d] = doc
 
-    doctor_season_counts = {
-        doc: defaultdict(lambda: {"Christmas": 0, "Easter": 0}) for doc in DOCTORS
-    }
+    doctor_cycle_packages = {doc: defaultdict(set) for doc in DOCTORS}
+    doctor_history_packages = {doc: set() for doc in DOCTORS}
 
     for block in major_blocks:
         block_dates = block["dates"]
@@ -276,23 +274,24 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             continue
 
         base_name = block["base_name"]
-        season_type = get_package_season_type(base_name)
-        c_id = get_september_cycle_id(block_dates[0])
+        c_id = block["cycle_id"]
 
+        # Αυστηρός κανόνας: 1 πακέτο ανά γιατρό ανά κύκλο και χωρίς επανάληψη προηγούμενου πακέτου
         eligible = [
             doc for doc in DOCTORS 
-            if doctor_season_counts[doc][c_id][season_type] == 0 
+            if len(doctor_cycle_packages[doc][c_id]) == 0 
+            and base_name not in doctor_history_packages[doc]
         ]
+
+        if not eligible:
+            eligible = [doc for doc in DOCTORS if len(doctor_cycle_packages[doc][c_id]) == 0]
 
         if not eligible:
             eligible = DOCTORS
 
         candidates = sorted(
             eligible, 
-            key=lambda d: (
-                doctor_season_counts[d][c_id][season_type],
-                sum(doctor_season_counts[d][c_id].values())
-            )
+            key=lambda d: (len(doctor_history_packages[d]), d)
         )
 
         best_doc = None
@@ -308,7 +307,9 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 
         for bd in block_dates:
             schedule[bd] = best_doc
-        doctor_season_counts[best_doc][c_id][season_type] += 1
+        
+        doctor_cycle_packages[best_doc][c_id].add(base_name)
+        doctor_history_packages[best_doc].add(base_name)
 
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
     all_major_dates = {d for block in major_blocks for d in block["dates"]}
