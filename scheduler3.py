@@ -198,7 +198,6 @@ def is_valid_assignment(doctor, date, schedule, holiday_dates, exclude_date=None
 
 
 def _global_weekday_total(doctor, wd, schedule, exclude_date=None):
-    """Μετράει πόσες φορές έχει κάνει ο γιατρός αυτή τη συγκεκριμένη μέρα (π.χ. Παρασκευή) συνολικά."""
     return sum(
         1 for d, doc in schedule.items()
         if doc == doctor and d != exclude_date and d.weekday() == wd
@@ -284,7 +283,6 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                 doc, d, schedule, holiday_dates, exclude_date=d,
                 strict_monthly=True, max_gap=gap, max_special=max_special)]
             if valid:
-                # Επιλογή με βάση το ποιος έχει τις λιγότερες φορές τη συγκεκριμένη μέρα συνολικά στο εύρος
                 chosen = min(valid, key=lambda doc: (
                     _global_weekday_total(doc, wd, schedule, exclude_date=d),
                     _minor_total(doc, d) if d in minor_dates else 0,
@@ -297,7 +295,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             chosen = min(DOCTORS, key=lambda doc: (
                 _global_weekday_total(doc, wd, schedule, exclude_date=d),
                 not _within_month_cap(doc, d, schedule, exclude_date=d),
-                _total_shifts_in_month(doc, d, schedule, exclude_date=d)
+                _total_shifts_in_month(doc, d, schedule, holiday_dates, exclude_date=d)
             ))
             warnings.append(f"{d.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
         schedule[d] = chosen
