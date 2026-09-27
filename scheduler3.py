@@ -43,29 +43,16 @@ FIXED_HOLIDAYS = [
     (12, 31, "Παραμονή Πρωτοχρονιάς"),
 ]
 
+# Ta 7 akrivi paketa opws oristikan
 PACKAGE_ROTATION_ORDER = {
-    "Παραμονή Χριστουγέννων": 0,
-    "Χριστούγεννα": 1,
-    "Δεύτερη μέρα Χριστουγέννων": 2,
-    "Παραμονή Πρωτοχρονιάς": 3,
-    "Πρωτοχρονιά": 4,
-    "Μεγάλη Παρασκευή": 5,
-    "Μεγάλο Σάββατο": 6,
-    "Κυριακή του Πάσχα": 7,
-    "Δευτέρα του Πάσχα": 8,
+    "1/1 (Πρωτοχρονιά)": 0,
+    "Μεγάλη Παρασκευή + 26/12": 1,
+    "Μεγάλο Σάββατο + 24/12": 2,
+    "Κυριακή του Πάσχα": 3,
+    "Δευτέρα του Πάσχα": 4,
+    "25/12 (Χριστούγεννα)": 5,
+    "31/12 (Παραμονή Πρωτοχρονιάς)": 6,
 }
-
-PACKAGE_NAMES_LIST = [
-    "Παραμονή Χριστουγέννων",
-    "Χριστούγεννα",
-    "Δεύτερη μέρα Χριστουγέννων",
-    "Παραμονή Πρωτοχρονιάς",
-    "Πρωτοχρονιά",
-    "Μεγάλη Παρασκευή",
-    "Μεγάλο Σάββατο",
-    "Κυριακή του Πάσχα",
-    "Δευτέρα του Πάσχα",
-]
 
 # ----------------------------
 # HELPER FUNCTIONS
@@ -195,36 +182,37 @@ def get_holidays_in_range(start_date, end_date):
 
 def get_major_holiday_blocks_in_range(start_date, end_date):
     blocks = []
-    for year in range(start_date.year, end_date.year + 1):
+    # Kyklos Septemvriou - Avgoustou (O ypoloigismos tou cycle_id vasizetai ston mina >= 9)
+    for year in range(start_date.year - 1, end_date.year + 2):
         easter = orthodox_easter(year)
         g_fri = easter - datetime.timedelta(days=2)
         s_sat = easter - datetime.timedelta(days=1)
         sun_e = easter
         mon_e = easter + datetime.timedelta(days=1)
 
+        # Ta 7 paketa me ta zevgaria tous
         year_blocks = [
-            ([datetime.date(year, 12, 24)], "Παραμονή Χριστουγέννων"),
-            ([datetime.date(year, 12, 25)], "Χριστούγεννα"),
-            ([datetime.date(year, 12, 26)], "Δεύτερη μέρα Χριστουγέννων"),
-            ([datetime.date(year, 12, 31)], "Παραμονή Πρωτοχρονιάς"),
-            ([datetime.date(year, 1, 1)], "Πρωτοχρονιά"),
-            ([g_fri], "Μεγάλη Παρασκευή"),
-            ([s_sat], "Μεγάλο Σάββατο"),
+            ([datetime.date(year, 1, 1)], "1/1 (Πρωτοχρονιά)"),
+            ([g_fri, datetime.date(year, 12, 26)], "Μεγάλη Παρασκευή + 26/12"),
+            ([s_sat, datetime.date(year, 12, 24)], "Μεγάλο Σάββατο + 24/12"),
             ([sun_e], "Κυριακή του Πάσχα"),
             ([mon_e], "Δευτέρα του Πάσχα"),
+            ([datetime.date(year, 12, 25)], "25/12 (Χριστούγεννα)"),
+            ([datetime.date(year, 12, 31)], "31/12 (Παραμονή Πρωτοχρονιάς)"),
         ]
 
         for dates, base_name in year_blocks:
             valid_dates = [d for d in dates if start_date <= d <= end_date]
             if valid_dates:
                 primary_date = valid_dates[0]
-                if primary_date.month < 9:
-                    cycle_id = primary_date.year - 1
-                else:
+                # Kyklos Sept - Aug (An minas >= 9, anikei ston epomeno etos-kyklo)
+                if primary_date.month >= 9:
                     cycle_id = primary_date.year
+                else:
+                    cycle_id = primary_date.year - 1
 
                 blocks.append({
-                    "name": f"{base_name} {year}",
+                    "name": f"{base_name} ({year})",
                     "base_name": base_name,
                     "dates": valid_dates,
                     "year": year,
@@ -263,7 +251,7 @@ def find_all_violations(schedule):
 
 
 # ----------------------------
-# SCHEDULING LOGIC (STRICT 7-YEAR MATRIX)
+# SCHEDULING LOGIC (STRICT 7-DOCTOR / 7-PACKAGE CYCLE)
 # ----------------------------
 def generate_full_schedule(start_date, end_date, initial_week, manual_assignments=None):
     manual_assignments = manual_assignments or {}
@@ -286,18 +274,14 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         if start_date <= d <= end_date:
             schedule[d] = doc
 
-    # Ομαδοποίηση ανά έτος/κύκλο
     cycles_dict = defaultdict(list)
     for block in major_blocks:
         cycles_dict[block["cycle_id"]].append(block)
 
     sorted_cycles = sorted(cycles_dict.keys())
 
-    # Δημιουργία απόλυτης μαθητρικής μήτρας (Latin Square / Permutation) ώστε 
-    # κάθε γιατρός να πάρει ακριβώς 1 φορά καθένα από τα 9 πακέτα σε βάθος 7ετίας.
-    # Ο γιατρός i παρνει το πακέτο (package_index + i * shift) % 7 κ.ο.κ.
-    # Επειδή έχουμε 9 πακέτα και 7 γιατρούς, εξασφαλίζουμε απόλυτη ισότητα και μηδενικές επικαλύψεις.
-    for year_idx, c_id in enumerate(sorted_cycles):
+    # Anathesi 7 paketwn se 7 giatrous ana kyklo Sept-Aug choris epikalypsi
+    for cycle_idx, c_id in enumerate(sorted_cycles):
         cycle_blocks = sorted(cycles_dict[c_id], key=lambda b: b["order"])
         
         for block in cycle_blocks:
@@ -309,13 +293,10 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             pkg_name = block["base_name"]
             pkg_idx = PACKAGE_ROTATION_ORDER.get(pkg_name, 0)
 
-            # Σειρά προτεραιότητας γιατρών για το συγκεκριμένο πακέτο στο συγκεκριμένο έτος
-            # ώστε να κυκλώνουν τέλεια χωρίς ποτέ να συμπίπτουν δύο φορές στο ίδιο πακέτο.
-            doc_rotation_idx = (pkg_idx + year_idx * 2) % len(DOCTORS)
+            doc_rotation_idx = (pkg_idx + cycle_idx) % len(DOCTORS)
             ordered_doctors = DOCTORS[doc_rotation_idx:] + DOCTORS[:doc_rotation_idx]
 
             assigned_doc = None
-            # Δοκιμή με χαλάρωση περιορισμών αν χρειαστεί για να μπει στη σωστή θέση
             for avoid_cons in (True, False):
                 for min_gap in (3, 2, 1, 0):
                     for cand in ordered_doctors:
