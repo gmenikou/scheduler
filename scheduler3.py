@@ -44,13 +44,15 @@ FIXED_HOLIDAYS = [
 ]
 
 PACKAGE_ROTATION_ORDER = {
-    "Χριστούγεννα": 1,
-    "Κυριακή του Πάσχα": 2,
-    "Παραμονή Χριστουγέννων & Μεγάλο Σάββατο": 3,
-    "Πρωτοχρονιά": 4,
-    "Δευτέρα του Πάσχα": 5,
-    "2η Χριστουγέννων & Μεγάλη Παρασκευή": 6,
-    "Παραμονή Πρωτοχρονιάς": 7,
+    "Παραμονή Χριστουγέννων": 1,
+    "Χριστούγεννα": 2,
+    "2η Μέρα Χριστουγέννων": 3,
+    "Παραμονή Πρωτοχρονιάς": 4,
+    "Πρωτοχρονιά": 5,
+    "Μεγάλη Παρασκευή": 6,
+    "Μεγάλο Σάββατο": 7,
+    "Κυριακή του Πάσχα": 8,
+    "Δευτέρα του Πάσχα": 9,
 }
 
 # ----------------------------
@@ -183,19 +185,21 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
     blocks = []
     for year in range(start_date.year, end_date.year + 1):
         easter = orthodox_easter(year)
-        s_sat = easter - datetime.timedelta(days=1)
         g_fri = easter - datetime.timedelta(days=2)
+        s_sat = easter - datetime.timedelta(days=1)
         sun_e = easter
         mon_e = easter + datetime.timedelta(days=1)
 
         year_blocks = [
+            ([datetime.date(year, 12, 24)], "Παραμονή Χριστουγέννων"),
             ([datetime.date(year, 12, 25)], "Χριστούγεννα"),
-            ([sun_e], "Κυριακή του Πάσχα"),
-            ([datetime.date(year, 12, 24), s_sat], "Παραμονή Χριστουγέννων & Μεγάλο Σάββατο"),
-            ([datetime.date(year, 1, 1)], "Πρωτοχρονιά"),
-            ([mon_e], "Δευτέρα του Πάσχα"),
-            ([datetime.date(year, 12, 26), g_fri], "2η Χριστουγέννων & Μεγάλη Παρασκευή"),
+            ([datetime.date(year, 12, 26)], "2η Μέρα Χριστουγέννων"),
             ([datetime.date(year, 12, 31)], "Παραμονή Πρωτοχρονιάς"),
+            ([datetime.date(year, 1, 1)], "Πρωτοχρονιά"),
+            ([g_fri], "Μεγάλη Παρασκευή"),
+            ([s_sat], "Μεγάλο Σάββατο"),
+            ([sun_e], "Κυριακή του Πάσχα"),
+            ([mon_e], "Δευτέρα του Πάσχα"),
         ]
 
         for dates, base_name in year_blocks:
@@ -407,7 +411,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 
 
 # ----------------------------
-# CHRONOLOGICAL SUMMARY FUNCTIONS (Ανά Ιατρό, Ημερολογιακά)
+# CHRONOLOGICAL SUMMARY FUNCTIONS
 # ----------------------------
 def compute_major_holidays_by_doctor(schedule, start_date, end_date):
     blocks = get_major_holiday_blocks_in_range(start_date, end_date)
@@ -424,10 +428,9 @@ def compute_major_holidays_by_doctor(schedule, start_date, end_date):
                     "date_obj": d,
                     "Ακτινολόγος": doc,
                     "Ημερομηνία & Ημέρα": f"{d.strftime('%d/%m/%Y')} ({weekday_str})",
-                    "Μεγάλη Εορτή / Πακέτο": block["name"]
+                    "Μεγάλη Εορτή / Πακέτο": block["base_name"]
                 })
                 
-    # Ενοποίηση σε ενιαία λίστα ταξινομημένη ημερολογιακά
     all_data = []
     for doc in DOCTORS:
         sorted_items = sorted(doctor_rows[doc], key=lambda x: x["date_obj"])
@@ -485,7 +488,7 @@ def compute_balance(schedule, start_date, end_date, holiday_names):
 
 
 # ----------------------------
-# PDF EXPORT HELPERS (Ένας γιατρός ανά σελίδα για Μεγάλες Εορτές)
+# PDF EXPORT HELPERS
 # ----------------------------
 def create_balance_pdf(df, start_date, end_date):
     pdf = FPDF(orientation="L", unit="mm", format="A4")
@@ -526,7 +529,7 @@ def create_major_holidays_pdf_by_doctor(schedule, start_date, end_date):
                 doctor_rows[doc].append({
                     "date_obj": d,
                     "Ημερομηνία & Ημέρα": f"{d.strftime('%d/%m/%Y')} ({weekday_str})",
-                    "Μεγάλη Εορτή / Πακέτο": block["name"]
+                    "Μεγάλη Εορτή / Πακέτο": block["base_name"]
                 })
 
     pdf = FPDF(orientation="P", unit="mm", format="A4")
@@ -560,6 +563,50 @@ def create_major_holidays_pdf_by_doctor(schedule, start_date, end_date):
         else:
             pdf.cell(col_widths[0] + col_widths[1], 8, "Καμία μεγάλη εορτή / πακέτο", border=1, align="C")
             pdf.ln()
+
+    return bytes(pdf.output())
+
+
+def create_yearly_major_holidays_pdf(schedule, year, start_date, end_date):
+    blocks = get_major_holiday_blocks_in_range(start_date, end_date)
+    year_blocks = [b for b in blocks if b["year"] == year]
+    sorted_blocks = sorted(year_blocks, key=lambda b: b["dates"][0])
+
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.add_page()
+    pdf.add_font("DejaVu", "", "DejaVuSans.ttf")
+    pdf.add_font("DejaVu", "B", "DejaVuSans-Bold.ttf")
+
+    pdf.set_font("DejaVu", "B", 14)
+    pdf.cell(0, 10, f"Πρόγραμμα Μεγάλων Εορτών – Έτος {year}", align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("DejaVu", "", 10)
+    pdf.cell(0, 6, f"Συγκεντρωτική Κατάσταση Έτους", align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(6)
+
+    col_widths = [30, 20, 75, 45]
+    headers = ["Ημερομηνία", "Ημέρα", "Μεγάλη Εορτή", "Ακτινολόγος"]
+
+    pdf.set_font("DejaVu", "B", 10)
+    for h, w in zip(headers, col_widths):
+        pdf.cell(w, 8, h, border=1, align="C")
+    pdf.ln()
+
+    pdf.set_font("DejaVu", "", 9)
+    found_any = False
+    for block in sorted_blocks:
+        for d in block["dates"]:
+            doc = schedule.get(d, "-")
+            weekday_str = GREEK_WEEKDAY_LABELS[d.weekday()]
+            pdf.cell(col_widths[0], 8, d.strftime('%d/%m/%Y'), border=1, align="C")
+            pdf.cell(col_widths[1], 8, weekday_str, border=1, align="C")
+            pdf.cell(col_widths[2], 8, block["base_name"], border=1, align="L")
+            pdf.cell(col_widths[3], 8, doc, border=1, align="C")
+            pdf.ln()
+            found_any = True
+
+    if not found_any:
+        pdf.cell(sum(col_widths), 8, "Καμία μεγάλη εορτή καταχωρημένη για αυτό το έτος", border=1, align="C")
+        pdf.ln()
 
     return bytes(pdf.output())
 
@@ -753,7 +800,7 @@ with left_col:
         st.dataframe(st.session_state.balance, use_container_width=True, height=260)
 
         if st.session_state.schedule:
-            # 1. Μεγάλες Εορτές ανά Ιατρό (Ημερολογιακά)
+            # 1. Μεγάλες Εορτές ανά Ιατρό
             st.markdown("### 🎄🐣 Κατάσταση Μεγάλων Εορτών ανά Ιατρό")
             major_doctor_df = compute_major_holidays_by_doctor(
                 st.session_state.schedule, st.session_state.start_date, end_d)
@@ -762,13 +809,23 @@ with left_col:
             pdf_major_bytes = create_major_holidays_pdf_by_doctor(st.session_state.schedule, st.session_state.start_date, end_d)
             st.download_button("📄 Κατέβασε Μεγάλες Εορτές ανά Ιατρό σε PDF", pdf_major_bytes, file_name="major_holidays_by_doctor.pdf", mime="application/pdf")
 
+            # 2. ΝΕΟ: Επιλογή Έτους για Λήψη Μεγάλων Εορτών Συγκεκριμένου Έτους
+            st.markdown("### 📅 Εξαγωγή Μεγάλων Εορτών ανά Έτος")
+            min_y = min(d.year for d in st.session_state.schedule.keys())
+            max_y = max(d.year for d in st.session_state.schedule.keys())
+            available_years = list(range(min_y, max_y + 1))
+            
+            selected_pdf_year = st.selectbox("Επιλέξτε Έτος", available_years, key="pdf_year_select")
+            pdf_yearly_bytes = create_yearly_major_holidays_pdf(st.session_state.schedule, selected_pdf_year, st.session_state.start_date, end_d)
+            st.download_button(f"📄 Κατέβασε Μεγάλες Εορτών Έτους {selected_pdf_year} σε PDF", pdf_yearly_bytes, file_name=f"major_holidays_{selected_pdf_year}.pdf", mime="application/pdf")
+
         if st.session_state.holiday_names:
             major_blocks = get_major_holiday_blocks_in_range(st.session_state.start_date, end_d)
             all_major_dates = {d for block in major_blocks for d in block["dates"]}
             regular_hols = {d: n for d, n in st.session_state.holiday_names.items()
                             if d not in all_major_dates}
             if regular_hols:
-                # 2. Μικρές Αργίες (Ξεχωριστό τμήμα)
+                # 3. Μικρές Αργίες
                 st.markdown("### 🎈 Κατάσταση Μικρών Αργιών")
                 regular_df = compute_regular_holidays_chronological(st.session_state.schedule, regular_hols)
                 st.dataframe(regular_df, use_container_width=True, height=200)
