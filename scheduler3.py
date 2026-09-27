@@ -788,8 +788,7 @@ with right_col:
         with st.expander("⚠️ Προειδοποιήσεις / Παραβάσεις Κανόνων", expanded=False):
             for w in st.session_state.warnings:
                 st.warning(w)
-
-    if st.schedule if hasattr(st.session_state, "schedule") else st.session_state.schedule:
+    if st.session_state.get("schedule") is not None:
         st.markdown("---")
         st.subheader("📅 Μηνιαίο Πρόγραμμα Εφημεριών")
         display_calendar(st.session_state.schedule, st.session_state.holiday_names)
