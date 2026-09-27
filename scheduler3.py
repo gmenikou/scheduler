@@ -366,10 +366,15 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             if not valid:
                 continue
             
+            def _total_overall_shifts(doc_name):
+                return sum(1 for dt, dc in schedule.items() if dc == doc_name)
+
             def _total_weekdays(doc_name):
                 return sum(1 for dt, dc in schedule.items() if dc == doc_name and dt.weekday() in (0, 1, 2, 3))
 
+            # Βελτιωμένη δικαιοσύνη: Πρώτα συνολικό φορτίο (Total shifts) και έπειτα Weekdays
             chosen = min(valid, key=lambda doc: (
+                _total_overall_shifts(doc),
                 _total_weekdays(doc),
                 _total_shifts_in_month(doc, current_date, schedule, holiday_dates=holiday_dates)
             ))
@@ -382,7 +387,6 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             warnings.append(f"{current_date.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
         schedule[current_date] = chosen
 
-    # Επανάληψη χειρονακτικών αναθέσεων στο τέλος για απόλυτη προτεραιότητα
     for d, doc in manual_assignments.items():
         if start_date <= d <= end_date:
             schedule[d] = doc
