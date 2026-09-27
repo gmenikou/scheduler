@@ -276,29 +276,31 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         block_year = block["year"]
         c_id = get_cycle_id(block_year)
 
-        # ΑΥΣΤΗΡΟΣ ΚΑΝΟΝΑΣ:
-        # Μόνο η Πρωτοχρονιά (1/1) επιτρέπεται να συνδυαστεί στο ίδιο ημερολογιακό έτος 
-        # αποκλειστικά με τα Χριστούγεννα (25/12). 
-        # Όλα τα άλλα πακέτα (24/12, 26/12, 31/12 κλπ.) απαγορεύεται αυστηρά να συνδυαστούν 
-        # με άλλο μεγάλο πακέτο στο ίδιο ημερολογιακό έτος.
-        is_jan_1 = (base_name == "Πρωτοχρονιά")
-
+        # AUSTHROS KANONAS: 
+        # Kanenas giatros den mporei na parei pano apo 1 megalo paketo sto idio imerologiako etos.
+        # (I syndiasmologia yparxei fysika metaxy Xristougennon 25/12 tou etous Y kai Protoxronias 1/1 tou etous Y+1, 
+        # opou apoteloun diaforetika imerologiaka eti ara den paraviazetai o kanonas).
         eligible = [
             doc for doc in DOCTORS 
             if doctor_package_cycle_counts[doc][c_id][base_name] == 0 
-            and (
-                doctor_yearly_major_count[doc][block_year] == 0 
-                or (is_jan_1 and doctor_yearly_major_count[doc][block_year] == 1)
-            )
+            and doctor_yearly_major_count[doc][block_year] == 0
         ]
         
-        # Fallback: διατήρηση αποφυγής επανάληψης εντός 7ετίας (c_id == 0)
+        # Fallback 1: an oloi exoun idi parei paketo fetos, diatioume toulaxiston tin 7eti rota (c_id == 0)
         if not eligible:
             eligible = [
                 doc for doc in DOCTORS 
                 if doctor_package_cycle_counts[doc][c_id][base_name] == 0
+                and doctor_yearly_major_count[doc][block_year] == 0
             ]
         
+        # Fallback 2: an oloi exoun parei kai to idio paketo ston kyklo, toulaxiston na min exoun parei allo fetos
+        if not eligible:
+            eligible = [
+                doc for doc in DOCTORS 
+                if doctor_yearly_major_count[doc][block_year] == 0
+            ]
+
         if not eligible:
             eligible = DOCTORS
 
@@ -313,7 +315,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 
         if not best_doc:
             best_doc = candidates[0]
-            warnings.append(f"{block['name']}: ανατέθηκε χωρίς πλήρη τήρηση κανόνων ({best_doc})")
+            warnings.append(f"{block['name']}: anathethike xwris pliri tirisi kanonwn ({best_doc})")
 
         for bd in block_dates:
             schedule[bd] = best_doc
@@ -364,7 +366,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                 not _within_month_cap(doc, d, schedule, exclude_date=d),
                 _total_shifts_in_month(doc, d, schedule, exclude_date=d, holiday_dates=holiday_dates)
             ))
-            warnings.append(f"{d.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
+            warnings.append(f"{d.strftime('%d/%m/%Y')}: kanemia egkyri epilogi, anathethike {chosen}")
         schedule[d] = chosen
 
     for current_date in all_days:
@@ -392,7 +394,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             chosen = min(DOCTORS, key=lambda doc: (
                 not _within_month_cap(doc, current_date, schedule, exclude_date=current_date),
                 _total_shifts_in_month(doc, current_date, schedule, exclude_date=current_date, holiday_dates=holiday_dates)))
-            warnings.append(f"{current_date.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
+            warnings.append(f"{current_date.strftime('%d/%m/%Y')}: kamia egkyri epilogi, anathethike {chosen}")
         schedule[current_date] = chosen
 
     for d, doc in manual_assignments.items():
