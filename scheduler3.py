@@ -258,6 +258,8 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
     doctor_yearly_major_count = {
         doc: {y: 0 for y in range(start_date.year - 1, end_date.year + 2)} for doc in DOCTORS
     }
+    
+    # Παρακολούθηση ποιος γιατρός έχει πάρει ποιο πακέτο ανά κύκλο 7ετίας (ξεκινάμε από το 2026)
     doctor_package_type_counts = {
         doc: {pt: 0 for pt in MAJOR_PACKAGE_BASE_NAMES} for doc in DOCTORS
     }
@@ -272,15 +274,21 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         is_jan_1 = (len(block_dates) == 1 and block_dates[0].month == 1 and block_dates[0].day == 1)
         target_year = block_year if not is_jan_1 else block_year - 1
 
-        eligible = [doc for doc in DOCTORS if doctor_yearly_major_count[doc][target_year] == 0]
-        others = [doc for doc in DOCTORS if doc not in eligible]
+        # Αυστηρός κανόνας: Επιτρέπονται ΜΟΝΟ γιατροί που ΔΕΝ έχουν ξαναπάρει αυτό το πακέτο στη τρέχουσα 7ετία
+        eligible = [
+            doc for doc in DOCTORS 
+            if doctor_yearly_major_count[doc][target_year] == 0 
+            and doctor_package_type_counts[doc][base_name] == 0
+        ]
+        
+        # Αν εξαντληθούν οι αυστηρά διαθέσιμοι, χαλαρώνουμε μόνο ως προς το έτος, αλλά ποτέ ως προς το ίδιο πακέτο
+        if not eligible:
+            eligible = [doc for doc in DOCTORS if doctor_package_type_counts[doc][base_name] == 0]
+        
+        if not eligible:
+            eligible = DOCTORS # Έσχατη λύση αν κλείσει κύκλος
 
-        def candidate_score(doc):
-            type_count = doctor_package_type_counts[doc].get(base_name, 0)
-            total_major = sum(doctor_yearly_major_count[doc].values())
-            return (type_count, total_major)
-
-        candidates = sorted(eligible, key=candidate_score) + sorted(others, key=candidate_score)
+        candidates = sorted(eligible, key=lambda d: sum(doctor_yearly_major_count[d].values()))
 
         best_doc = None
         for doc in candidates:
@@ -369,7 +377,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         if chosen is None:
             chosen = min(DOCTORS, key=lambda doc: (
                 not _within_month_cap(doc, current_date, schedule, exclude_date=current_date),
-                _total_shifts_in_month(doc, current_date, schedule, exclude_date=date, holiday_dates=holiday_dates) if 'date' in locals() else 0))
+                _total_shifts_in_month(doc, current_date, schedule, exclude_date=current_date, holiday_dates=holiday_dates)))
             warnings.append(f"{current_date.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
         schedule[current_date] = chosen
 
