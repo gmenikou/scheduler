@@ -43,7 +43,6 @@ FIXED_HOLIDAYS = [
     (12, 31, "Παραμονή Πρωτοχρονιάς"),
 ]
 
-# Σειρά προτεραιότητας πακέτων όπως ζητήθηκε:
 PACKAGE_ROTATION_ORDER = {
     "Χριστούγεννα": 1,
     "Κυριακή του Πάσχα": 2,
@@ -203,6 +202,7 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
             valid_dates = [d for d in dates if start_date <= d <= end_date]
             if valid_dates:
                 primary_date = valid_dates[0]
+                # Κύκλος Σεπτεμβρίου: Από 1η Σεπτεμβρίου του έτους έως 31 Αυγούστου του επόμενου
                 cycle_id = primary_date.year if primary_date.month >= 9 else primary_date.year - 1
                 blocks.append({
                     "name": f"{base_name} {year}",
@@ -244,7 +244,7 @@ def find_all_violations(schedule):
 
 
 # ----------------------------
-# SCHEDULING LOGIC (STRICT SHIFT ROTATION)
+# SCHEDULING LOGIC (SMART SEP-TO-SEP SHIFT ROTATION)
 # ----------------------------
 def generate_full_schedule(start_date, end_date, initial_week, manual_assignments=None):
     manual_assignments = manual_assignments or {}
@@ -260,38 +260,46 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         if start_date <= d <= end_date:
             schedule[d] = doc
 
-    # Ομαδοποίηση των πακέτων ανά κύκλο Σεπτεμβρίου
+    # Ομαδοποίηση πακέτων ανά κύκλο Σεπτεμβρίου – Αυγούστου
     cycles_dict = defaultdict(list)
     for block in major_blocks:
         cycles_dict[block["cycle_id"]].append(block)
 
     sorted_cycles = sorted(cycles_dict.keys())
+    base_doctors = list(DOCTORS)
 
-    # Αυστηρή ανάθεση με μαθηματικό shift ανά έτος (χωρίς επαναλήψεις)
+    # Καταγραφή ιστορικού για έξυπνη εναλλαγή από κύκλο σε κύκλο
+    historical_package_assignments = {}  # {(doctor, package_base_name): cycle_id}
+
     for cycle_idx, c_id in enumerate(sorted_cycles):
         cycle_blocks = sorted(cycles_dict[c_id], key=lambda b: b["order"])
+        
+        # Βασική μετατόπιση 7ετίας
+        shifted_doctors = base_doctors[cycle_idx % len(base_doctors):] + base_doctors[:cycle_idx % len(base_doctors)]
+        available_doctors = list(shifted_doctors)
         
         for b_idx, block in enumerate(cycle_blocks):
             block_dates = block["dates"]
             if any(bd in schedule for bd in block_dates):
                 continue
             
-            # Κυκλική μετατόπιση: Κανένας γιατρός δεν ξαναπαίρνει το ίδιο πακέτο πριν περάσουν 7 κύκλοι
-            doc_idx = (b_idx + cycle_idx) % len(DOCTORS)
-            best_doc = DOCTORS[doc_idx]
+            base_name = block["base_name"]
             
-            # Έλεγχος εγκυρότητας
-            valid = all(
-                is_valid_assignment(best_doc, bd, schedule, holiday_dates, exclude_date=bd,
-                                    strict_monthly=True, min_gap=1, avoid_consecutive_weekends=False)
-                for bd in block_dates
-            )
+            # Προσπάθεια αποφυγής επανάληψης του ίδιου πακέτου από τον αμέσως προηγούμενο κύκλο
+            assigned_doc = None
+            for doc in available_doctors:
+                if historical_package_assignments.get((doc, base_name)) != c_id - 1:
+                    assigned_doc = doc
+                    break
             
-            if not valid:
-                warnings.append(f"{block['name']}: ο/η {best_doc} φορτίστηκε αλλά επιβάλλεται αυστηρά από τη ροτά.")
-
+            if assigned_doc is None:
+                assigned_doc = available_doctors[0]
+                
+            available_doctors.remove(assigned_doc)
+            historical_package_assignments[(assigned_doc, base_name)] = c_id
+            
             for bd in block_dates:
-                schedule[bd] = best_doc
+                schedule[bd] = assigned_doc
 
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
     all_major_dates = {d for block in major_blocks for d in block["dates"]}
@@ -793,9 +801,6 @@ with right_col:
             st.session_state.balance = compute_balance(sch, start_date, end_date, hols)
             st.rerun()
 
-    # ----------------------------
-    # DISPLAY WARNINGS & CALENDAR
-    # ----------------------------
     if st.session_state.warnings:
         with st.expander("⚠️ Προειδοποιήσεις / Παραβάσεις Κανόνων", expanded=False):
             for w in st.session_state.warnings:
