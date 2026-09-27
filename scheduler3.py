@@ -447,7 +447,7 @@ def compute_regular_holidays_chronological(schedule, regular_holidays):
 
 
 def compute_doctor_chronological_schedule(schedule, start_date, end_date, holiday_names):
-    """Αναλυτική λίστα ανά ιατρό με σπασμένα πακέτα, ημερολογιακή σειρά και στήλες: Ακτινολόγος, Ημερομηνία, Περιγραφή"""
+    """Αναλυτική λίστα ομαδοποιημένη ανά ιατρό, με σπασμένα πακέτα, ημερολογιακή σειρά και στήλες: Ακτινολόγος, Ημερομηνία Αργίας, Περιγραφή Αργίας"""
     major_blocks = get_major_holiday_blocks_in_range(start_date, end_date)
     all_major_dates = {d for block in major_blocks for d in block["dates"]}
     major_lookup = {d: block["name"] for block in major_blocks for d in block["dates"]}
@@ -462,7 +462,6 @@ def compute_doctor_chronological_schedule(schedule, start_date, end_date, holida
             
         weekday_str = GREEK_WEEKDAY_LABELS[d.weekday()]
         
-        # Καθορισμός τύπου / περιγραφής αργίας
         if d in all_major_dates:
             desc = f"Μεγάλη Εορτή: {major_lookup.get(d, 'Πακέτο')}"
         elif d in holiday_names:
@@ -481,7 +480,6 @@ def compute_doctor_chronological_schedule(schedule, start_date, end_date, holida
             "Περιγραφή Αργίας": desc
         })
         
-    # Επεξεργασία DataFrame ανά ιατρό για σωστή χρονολογική ταξινόμηση
     formatted_doctor_schedules = {}
     for doc, items in doctor_schedules.items():
         df_doc = pd.DataFrame(items)
@@ -749,10 +747,10 @@ with left_col:
                     regular_df = compute_regular_holidays_chronological(st.session_state.schedule, regular_hols)
                     st.dataframe(regular_df, use_container_width=True)
 
-        # Αναλυτική Προοπτική Ανά Ιατρό με τη νέα σειρά στηλών και χρονολογική κατάταξη
+        # Ομαδοποιημένη προοπτική ανά ιατρό (με καρτέλες για κάθε γιατρό) και ταξινόμηση χρονολογικά
         if st.session_state.schedule:
             st.markdown("---")
-            st.markdown("### 👨‍⚕️👩‍⚕️ Προοπτικό Πρόγραμμα ανά Ιατρό")
+            st.markdown("### 👨‍⚕️👩‍⚕️ Ομαδοποιημένο Πρόγραμμα ανά Ιατρό")
             doc_schedules = compute_doctor_chronological_schedule(
                 st.session_state.schedule, st.session_state.start_date, end_d, st.session_state.holiday_names
             )
