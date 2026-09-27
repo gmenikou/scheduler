@@ -537,6 +537,7 @@ def create_calendar_pdf(schedule, holiday_names):
         pdf.ln(5)
 
         col_w = 38
+        row_h = 24
         pdf.set_font("DejaVu", "B", 11)
         for wd_label in GREEK_WEEKDAY_LABELS:
             pdf.cell(col_w, 8, wd_label, border=1, align="C")
@@ -546,21 +547,57 @@ def create_calendar_pdf(schedule, holiday_names):
         weeks = cal.monthdatescalendar(year, month)
 
         for week in weeks:
+            start_x = pdf.get_x()
             start_y = pdf.get_y()
-            for day in week:
+            for i, day in enumerate(week):
+                x = start_x + (i * col_w)
+                y = start_y
+                pdf.set_xy(x, y)
+                
                 if day.month == month:
-                    doc = month_sched.get(day, "-")
+                    doc = month_sched.get(day, "")
                     is_hol = day in holiday_names
-                    cell_str = f"{day.day}\n{doc}"
+                    
+                    # Χρώμα φόντου ανάλογα με τον γιατρό (όπως στο UI)
+                    doc_color = DOCTOR_COLORS.get(doc, (245, 245, 245))
+                    pdf.set_fill_color(*doc_color)
+                    
+                    # Αν είναι αργία, δίνουμε ξεχωριστό (π.χ. κόκκινο) περίγραμμα
                     if is_hol:
-                        pdf.set_fill_color(255, 220, 220)
+                        pdf.set_draw_color(217, 83, 79)
+                        pdf.set_line_width(0.8)
                     else:
-                        pdf.set_fill_color(250, 250, 250)
-                    pdf.multi_cell(col_w, 10, cell_str, border=1, align="C", fill=True)
-                    pdf.set_xy(pdf.get_x() + col_w, start_y)
+                        pdf.set_draw_color(0, 0, 0)
+                        pdf.set_line_width(0.2)
+                    
+                    pdf.cell(col_w, row_h, "", border=1, fill=True)
+                    
+                    # Επαναφορά περιγράμματος
+                    pdf.set_draw_color(0, 0, 0)
+                    pdf.set_line_width(0.2)
+                    
+                    # Ημερομηνία
+                    pdf.set_xy(x, y + 2)
+                    pdf.set_font("DejaVu", "B", 10)
+                    pdf.cell(col_w, 5, str(day.day), align="C", new_x="LMARGIN", new_y="NEXT")
+                    
+                    # Όνομα γιατρού
+                    pdf.set_xy(x, y + 8)
+                    pdf.set_font("DejaVu", "", 9)
+                    pdf.cell(col_w, 5, doc, align="C", new_x="LMARGIN", new_y="NEXT")
+                    
+                    # Όνομα αργίας (αν υπάρχει)
+                    if is_hol:
+                        pdf.set_xy(x, y + 14)
+                        pdf.set_font("DejaVu", "", 7)
+                        pdf.cell(col_w, 4, holiday_names[day][:18], align="C", new_x="LMARGIN", new_y="NEXT")
                 else:
-                    pdf.cell(col_w, 20, "", border=1)
-            pdf.ln(20)
+                    pdf.set_fill_color(240, 240, 240)
+                    pdf.set_draw_color(0, 0, 0)
+                    pdf.set_line_width(0.2)
+                    pdf.cell(col_w, row_h, "", border=1, fill=True)
+            
+            pdf.set_xy(start_x, start_y + row_h)
             
     return bytes(pdf.output())
 
