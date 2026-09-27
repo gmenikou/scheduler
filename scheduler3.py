@@ -263,7 +263,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
     holiday_dates = set(holiday_names.keys())
     major_blocks = get_major_holiday_blocks_in_range(start_date, end_date)
 
-    # 1. Εισαγωγή αρχικής ρότας (initial_week) στις πρώτες 7 ημέρες από το start_date
+    # 1. Eisagwgi arxikis rotas stis prwtes 7 imeres
     if initial_week and isinstance(initial_week, (list, tuple)) and len(initial_week) >= 7:
         week_start_monday = start_date - datetime.timedelta(days=start_date.weekday())
         for i in range(7):
@@ -271,39 +271,44 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             if start_date <= d <= end_date:
                 schedule[d] = initial_week[i]
 
-    # 2. Εισαγωγή χειρονακτικών αναθέσεων
+    # 2. Xειροnakthkes anatheseis
     for d, doc in manual_assignments.items():
         if start_date <= d <= end_date:
             schedule[d] = doc
 
-    sorted_major_blocks = sorted(major_blocks, key=lambda b: (b["dates"][0], b["order"]))
-    
-    def _major_total(doc):
-        return sum(1 for b in sorted_major_blocks if any(schedule.get(d) == doc for d in b["dates"]))
+    # Omadopoihsh se kyklo Sept-Avg me syndyasmo twn paketon (zefgaria 24/12 + Meg. Savvato kai 26/12 + Meg. Paraskevi)
+    cycles_dict = defaultdict(list)
+    for block in major_blocks:
+        cycles_dict[block["cycle_id"]].append(block)
 
-    for block_idx, block in enumerate(sorted_major_blocks):
-        block_dates = block["dates"]
-        if any(bd in schedule for bd in block_dates):
-            continue
-        
-        primary_date = block_dates[0]
-        
-        valid_candidates = [
-            doc for doc in DOCTORS
-            if is_valid_assignment(doc, primary_date, schedule, holiday_dates, exclude_date=None, 
-                                   strict_monthly=True, min_gap=3, max_special=1, avoid_consecutive_weekends=True)
-        ]
-        
-        if not valid_candidates:
-            valid_candidates = list(DOCTORS)
+    sorted_cycles = sorted(cycles_dict.keys())
+    base_doctors = list(DOCTORS)
 
-        assigned_doc = min(valid_candidates, key=lambda d: (
-            _major_total(d),
-            _total_shifts_in_month(d, primary_date, schedule, holiday_dates=holiday_dates)
-        ))
+    for cycle_idx, c_id in enumerate(sorted_cycles):
+        cycle_blocks = sorted(cycles_dict[c_id], key=lambda b: b["order"])
+        # Efarmogi strict rotation sta paketa tou kykloy
+        shifted_doctors = base_doctors[cycle_idx % len(base_doctors):] + base_doctors[:cycle_idx % len(base_doctors)]
+        
+        for b_idx, block in enumerate(cycle_blocks):
+            block_dates = block["dates"]
+            if any(bd in schedule for bd in block_dates):
+                continue
+            
+            assigned_doc = shifted_doctors[b_idx % len(shifted_doctors)]
+            primary_date = block_dates[0]
+            
+            if not is_valid_assignment(assigned_doc, primary_date, schedule, holiday_dates, exclude_date=None, 
+                                       strict_monthly=True, min_gap=3, max_special=1, avoid_consecutive_weekends=True):
+                safe_any = [
+                    d for d in DOCTORS 
+                    if is_valid_assignment(d, primary_date, schedule, holiday_dates, exclude_date=None,
+                                           strict_monthly=True, min_gap=3, max_special=1, avoid_consecutive_weekends=True)
+                ]
+                if safe_any:
+                    assigned_doc = safe_any[0]
 
-        for bd in block_dates:
-            schedule[bd] = assigned_doc
+            for bd in block_dates:
+                schedule[bd] = assigned_doc
 
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
     all_major_dates = {d for block in major_blocks for d in block["dates"]}
@@ -351,7 +356,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                 not _within_month_cap(doc, d, schedule, exclude_date=d),
                 _total_shifts_in_month(doc, d, schedule, exclude_date=d, holiday_dates=holiday_dates)
             ))
-            warnings.append(f"{d.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
+            warnings.append(f"{d.strftime('%d/%m/%Y')}: kamia egkyri epilogi, anatetike {chosen}")
         schedule[d] = chosen
 
     for current_date in all_days:
@@ -372,7 +377,6 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             def _total_weekdays(doc_name):
                 return sum(1 for dt, dc in schedule.items() if dc == doc_name and dt.weekday() in (0, 1, 2, 3))
 
-            # Βελτιωμένη δικαιοσύνη: Πρώτα συνολικό φορτίο (Total shifts) και έπειτα Weekdays
             chosen = min(valid, key=lambda doc: (
                 _total_overall_shifts(doc),
                 _total_weekdays(doc),
@@ -384,7 +388,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             chosen = min(DOCTORS, key=lambda doc: (
                 not _within_month_cap(doc, current_date, schedule, exclude_date=current_date),
                 _total_shifts_in_month(doc, current_date, schedule, exclude_date=current_date, holiday_dates=holiday_dates)))
-            warnings.append(f"{current_date.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
+            warnings.append(f"{current_date.strftime('%d/%m/%Y')}: kamia egkyri epilogi, anatetike {chosen}")
         schedule[current_date] = chosen
 
     for d, doc in manual_assignments.items():
