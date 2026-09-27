@@ -202,8 +202,6 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
             valid_dates = [d for d in dates if start_date <= d <= end_date]
             if valid_dates:
                 primary_date = valid_dates[0]
-                # Λειτουργικός κύκλος Σεπτεμβρίου: 1η Σεπτεμβρίου έτους X έως 31 Αυγούστου έτους X+1
-                # Οι γιορτές του Ιανουαρίου (π.χ. 1/1) ανήκουν στον κύκλο που ξεκίνησε τον Σεπτέμβριο του προηγούμενου έτους.
                 if primary_date.month < 9:
                     cycle_id = primary_date.year - 1
                 else:
@@ -273,8 +271,9 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
     sorted_cycles = sorted(cycles_dict.keys())
     base_doctors = list(DOCTORS)
 
-    # Καταγραφή ιστορικού για έξυπνη εναλλαγή από κύκλο σε κύκλο
-    historical_package_assignments = {}  # {(doctor, package_base_name): cycle_id}
+    # Παρακολούθηση ποιος πήρε μεγάλο πακέτο σε ποιο κύκλο (για αποφυγή διπλοχρέωσης στον ίδιο κύκλο)
+    cycle_doctor_assignments = defaultdict(set) # {cycle_id: set(doctors_already_got_package)}
+    historical_package_assignments = {}       # {(doctor, package_base_name): cycle_id}
 
     for cycle_idx, c_id in enumerate(sorted_cycles):
         cycle_blocks = sorted(cycles_dict[c_id], key=lambda b: b["order"])
@@ -290,36 +289,46 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             
             base_name = block["base_name"]
             
-            # Προσπάθεια αποφυγής επανάληψης του ίδιου πακέτου από τον αμέσως προηγούμενο κύκλο
-            assigned_doc = None
-            for doc in available_doctors:
-                if historical_package_assignments.get((doc, base_name)) != c_id - 1:
-                    assigned_doc = doc
-                    break
+            # Βασικός κανόνας: Κανένας γιατρός δεν παίρνει δεύτερο μεγάλο πακέτο στον ίδιο κύκλο Σεπτ-Αυγ
+            valid_candidates = [
+                doc for doc in available_doctors 
+                if doc not in cycle_doctor_assignments[c_id]
+                and historical_package_assignments.get((doc, base_name)) != c_id - 1
+            ]
             
-            if assigned_doc is None:
-                assigned_doc = available_doctors[0]
+            if not valid_candidates:
+                # Αν εξαντληθούν οι διαθέσιμοι, επιλέγουμε τον λιγότερο επιβαρυμένο στον κύκλο
+                valid_candidates = available_doctors
+
+            assigned_doc = valid_candidates[0] if valid_candidates else available_doctors[0]
                 
-            available_doctors.remove(assigned_doc)
+            if assigned_doc in available_doctors:
+                available_doctors.remove(assigned_doc)
+                
+            cycle_doctor_assignments[c_id].add(assigned_doc)
             historical_package_assignments[(assigned_doc, base_name)] = c_id
             
-            # ΕΛΕΓΧΟΣ ΙΕΡΑΡΧΙΑΣ ΑΣΦΑΛΕΙΑΣ: 
-            # Οι βασικοί κανόνες (min_gap κ.λπ.) είναι ανώτεροι. Αν η ανάθεση παραβιάζει 
-            # σκληρούς περιορισμούς, ο αλγόριθμος υποχωρεί και αναθέτει σε όποιον γιατρό «βγαίνει» ασφαλής.
+            # ΕΛΕΓΧΟΣ ΙΕΡΑΡΧΙΑΣ ΑΣΦΑΛΕΙΑΣ (Hard Constraints vs Soft Rotation)
             primary_date = block_dates[0]
             if not is_valid_assignment(assigned_doc, primary_date, schedule, holiday_dates, exclude_date=None, 
                                        strict_monthly=True, min_gap=3, max_special=1, avoid_consecutive_weekends=True):
-                # Βρίσκουμε εναλλακτικό ασφαλή γιατρό
+                # Υποχώρηση σε εναλλακτικό ασφαλή γιατρό εντός του κύκλου εφόσον είναι δυνατόν
                 safe_alternatives = [
                     d for d in DOCTORS 
-                    if is_valid_assignment(d, primary_date, schedule, holiday_dates, exclude_date=None,
+                    if d not in cycle_doctor_assignments[c_id] and
+                    is_valid_assignment(d, primary_date, schedule, holiday_dates, exclude_date=None,
                                            strict_monthly=True, min_gap=3, max_special=1, avoid_consecutive_weekends=True)
                 ]
                 if safe_alternatives:
                     assigned_doc = safe_alternatives[0]
                 else:
-                    # Αν δεν υπάρχει απολύτως καμία επιλογή χωρίς παραβίαση, υποχωρούμε πλήρως στον λιγότερο επιβαρυμένο
-                    assigned_doc = min(DOCTORS, key=lambda d: _total_shifts_in_month(d, primary_date, schedule, holiday_dates=holiday_dates))
+                    # Αν δεν υπάρχει άλλη επιλογή, υποχωρούμε πλήρως στον ασφαλέστερο δυνατό
+                    safe_any = [
+                        d for d in DOCTORS 
+                        if is_valid_assignment(d, primary_date, schedule, holiday_dates, exclude_date=None,
+                                               strict_monthly=True, min_gap=3, max_special=1, avoid_consecutive_weekends=True)
+                    ]
+                    assigned_doc = safe_any[0] if safe_any else min(DOCTORS, key=lambda d: _total_shifts_in_month(d, primary_date, schedule, holiday_dates=holiday_dates))
 
             for bd in block_dates:
                 schedule[bd] = assigned_doc
