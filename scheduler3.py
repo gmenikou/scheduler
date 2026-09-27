@@ -12,7 +12,7 @@ DOCTORS = ["Χριστίνα", "Αθηνά", "Μαρία", "Έλια", "Αλέξ
 
 DOCTOR_COLORS = {
     "Έλενα": (255, 182, 193),
-    "Εύα": (152, 251, 152),
+    "Εύа": (152, 251, 152),
     "Μαρία": (176, 196, 222),
     "Αθηνά": (255, 250, 205),
     "Αλέξανδρος": (221, 160, 221),
@@ -423,7 +423,7 @@ def compute_balance(schedule, start_date, end_date, holiday_names):
 
 
 # ----------------------------
-# PDF EXPORT HELPERS
+# PDF EXPORT HELPERS (FIXED)
 # ----------------------------
 def create_balance_pdf(df, start_date, end_date):
     pdf = FPDF(orientation="L", unit="mm", format="A4")
@@ -458,29 +458,46 @@ def create_major_holidays_pdf(schedule, start_date, end_date):
     pdf.add_font("DejaVu", "", "DejaVuSans.ttf")
     pdf.add_font("DejaVu", "B", "DejaVuSans-Bold.ttf")
 
-    pdf.set_font("DejaVu", "B", 16)
+    pdf.set_font("DejaVu", "B", 14)
     pdf.cell(0, 10, "Κατάσταση Μεγάλων Πακέτων Εορτών", align="C", new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font("DejaVu", "", 11)
-    pdf.cell(0, 8, f"Περίοδος: {start_date.strftime('%d/%m/%Y')} – {end_date.strftime('%d/%m/%Y')}",
+    pdf.set_font("DejaVu", "", 10)
+    pdf.cell(0, 6, f"Περίοδος: {start_date.strftime('%d/%m/%Y')} – {end_date.strftime('%d/%m/%Y')}",
              align="C", new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(6)
+    pdf.ln(4)
 
-    col_widths = [35, 25, 130]
-    pdf.set_font("DejaVu", "B", 11)
-    for h, w in zip(df.columns, col_widths):
-        pdf.cell(w, 8, str(h), border=1, align="C")
+    col_widths = [35, 30, 125]
+    headers = ["Ακτινολόγος", "Σύνολο Πακέτων", "Ανατεθειμένα Πακέτα"]
+    
+    pdf.set_font("DejaVu", "B", 10)
+    for h, w in zip(headers, col_widths):
+        pdf.cell(w, 8, h, border=1, align="C")
     pdf.ln()
 
-    pdf.set_font("DejaVu", "", 10)
+    pdf.set_font("DejaVu", "", 9)
     for _, row in df.iterrows():
-        pdf.cell(col_widths[0], 12, str(row["Ακτινολόγος"]), border=1, align="C")
-        pdf.cell(col_widths[1], 12, str(row["Σύνολο Πακέτων"]), border=1, align="C")
+        name = str(row["Ακτινολόγος"])
+        count = str(row["Σύνολο Πακέτων"])
+        details = str(row["Ανατεθειμένα Πακέτα"])
         
-        x = pdf.get_x()
-        y = pdf.get_y()
-        pdf.multi_cell(col_widths[2], 6, str(row["Ανατεθειμένα Πακέτα"]), border=1)
-        pdf.set_xy(x + col_widths[0] + col_widths[1], y)
-        pdf.ln(12)
+        lines_count = max(len(details.split("\n")), 1)
+        row_h = max(10, lines_count * 6)
+        
+        x_start = pdf.get_x()
+        y_start = pdf.get_y()
+        
+        if y_start + row_h > 270:
+            pdf.add_page()
+            y_start = pdf.get_y()
+
+        pdf.cell(col_widths[0], row_h, name, border=1, align="C")
+        pdf.cell(col_widths[1], row_h, count, border=1, align="C")
+        
+        x_pos = pdf.get_x()
+        y_pos = pdf.get_y()
+        pdf.multi_cell(col_widths[2], 6, details, border=1, align="L")
+        
+        pdf.set_xy(x_start, y_start + row_h)
+        
     return bytes(pdf.output())
 
 
@@ -495,29 +512,44 @@ def create_regular_holidays_pdf(schedule, holiday_names, start_date, end_date):
     pdf.add_font("DejaVu", "", "DejaVuSans.ttf")
     pdf.add_font("DejaVu", "B", "DejaVuSans-Bold.ttf")
 
-    pdf.set_font("DejaVu", "B", 16)
+    pdf.set_font("DejaVu", "B", 14)
     pdf.cell(0, 10, "Κατάσταση Μικρών Αργιών", align="C", new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font("DejaVu", "", 11)
-    pdf.cell(0, 8, f"Περίοδος: {start_date.strftime('%d/%m/%Y')} – {end_date.strftime('%d/%m/%Y')}",
+    pdf.set_font("DejaVu", "", 10)
+    pdf.cell(0, 6, f"Περίοδος: {start_date.strftime('%d/%m/%Y')} – {end_date.strftime('%d/%m/%Y')}",
              align="C", new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(6)
+    pdf.ln(4)
 
-    col_widths = [35, 20, 135]
-    pdf.set_font("DejaVu", "B", 11)
-    for h, w in zip(df.columns, col_widths):
-        pdf.cell(w, 8, str(h), border=1, align="C")
+    col_widths = [35, 25, 140]
+    headers = ["Ακτινολόγος", "Σύνολο", "Ημερομηνίες & Εορτές"]
+    
+    pdf.set_font("DejaVu", "B", 10)
+    for h, w in zip(headers, col_widths):
+        pdf.cell(w, 8, h, border=1, align="C")
     pdf.ln()
 
-    pdf.set_font("DejaVu", "", 10)
+    pdf.set_font("DejaVu", "", 9)
     for _, row in df.iterrows():
-        pdf.cell(col_widths[0], 12, str(row["Ακτινολόγος"]), border=1, align="C")
-        pdf.cell(col_widths[1], 12, str(row["Σύνολο"]), border=1, align="C")
+        name = str(row["Ακτινολόγος"])
+        count = str(row["Σύνολο"])
+        details = str(row["Ημερομηνίες & Εορτές"])
         
-        x = pdf.get_x()
-        y = pdf.get_y()
-        pdf.multi_cell(col_widths[2], 6, str(row["Ημερομηνίες & Εορτές"]), border=1)
-        pdf.set_xy(x + col_widths[0] + col_widths[1], y)
-        pdf.ln(12)
+        lines_count = max(len(details.split(", ")), 1)
+        row_h = max(10, lines_count * 6)
+        
+        x_start = pdf.get_x()
+        y_start = pdf.get_y()
+        
+        if y_start + row_h > 270:
+            pdf.add_page()
+            y_start = pdf.get_y()
+
+        pdf.cell(col_widths[0], row_h, name, border=1, align="C")
+        pdf.cell(col_widths[1], row_h, count, border=1, align="C")
+        
+        pdf.multi_cell(col_widths[2], 6, details, border=1, align="L")
+        
+        pdf.set_xy(x_start, y_start + row_h)
+        
     return bytes(pdf.output())
 
 
@@ -558,11 +590,9 @@ def create_calendar_pdf(schedule, holiday_names):
                     doc = month_sched.get(day, "")
                     is_hol = day in holiday_names
                     
-                    # Χρώμα φόντου ανάλογα με τον γιατρό (όπως στο UI)
                     doc_color = DOCTOR_COLORS.get(doc, (245, 245, 245))
                     pdf.set_fill_color(*doc_color)
                     
-                    # Αν είναι αργία, δίνουμε ξεχωριστό (π.χ. κόκκινο) περίγραμμα
                     if is_hol:
                         pdf.set_draw_color(217, 83, 79)
                         pdf.set_line_width(0.8)
@@ -572,21 +602,17 @@ def create_calendar_pdf(schedule, holiday_names):
                     
                     pdf.cell(col_w, row_h, "", border=1, fill=True)
                     
-                    # Επαναφορά περιγράμματος
                     pdf.set_draw_color(0, 0, 0)
                     pdf.set_line_width(0.2)
                     
-                    # Ημερομηνία
                     pdf.set_xy(x, y + 2)
                     pdf.set_font("DejaVu", "B", 10)
                     pdf.cell(col_w, 5, str(day.day), align="C", new_x="LMARGIN", new_y="NEXT")
                     
-                    # Όνομα γιατρού
                     pdf.set_xy(x, y + 8)
                     pdf.set_font("DejaVu", "", 9)
                     pdf.cell(col_w, 5, doc, align="C", new_x="LMARGIN", new_y="NEXT")
                     
-                    # Όνομα αργίας (αν υπάρχει)
                     if is_hol:
                         pdf.set_xy(x, y + 14)
                         pdf.set_font("DejaVu", "", 7)
