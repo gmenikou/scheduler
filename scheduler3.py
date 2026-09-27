@@ -513,8 +513,14 @@ def create_major_holidays_pdf(schedule, start_date, end_date):
         count = str(row["Σύνολο Πακέτων"])
         details = str(row["Ανατεθειμένα Πακέτα"])
         
-        lines_count = max(len(details.split("\n")), 1)
-        row_h = max(10, lines_count * 6)
+        # Ακριβής υπολογισμός ύψους για την αποφυγή επικαλύψεων
+        lines = details.split("\n")
+        total_lines = 0
+        for line in lines:
+            chars_per_line = 55
+            total_lines += max(1, len(line) // chars_per_line + (1 if len(line) % chars_per_line > 0 else 0))
+        
+        row_h = max(10, total_lines * 6)
         
         x_start = pdf.get_x()
         y_start = pdf.get_y()
@@ -522,9 +528,13 @@ def create_major_holidays_pdf(schedule, start_date, end_date):
         if y_start + row_h > 270:
             pdf.add_page()
             y_start = pdf.get_y()
+            x_start = pdf.get_x()
 
         pdf.cell(col_widths[0], row_h, name, border=1, align="C")
         pdf.cell(col_widths[1], row_h, count, border=1, align="C")
+        
+        cell_x = pdf.get_x()
+        cell_y = pdf.get_y()
         
         pdf.multi_cell(col_widths[2], 6, details, border=1, align="L")
         pdf.set_xy(x_start, y_start + row_h)
@@ -734,7 +744,7 @@ with left_col:
 
         if st.session_state.schedule:
             end_d = max(st.session_state.schedule.keys())
-            st.markdown("### 🎄🐣 Κατάσταση 7 Πακέτων Μεγάλων Εορτών")
+            st.markdown("### 🎄🐣 Κατάσταση Πακέτων Μεγάλων Εορτών")
             major_df = compute_major_holidays_summary(
                 st.session_state.schedule, st.session_state.start_date, end_d)
             st.dataframe(major_df, use_container_width=True, height=200)
@@ -792,7 +802,7 @@ with right_col:
         with c1:
             start_date = st.date_input("Start date", st.session_state.start_date)
         with c2:
-            # Χωρίς αυτόματη προσθήκη 3ετίας· ξεκινάει από την ίδια μέρα ή ό,τι ορίσεις εσύ
+            # Τώρα το End date ξεκινάει από την ίδια ημερομηνία χωρίς αυτόματο περιορισμό 3 ετών
             end_date = st.date_input("End date", start_date)
 
         if st.button("🗓️ Δημιουργία Προγράμματος"):
