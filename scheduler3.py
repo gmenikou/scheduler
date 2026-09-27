@@ -268,44 +268,42 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 
     for d, doc in manual_assignments.items():
         if start_date <= d <= end_date:
-                    schedule[d] = doc
+            schedule[d] = doc
 
     cycles_dict = defaultdict(list)
     for block in major_blocks:
         cycles_dict[block["cycle_id"]].append(block)
 
     sorted_cycles = sorted(cycles_dict.keys())
-    base_doctors = list(DOCTORS)
     
-    # Καθολικός μετρητής ανάθεσης πακέτων ανά ιατρό για αποφυγή ανισορροπίας
-    doctor_major_counts = {doc: 0 for doc in DOCTORS}
-
+    # Αυστηρή και δίκαιη κυκλική εναλλαγή ανά 7ετία (κάθε πακέτο αλλάζει κυκλικά σε όλους τους ιατρούς)
     for cycle_idx, c_id in enumerate(sorted_cycles):
         cycle_blocks = sorted(cycles_dict[c_id], key=lambda b: b["order"])
         
-        for block in cycle_blocks:
+        for b_idx, block in enumerate(cycle_blocks):
             block_dates = block["dates"]
             if any(bd in schedule for bd in block_dates):
                 continue
             
             primary_date = block_dates[0]
             
-            # Επιλογή ιατρού με τις λιγότερες μεγάλες αργίες συνολικά και έπειτα βάσει κυκλικής σειράς
-            valid_candidates = [
-                doc for doc in DOCTORS
-                if is_valid_assignment(doc, primary_date, schedule, holiday_dates, exclude_date=None, 
-                                       strict_monthly=True, min_gap=3, max_special=1, avoid_consecutive_weekends=True)
-            ]
+            # Υπολογισμός κυκλικού ιατρού βάσει έτους και σειράς πακέτου
+            doc_idx = (cycle_idx + b_idx) % len(DOCTORS)
+            assigned_doc = DOCTORS[doc_idx]
             
-            if not valid_candidates:
-                valid_candidates = list(DOCTORS)
-
-            assigned_doc = min(valid_candidates, key=lambda d: (
-                doctor_major_counts[d],
-                _total_shifts_in_month(d, primary_date, schedule, exclude_date=None)
-            ))
-
-            doctor_major_counts[assigned_doc] += 1
+            # Έλεγχος εγκυρότητας και ευέλικτη εύρεση εναλλακτικού αν υπάρχει κώλυμα
+            if not is_valid_assignment(assigned_doc, primary_date, schedule, holiday_dates, exclude_date=None, 
+                                       strict_monthly=True, min_gap=3, max_special=1, avoid_consecutive_weekends=True):
+                found = False
+                for offset in range(len(DOCTORS)):
+                    cand = DOCTORS[(doc_idx + offset) % len(DOCTORS)]
+                    if is_valid_assignment(cand, primary_date, schedule, holiday_dates, exclude_date=None, 
+                                           strict_monthly=True, min_gap=3, max_special=1, avoid_consecutive_weekends=True):
+                        assigned_doc = cand
+                        found = True
+                        break
+                if not found:
+                    assigned_doc = DOCTORS[doc_idx]
 
             for bd in block_dates:
                 schedule[bd] = assigned_doc
