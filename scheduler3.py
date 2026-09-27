@@ -239,8 +239,19 @@ def find_all_violations(schedule):
 
 
 # ----------------------------
-# SCHEDULING LOGIC
+# SCHEDULING LOGIC (SEPTEMBER-TO-SEPTEMBER ROTATION)
 # ----------------------------
+def get_september_cycle_id(date):
+    return date.year if date.month >= 9 else date.year - 1
+
+
+def get_package_season_type(base_name):
+    if "Πάσχα" in base_name:
+        return "Easter"
+    else:
+        return "Christmas"
+
+
 def generate_full_schedule(start_date, end_date, initial_week, manual_assignments=None):
     manual_assignments = manual_assignments or {}
     schedule = {}
@@ -255,13 +266,8 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         if start_date <= d <= end_date:
             schedule[d] = doc
 
-    base_start_year = start_date.year
-    
-    def get_cycle_id(year):
-        return (year - base_start_year) // 7
-
-    doctor_package_cycle_counts = {
-        doc: defaultdict(lambda: {pt: 0 for pt in MAJOR_PACKAGE_BASE_NAMES}) for doc in DOCTORS
+    doctor_season_counts = {
+        doc: defaultdict(lambda: {"Christmas": 0, "Easter": 0}) for doc in DOCTORS
     }
 
     for block in major_blocks:
@@ -270,12 +276,12 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             continue
 
         base_name = block["base_name"]
-        block_year = block["year"]
-        c_id = get_cycle_id(block_year)
+        season_type = get_package_season_type(base_name)
+        c_id = get_september_cycle_id(block_dates[0])
 
         eligible = [
             doc for doc in DOCTORS 
-            if doctor_package_cycle_counts[doc][c_id][base_name] == 0 
+            if doctor_season_counts[doc][c_id][season_type] == 0 
         ]
 
         if not eligible:
@@ -283,7 +289,10 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 
         candidates = sorted(
             eligible, 
-            key=lambda d: sum(doctor_package_cycle_counts[d][c_id].values())
+            key=lambda d: (
+                doctor_season_counts[d][c_id][season_type],
+                sum(doctor_season_counts[d][c_id].values())
+            )
         )
 
         best_doc = None
@@ -295,11 +304,11 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 
         if not best_doc:
             best_doc = candidates[0]
-            warnings.append(f"{block['name']}: anetethike xoris pliri tirisi kanonwn ({best_doc})")
+            warnings.append(f"{block['name']}: ανατέθηκε χωρίς πλήρη τήρηση κανόνων ({best_doc})")
 
         for bd in block_dates:
             schedule[bd] = best_doc
-        doctor_package_cycle_counts[best_doc][c_id][base_name] += 1
+        doctor_season_counts[best_doc][c_id][season_type] += 1
 
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
     all_major_dates = {d for block in major_blocks for d in block["dates"]}
@@ -345,7 +354,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                 not _within_month_cap(doc, d, schedule, exclude_date=d),
                 _total_shifts_in_month(doc, d, schedule, exclude_date=d, holiday_dates=holiday_dates)
             ))
-            warnings.append(f"{d.strftime('%d/%m/%Y')}: kamia egkyri epilogi, anetethike {chosen}")
+            warnings.append(f"{d.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
         schedule[d] = chosen
 
     for current_date in all_days:
@@ -373,7 +382,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             chosen = min(DOCTORS, key=lambda doc: (
                 not _within_month_cap(doc, current_date, schedule, exclude_date=current_date),
                 _total_shifts_in_month(doc, current_date, schedule, exclude_date=current_date, holiday_dates=holiday_dates)))
-            warnings.append(f"{current_date.strftime('%d/%m/%Y')}: kamia egkyri epilogi, anetethike {chosen}")
+            warnings.append(f"{current_date.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
         schedule[current_date] = chosen
 
     for d, doc in manual_assignments.items():
@@ -513,7 +522,6 @@ def create_major_holidays_pdf(schedule, start_date, end_date):
             total_lines += max(1, len(line) // chars_per_line + (1 if len(line) % chars_per_line > 0 else 0))
         
         row_h = max(10, total_lines * 6)
-        
         x_start = pdf.get_x()
         y_start = pdf.get_y()
         
@@ -524,10 +532,6 @@ def create_major_holidays_pdf(schedule, start_date, end_date):
 
         pdf.cell(col_widths[0], row_h, name, border=1, align="C")
         pdf.cell(col_widths[1], row_h, count, border=1, align="C")
-        
-        cell_x = pdf.get_x()
-        cell_y = pdf.get_y()
-        
         pdf.multi_cell(col_widths[2], 6, details, border=1, align="L")
         pdf.set_xy(x_start, y_start + row_h)
         
@@ -568,7 +572,6 @@ def create_regular_holidays_pdf(schedule, holiday_names, start_date, end_date):
         
         lines_count = max(len(details.split(", ")), 1)
         row_h = max(10, lines_count * 6)
-        
         x_start = pdf.get_x()
         y_start = pdf.get_y()
         
@@ -578,7 +581,6 @@ def create_regular_holidays_pdf(schedule, holiday_names, start_date, end_date):
 
         pdf.cell(col_widths[0], row_h, name, border=1, align="C")
         pdf.cell(col_widths[1], row_h, count, border=1, align="C")
-        
         pdf.multi_cell(col_widths[2], 6, details, border=1, align="L")
         pdf.set_xy(x_start, y_start + row_h)
         
@@ -715,7 +717,7 @@ with left_col:
     st.subheader("📊 Κατάσταση Εφημεριών Εύρους")
     if st.session_state.start_date and st.session_state.schedule:
         manual_date = st.date_input(
-            "Επιλέξετε ημερομηνία για αλλαγή",
+            "Επιλέξτε ημερομηνία για αλλαγή",
             min_value=min(st.session_state.schedule.keys()),
             max_value=max(st.session_state.schedule.keys()),
         )
