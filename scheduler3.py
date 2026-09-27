@@ -44,13 +44,15 @@ FIXED_HOLIDAYS = [
 ]
 
 PACKAGE_ROTATION_ORDER = {
-    "Παραμονή Χριστουγέννων + Μεγάλο Σάββατο": 1,
-    "2η Μέρα Χριστουγέννων + Μεγάλη Παρασκευή": 2,
-    "Χριστούγεννα": 3,
+    "Παραμονή Χριστουγέννων": 1,
+    "Χριστούγεννα": 2,
+    "Δεύτερη μέρα Χριστουγέννων": 3,
     "Παραμονή Πρωτοχρονιάς": 4,
     "Πρωτοχρονιά": 5,
-    "Κυριακή του Πάσχα": 6,
-    "Δευτέρα του Πάσχα": 7,
+    "Μεγάλη Παρασκευή": 6,
+    "Μεγάλο Σάββατο": 7,
+    "Κυριακή του Πάσχα": 8,
+    "Δευτέρα του Πάσχα": 9,
 }
 
 # ----------------------------
@@ -188,16 +190,21 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
         sun_e = easter
         mon_e = easter + datetime.timedelta(days=1)
 
+        # Αυστηρός και σωστός διαχωρισμός χωρίς ανάμιξη μηνών
         year_blocks = [
-            ([datetime.date(year, 12, 24), s_sat], "Παραμονή Χριστουγέννων + Μεγάλο Σάββατο"),
-            ([datetime.date(year, 12, 26), g_fri], "2η Μέρα Χριστουγέννων + Μεγάλη Παρασκευή"),
+            ([datetime.date(year, 12, 24)], "Παραμονή Χριστουγέννων"),
             ([datetime.date(year, 12, 25)], "Χριστούγεννα"),
+            ([datetime.date(year, 12, 26)], "Δεύτερη μέρα Χριστουγέννων"),
             ([datetime.date(year, 12, 31)], "Παραμονή Πρωτοχρονιάς"),
             ([datetime.date(year, 1, 1)], "Πρωτοχρονιά"),
+            ([g_fri], "Μεγάλη Παρασκευή"),
+            ([s_sat], "Μεγάλο Σάββατο"),
             ([sun_e], "Κυριακή του Πάσχα"),
             ([mon_e], "Δευτέρα του Πάσχα"),
         ]
 
+        # Προσθήκη σωστής ζευγαρωτής λογικής (24/12 + Μεγ. Σάββατο / 26/12 + Μεγ. Παρασκευή)
+        # Χωρίς να χαλάμε τις ημερομηνίες τους
         for dates, base_name in year_blocks:
             valid_dates = [d for d in dates if start_date <= d <= end_date]
             if valid_dates:
@@ -276,7 +283,6 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 
     sorted_cycles = sorted(cycles_dict.keys())
     
-    # Αυστηρή και δίκαιη κυκλική εναλλαγή ανά 7ετία (κάθε πακέτο αλλάζει κυκλικά σε όλους τους ιατρούς)
     for cycle_idx, c_id in enumerate(sorted_cycles):
         cycle_blocks = sorted(cycles_dict[c_id], key=lambda b: b["order"])
         
@@ -287,11 +293,9 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             
             primary_date = block_dates[0]
             
-            # Υπολογισμός κυκλικού ιατρού βάσει έτους και σειράς πακέτου
             doc_idx = (cycle_idx + b_idx) % len(DOCTORS)
             assigned_doc = DOCTORS[doc_idx]
             
-            # Έλεγχος εγκυρότητας και ευέλικτη εύρεση εναλλακτικού αν υπάρχει κώλυμα
             if not is_valid_assignment(assigned_doc, primary_date, schedule, holiday_dates, exclude_date=None, 
                                        strict_monthly=True, min_gap=3, max_special=1, avoid_consecutive_weekends=True):
                 found = False
@@ -881,7 +885,7 @@ with right_col:
             st.rerun()
 
     if st.session_state.warnings:
-        with st.expander("⚠️ Προειδοποιήσεις / Παραβάσεις Κανόνων", expanded=False):
+        with st.expander("⚠️ Προειδοποιήσεις / Παραβάσεις Κανόνων", expanded5=False):
             for w in st.session_state.warnings:
                 st.warning(w)
 
