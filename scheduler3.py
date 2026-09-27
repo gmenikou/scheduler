@@ -57,7 +57,6 @@ def _has_nearby_shift(doctor, date, schedule, min_gap=3):
 
 
 def _has_weekend_in_adjacent_week(doctor, date, schedule):
-    """Αποτρέπει ρητά εφημερίδες Σαββατοκύριακου σε συνεχόμενες εβδομάδες για τον ίδιο γιατρό."""
     if date.weekday() not in (5, 6):
         return False
     target_wk = _week_monday(date)
@@ -240,7 +239,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         if start_date <= d <= end_date:
             schedule[d] = doc
 
-    # STEP 1: Μεγάλα πακέτα εορτών (1 πακέτο ανά γιατρό ανά έτος)
+    # STEP 1: Megala paketa eortwn (1 paketo ana giatro ana etos)
     doctor_yearly_major_count = {
         doc: {y: 0 for y in range(start_date.year - 1, end_date.year + 2)} for doc in DOCTORS
     }
@@ -269,13 +268,13 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         if not best_doc:
             best_doc = min(candidates, key=lambda doc: sum(
                 _special_count_in_month(doc, bd, schedule, holiday_dates) for bd in block_dates))
-            warnings.append(f"{block['name']}: ανατέθηκε χωρίς πλήρη τήρηση κανόνων ({best_doc})")
+            warnings.append(f"{block['name']}: anatetike xoris pliri tirisi kanonon ({best_doc})")
 
         for bd in block_dates:
             schedule[bd] = best_doc
         doctor_yearly_major_count[best_doc][target_year] += 1
 
-    # STEP 2: Παρασκευές, Σάββατα, Κυριακές και Αργίες
+    # STEP 2: Paraskeves, Savvata, Kyriakes kai Argies
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
     all_major_dates = {d for block in major_blocks for d in block["dates"]}
     minor_dates = {d for d in holiday_dates if d not in all_major_dates}
@@ -292,9 +291,8 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 
     for d in special_dates:
         chosen = None
-        wd = d.weekday()  # 4: Παρασκευή, 5: Σάββατο, 6: Κυριακή
+        wd = d.weekday()
         
-        # Αποφυγή συνεχόμενων Σ/Κ κατά προτεραιότητα, με σταδιακή υποχώρηση μόνο σε απόλυτη ανάγκη
         for avoid_cons in (True, False):
             for min_gap in (3, 2, 1, 0):
                 for max_special in (1, 2):
@@ -321,17 +319,13 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                 not _within_month_cap(doc, d, schedule, exclude_date=d),
                 _total_shifts_in_month(doc, d, schedule, exclude_date=d, holiday_dates=holiday_dates)
             ))
-            warnings.append(f"{d.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
+            warnings.append(f"{d.strftime('%d/%m/%Y')}: kamia egkyri epilogi, anatetike {chosen}")
         schedule[d] = chosen
 
-    # STEP 3: Καθημερινές (Δευτέρα-Πέμπτη) από την αρχική ρότα
-    start_monday = _week_monday(start_date)
+    # STEP 3: Kathimerines (Deftera-Pempti) me apolyta isosi isotita (Weekdays)
     for current_date in all_days:
         if current_date in schedule:
             continue
-        week_num = (_week_monday(current_date) - start_monday).days // 7
-        doc_index = (current_date.weekday() + week_num * 2) % len(initial_week)
-        rota_doc = initial_week[doc_index]
 
         chosen = None
         for min_gap in (3, 2, 1, 0):
@@ -340,19 +334,21 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                 strict_monthly=True, min_gap=min_gap, avoid_consecutive_weekends=False)]
             if not valid:
                 continue
-            totals = {doc: _total_shifts_in_month(doc, current_date, schedule, holiday_dates=holiday_dates) for doc in valid}
-            lowest = min(totals.values())
-            if rota_doc in valid and totals[rota_doc] <= lowest + 1:
-                chosen = rota_doc
-            else:
-                chosen = min(valid, key=lambda doc: totals[doc])
+            
+            def _total_weekdays(doc_name):
+                return sum(1 for dt, dc in schedule.items() if dc == doc_name and dt.weekday() in (0, 1, 2, 3))
+
+            chosen = min(valid, key=lambda doc: (
+                _total_weekdays(doc),
+                _total_shifts_in_month(doc, current_date, schedule, holiday_dates=holiday_dates)
+            ))
             break
 
         if chosen is None:
             chosen = min(DOCTORS, key=lambda doc: (
                 not _within_month_cap(doc, current_date, schedule, exclude_date=current_date),
                 _total_shifts_in_month(doc, current_date, schedule, holiday_dates=holiday_dates)))
-            warnings.append(f"{current_date.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
+            warnings.append(f"{current_date.strftime('%d/%m/%Y')}: kamia egkyri epilogi, anatetike {chosen}")
         schedule[current_date] = chosen
 
     for d, doc in manual_assignments.items():
