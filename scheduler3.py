@@ -276,28 +276,41 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 
     sorted_cycles = sorted(cycles_dict.keys())
     base_doctors = list(DOCTORS)
+    
+    # Μνήμη ανάθεσης πακέτων ανά κύκλο 7ετίας για να μην επαναλαμβάνονται αν δεν περάσουν όλοι
+    assigned_packages_history = defaultdict(set)
 
     for cycle_idx, c_id in enumerate(sorted_cycles):
         cycle_blocks = sorted(cycles_dict[c_id], key=lambda b: b["order"])
-        shifted_doctors = base_doctors[cycle_idx % len(base_doctors):] + base_doctors[:cycle_idx % len(base_doctors)]
+        # Υπολογισμός rotation ανά 7ετία (δίνει διαφορετική σειρά σε κάθε κύκλο ώστε να περάσουν όλοι από όλα τα πακέτα)
+        shift_amount = cycle_idx % len(base_doctors)
+        rotated_doctors = base_doctors[shift_amount:] + base_doctors[:shift_amount]
         
-        for b_idx, block in enumerate(cycle_blocks):
+        doc_pointer = 0
+        for block in cycle_blocks:
             block_dates = block["dates"]
             if any(bd in schedule for bd in block_dates):
                 continue
             
-            assigned_doc = shifted_doctors[b_idx % len(shifted_doctors)]
             primary_date = block_dates[0]
             
-            if not is_valid_assignment(assigned_doc, primary_date, schedule, holiday_dates, exclude_date=None, 
-                                       strict_monthly=True, min_gap=3, max_special=1, avoid_consecutive_weekends=True):
-                safe_any = [
-                    d for d in DOCTORS 
-                    if is_valid_assignment(d, primary_date, schedule, holiday_dates, exclude_date=None,
-                                           strict_monthly=True, min_gap=3, max_special=1, avoid_consecutive_weekends=True)
-                ]
-                if safe_any:
-                    assigned_doc = safe_any[0]
+            # Εύρεση ιατρού που δεν έχει πάρει ήδη αυτό το πακέτο στον τρέχοντα κύκλο
+            assigned_doc = None
+            for _ in range(len(DOCTORS)):
+                candidate = rotated_doctors[doc_pointer % len(rotated_doctors)]
+                doc_pointer += 1
+                
+                if candidate not in assigned_packages_history[c_id]:
+                    if is_valid_assignment(candidate, primary_date, schedule, holiday_dates, exclude_date=None, 
+                                           strict_monthly=True, min_gap=3, max_special=1, avoid_consecutive_weekends=True):
+                        assigned_doc = candidate
+                        break
+            
+            if assigned_doc is None:
+                # Αν υπάρχει περιορισμός, διαλέγουμε τον επόμενο διαθέσιμο στον κύκλο rotation
+                assigned_doc = rotated_doctors[(doc_pointer - 1) % len(rotated_doctors)]
+
+            assigned_packages_history[c_id].add(assigned_doc)
 
             for bd in block_dates:
                 schedule[bd] = assigned_doc
@@ -333,7 +346,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                             _minor_total(doc, d) if is_minor_holiday else 0,
                             _global_weekday_total(doc, wd, schedule, exclude_date=d),
                             _special_count_in_month(doc, d, schedule, holiday_dates, exclude_date=d),
-                            _total_shifts_in_month(doc, d, schedule, exclude_date=d, holiday_dates=holiday_dates)
+                            _total_shifts_in_month(doc, d, schedule, holiday_dates, exclude_date=d, holiday_dates=holiday_dates)
                         ))
                         break
                 if chosen:
@@ -826,7 +839,7 @@ with left_col:
         except Exception as e:
             st.error(f"Σφάλμα δημιουργίας PDF: {e}")
             
-        if st.session_state.schedule:
+        if st.schedule if hasattr(st.session_state, "schedule") else False:
             try:
                 pdf_cal_bytes = create_calendar_pdf(st.session_state.schedule, st.session_state.holiday_names)
                 st.download_button("📅 Κατέβασε Πρόγραμμα σε PDF", pdf_cal_bytes,
@@ -853,7 +866,7 @@ with right_col:
     if st.button("💾 Αποθήκευση Αρχικής Ρότας"):
         st.session_state.initial_week = [initial_week[d] for d in sorted(initial_week)]
         st.session_state.start_date = week_dates[0]
-        st.success("I arxiki rota apothikeytike epityxws!")
+        st.success("Η αρχική ρότα αποθηκεύτηκε επιτυχώς!")
         st.rerun()
 
     if st.session_state.initial_week:
