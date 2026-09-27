@@ -43,7 +43,7 @@ FIXED_HOLIDAYS = [
     (12, 31, "Παραμονή Πρωτοχρονιάς"),
 ]
 
-# Ta 7 akrivi paketa opws oristikan
+# Τα 7 ακριβή πακέτα
 PACKAGE_ROTATION_ORDER = {
     "1/1 (Πρωτοχρονιά)": 0,
     "Μεγάλη Παρασκευή + 26/12": 1,
@@ -182,21 +182,19 @@ def get_holidays_in_range(start_date, end_date):
 
 def get_major_holiday_blocks_in_range(start_date, end_date):
     blocks = []
-    # Kyklos Septemvriou - Avgoustou (O ypoloigismos tou cycle_id vasizetai ston mina >= 9)
-    for year in range(start_date.year - 1, end_date.year + 2):
-        easter = orthodox_easter(year)
-        g_fri = easter - datetime.timedelta(days=2)
-        s_sat = easter - datetime.timedelta(days=1)
-        sun_e = easter
-        mon_e = easter + datetime.timedelta(days=1)
+    for year in range(start_date.year - 2, end_date.year + 2):
+        easter_next = orthodox_easter(year + 1)
+        g_fri_next = easter_next - datetime.timedelta(days=2)
+        s_sat_next = easter_next - datetime.timedelta(days=1)
+        sun_e_next = easter_next
+        mon_e_next = easter_next + datetime.timedelta(days=1)
 
-        # Ta 7 paketa me ta zevgaria tous
         year_blocks = [
-            ([datetime.date(year, 1, 1)], "1/1 (Πρωτοχρονιά)"),
-            ([g_fri, datetime.date(year, 12, 26)], "Μεγάλη Παρασκευή + 26/12"),
-            ([s_sat, datetime.date(year, 12, 24)], "Μεγάλο Σάββατο + 24/12"),
-            ([sun_e], "Κυριακή του Πάσχα"),
-            ([mon_e], "Δευτέρα του Πάσχα"),
+            ([datetime.date(year + 1, 1, 1)], "1/1 (Πρωτοχρονιά)"),
+            ([g_fri_next, datetime.date(year, 12, 26)], "Μεγάλη Παρασκευή + 26/12"),
+            ([s_sat_next, datetime.date(year, 12, 24)], "Μεγάλο Σάββατο + 24/12"),
+            ([sun_e_next], "Κυριακή του Πάσχα"),
+            ([mon_e_next], "Δευτέρα του Πάσχα"),
             ([datetime.date(year, 12, 25)], "25/12 (Χριστούγεννα)"),
             ([datetime.date(year, 12, 31)], "31/12 (Παραμονή Πρωτοχρονιάς)"),
         ]
@@ -204,19 +202,12 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
         for dates, base_name in year_blocks:
             valid_dates = [d for d in dates if start_date <= d <= end_date]
             if valid_dates:
-                primary_date = valid_dates[0]
-                # Kyklos Sept - Aug (An minas >= 9, anikei ston epomeno etos-kyklo)
-                if primary_date.month >= 9:
-                    cycle_id = primary_date.year
-                else:
-                    cycle_id = primary_date.year - 1
-
                 blocks.append({
-                    "name": f"{base_name} ({year})",
+                    "name": f"{base_name} (Κύκλος {year}-{year+1})",
                     "base_name": base_name,
                     "dates": valid_dates,
                     "year": year,
-                    "cycle_id": cycle_id,
+                    "cycle_id": year,
                     "order": PACKAGE_ROTATION_ORDER.get(base_name, 99)
                 })
     return blocks
@@ -251,7 +242,7 @@ def find_all_violations(schedule):
 
 
 # ----------------------------
-# SCHEDULING LOGIC (STRICT 7-DOCTOR / 7-PACKAGE CYCLE)
+# SCHEDULING LOGIC
 # ----------------------------
 def generate_full_schedule(start_date, end_date, initial_week, manual_assignments=None):
     manual_assignments = manual_assignments or {}
@@ -274,46 +265,52 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         if start_date <= d <= end_date:
             schedule[d] = doc
 
-    cycles_dict = defaultdict(list)
-    for block in major_blocks:
-        cycles_dict[block["cycle_id"]].append(block)
+    # --- ΙΣΤΟΡΙΚΟ ΠΑΡΑΚΟΛΟΥΘΗΣΗΣ ΓΙΑ ΑΠΟΦΥΓΗ ΕΠΑΝΑΛΗΨΗΣ ΠΑΚΕΤΩΝ ---
+    package_counts_per_doc = {doc: defaultdict(int) for doc in DOCTORS}
+    total_major_per_doc = {doc: 0 for doc in DOCTORS}
 
-    sorted_cycles = sorted(cycles_dict.keys())
+    # Ταξινόμηση όλων των μπλοκ μεγάλων εορτών αυστηρά χρονολογικά
+    all_major_blocks = sorted(major_blocks, key=lambda b: b["dates"][0])
 
-    # Anathesi 7 paketwn se 7 giatrous ana kyklo Sept-Aug choris epikalypsi
-    for cycle_idx, c_id in enumerate(sorted_cycles):
-        cycle_blocks = sorted(cycles_dict[c_id], key=lambda b: b["order"])
+    for block in all_major_blocks:
+        block_dates = block["dates"]
+        if any(bd in schedule for bd in block_dates):
+            continue
         
-        for block in cycle_blocks:
-            block_dates = block["dates"]
-            if any(bd in schedule for bd in block_dates):
-                continue
-            
-            primary_date = block_dates[0]
-            pkg_name = block["base_name"]
-            pkg_idx = PACKAGE_ROTATION_ORDER.get(pkg_name, 0)
+        primary_date = block_dates[0]
+        pkg_name = block["base_name"]
 
-            doc_rotation_idx = (pkg_idx + cycle_idx) % len(DOCTORS)
-            ordered_doctors = DOCTORS[doc_rotation_idx:] + DOCTORS[:doc_rotation_idx]
-
-            assigned_doc = None
-            for avoid_cons in (True, False):
-                for min_gap in (3, 2, 1, 0):
-                    for cand in ordered_doctors:
-                        if is_valid_assignment(cand, primary_date, schedule, holiday_dates, exclude_date=None, 
-                                               strict_monthly=True, min_gap=min_gap, max_special=2, avoid_consecutive_weekends=avoid_cons):
-                            assigned_doc = cand
-                            break
-                    if assigned_doc:
-                        break
-                if assigned_doc:
+        assigned_doc = None
+        for avoid_cons in (True, False):
+            for min_gap in (3, 2, 1, 0):
+                valid_candidates = [
+                    doc for doc in DOCTORS
+                    if is_valid_assignment(doc, primary_date, schedule, holiday_dates, exclude_date=None, 
+                                           strict_monthly=True, min_gap=min_gap, max_special=2, avoid_consecutive_weekends=avoid_cons)
+                ]
+                if valid_candidates:
+                    # Επιλογή γιατρού με βάση το ιστορικό: ποιος έχει πάρει λιγότερες φορές ΑΥΤΟ το πακέτο
+                    assigned_doc = min(valid_candidates, key=lambda doc: (
+                        package_counts_per_doc[doc][pkg_name],
+                        total_major_per_doc[doc]
+                    ))
                     break
+            if assigned_doc:
+                break
 
-            if assigned_doc is None:
-                assigned_doc = ordered_doctors[0]
+        if assigned_doc is None:
+            # Fallback αν υπάρχουν αυστηροί περιορισμοί
+            assigned_doc = min(DOCTORS, key=lambda doc: (
+                package_counts_per_doc[doc][pkg_name],
+                total_major_per_doc[doc]
+            ))
 
-            for bd in block_dates:
-                schedule[bd] = assigned_doc
+        # Καταγραφή ιστορικού και ανάθεση
+        package_counts_per_doc[assigned_doc][pkg_name] += 1
+        total_major_per_doc[assigned_doc] += 1
+
+        for bd in block_dates:
+            schedule[bd] = assigned_doc
 
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
     all_major_dates = {d for block in major_blocks for d in block["dates"]}
