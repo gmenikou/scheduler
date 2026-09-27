@@ -407,28 +407,38 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 
 
 # ----------------------------
-# CHRONOLOGICAL SUMMARY FUNCTIONS
+# CHRONOLOGICAL SUMMARY FUNCTIONS (Ανά Ιατρό, Ημερολογιακά)
 # ----------------------------
-def compute_major_holidays_chronological_flat(schedule, start_date, end_date):
+def compute_major_holidays_by_doctor(schedule, start_date, end_date):
     blocks = get_major_holiday_blocks_in_range(start_date, end_date)
     sorted_blocks = sorted(blocks, key=lambda b: b["dates"][0])
     
-    data = []
+    doctor_rows = {doc: [] for doc in DOCTORS}
+    
     for block in sorted_blocks:
         for d in block["dates"]:
             doc = schedule.get(d, "-")
-            weekday_str = GREEK_WEEKDAY_LABELS[d.weekday()]
-            data.append({
-                "date_obj": d,
-                "Ημερομηνία": d.strftime('%d/%m/%Y'),
-                "Ημέρα": weekday_str,
-                "Μεγάλη Εορτή / Πακέτο": block["name"],
-                "Ακτινολόγος": doc,
+            if doc in doctor_rows:
+                weekday_str = GREEK_WEEKDAY_LABELS[d.weekday()]
+                doctor_rows[doc].append({
+                    "date_obj": d,
+                    "Ακτινολόγος": doc,
+                    "Ημερομηνία & Ημέρα": f"{d.strftime('%d/%m/%Y')} ({weekday_str})",
+                    "Μεγάλη Εορτή / Πακέτο": block["name"]
+                })
+                
+    # Ενοποίηση σε ενιαία λίστα ταξινομημένη ημερολογιακά
+    all_data = []
+    for doc in DOCTORS:
+        sorted_items = sorted(doctor_rows[doc], key=lambda x: x["date_obj"])
+        for item in sorted_items:
+            all_data.append({
+                "Ακτινολόγος": item["Ακτινολόγος"],
+                "Ημερομηνία & Ημέρα": item["Ημερομηνία & Ημέρα"],
+                "Μεγάλη Εορτή / Πακέτο": item["Μεγάλη Εορτή / Πακέτο"]
             })
-    df = pd.DataFrame(data)
-    if not df.empty:
-        df = df.sort_values("date_obj").drop(columns=["date_obj"]).reset_index(drop=True)
-    return df
+            
+    return pd.DataFrame(all_data)
 
 
 def compute_regular_holidays_chronological(schedule, regular_holidays):
@@ -461,7 +471,7 @@ def compute_balance(schedule, start_date, end_date, holiday_names):
     df["Weekdays"] = df["Mon"] + df["Tue"] + df["Wed"] + df["Thu"]
 
     major_blocks = get_major_holiday_blocks_in_range(start_date, end_date)
-    major_flat_df = compute_major_holidays_chronological_flat(schedule, start_date, end_date)
+    major_flat_df = compute_major_holidays_by_doctor(schedule, start_date, end_date)
     major_counts = major_flat_df["Ακτινολόγος"].value_counts().to_dict() if not major_flat_df.empty else {}
 
     all_major_dates = {d for block in major_blocks for d in block["dates"]}
@@ -475,7 +485,7 @@ def compute_balance(schedule, start_date, end_date, holiday_names):
 
 
 # ----------------------------
-# PDF EXPORT HELPERS
+# PDF EXPORT HELPERS (Ένας γιατρός ανά σελίδα για Μεγάλες Εορτές)
 # ----------------------------
 def create_balance_pdf(df, start_date, end_date):
     pdf = FPDF(orientation="L", unit="mm", format="A4")
@@ -503,36 +513,54 @@ def create_balance_pdf(df, start_date, end_date):
     return bytes(pdf.output())
 
 
-def create_major_holidays_pdf(schedule, start_date, end_date):
-    df = compute_major_holidays_chronological_flat(schedule, start_date, end_date)
+def create_major_holidays_pdf_by_doctor(schedule, start_date, end_date):
+    blocks = get_major_holiday_blocks_in_range(start_date, end_date)
+    sorted_blocks = sorted(blocks, key=lambda b: b["dates"][0])
+    
+    doctor_rows = {doc: [] for doc in DOCTORS}
+    for block in sorted_blocks:
+        for d in block["dates"]:
+            doc = schedule.get(d, "-")
+            if doc in doctor_rows:
+                weekday_str = GREEK_WEEKDAY_LABELS[d.weekday()]
+                doctor_rows[doc].append({
+                    "date_obj": d,
+                    "Ημερομηνία & Ημέρα": f"{d.strftime('%d/%m/%Y')} ({weekday_str})",
+                    "Μεγάλη Εορτή / Πακέτο": block["name"]
+                })
+
     pdf = FPDF(orientation="P", unit="mm", format="A4")
-    pdf.add_page()
     pdf.add_font("DejaVu", "", "DejaVuSans.ttf")
     pdf.add_font("DejaVu", "B", "DejaVuSans-Bold.ttf")
 
-    pdf.set_font("DejaVu", "B", 14)
-    pdf.cell(0, 10, "Κατάσταση Μεγάλων Εορτών", align="C", new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font("DejaVu", "", 10)
-    pdf.cell(0, 6, f"Περίοδος: {start_date.strftime('%d/%m/%Y')} – {end_date.strftime('%d/%m/%Y')}",
-             align="C", new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(4)
+    col_widths = [45, 125]
+    headers = ["Ημερομηνία & Ημέρα", "Μεγάλη Εορτή / Πακέτο"]
 
-    col_widths = [30, 20, 95, 45]
-    headers = ["Ημερομηνία", "Ημέρα", "Μεγάλη Εορτή / Πακέτο", "Ακτινολόγος"]
-    
-    pdf.set_font("DejaVu", "B", 10)
-    for h, w in zip(headers, col_widths):
-        pdf.cell(w, 8, h, border=1, align="C")
-    pdf.ln()
+    for doc in DOCTORS:
+        pdf.add_page()
+        pdf.set_font("DejaVu", "B", 14)
+        pdf.cell(0, 10, f"Κατάσταση Μεγάλων Εορτών - {doc}", align="C", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("DejaVu", "", 10)
+        pdf.cell(0, 6, f"Περίοδος: {start_date.strftime('%d/%m/%Y')} – {end_date.strftime('%d/%m/%Y')}",
+                 align="C", new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(6)
 
-    pdf.set_font("DejaVu", "", 9)
-    for _, row in df.iterrows():
-        pdf.cell(col_widths[0], 8, str(row["Ημερομηνία"]), border=1, align="C")
-        pdf.cell(col_widths[1], 8, str(row["Ημέρα"]), border=1, align="C")
-        pdf.cell(col_widths[2], 8, str(row["Μεγάλη Εορτή / Πακέτο"]), border=1, align="L")
-        pdf.cell(col_widths[3], 8, str(row["Ακτινολόγος"]), border=1, align="C")
+        pdf.set_font("DejaVu", "B", 10)
+        for h, w in zip(headers, col_widths):
+            pdf.cell(w, 8, h, border=1, align="C")
         pdf.ln()
-        
+
+        pdf.set_font("DejaVu", "", 9)
+        items = sorted(doctor_rows[doc], key=lambda x: x["date_obj"])
+        if items:
+            for item in items:
+                pdf.cell(col_widths[0], 8, item["Ημερομηνία & Ημέρα"], border=1, align="C")
+                pdf.cell(col_widths[1], 8, item["Μεγάλη Εορτή / Πακέτο"], border=1, align="L")
+                pdf.ln()
+        else:
+            pdf.cell(col_widths[0] + col_widths[1], 8, "Καμία μεγάλη εορτή / πακέτο", border=1, align="C")
+            pdf.ln()
+
     return bytes(pdf.output())
 
 
@@ -725,14 +753,14 @@ with left_col:
         st.dataframe(st.session_state.balance, use_container_width=True, height=260)
 
         if st.session_state.schedule:
-            # 1. Μεγάλες Εορτές / Πακέτα
-            st.markdown("### 🎄🐣 Κατάσταση Μεγάλων Εορτών")
-            major_flat_df = compute_major_holidays_chronological_flat(
+            # 1. Μεγάλες Εορτές ανά Ιατρό (Ημερολογιακά)
+            st.markdown("### 🎄🐣 Κατάσταση Μεγάλων Εορτών ανά Ιατρό")
+            major_doctor_df = compute_major_holidays_by_doctor(
                 st.session_state.schedule, st.session_state.start_date, end_d)
-            st.dataframe(major_flat_df, use_container_width=True, height=200)
+            st.dataframe(major_doctor_df, use_container_width=True, height=220)
             
-            pdf_major_bytes = create_major_holidays_pdf(st.session_state.schedule, st.session_state.start_date, end_d)
-            st.download_button("📄 Κατέβασε Μεγάλες Εορτές σε PDF", pdf_major_bytes, file_name="major_holidays.pdf", mime="application/pdf")
+            pdf_major_bytes = create_major_holidays_pdf_by_doctor(st.session_state.schedule, st.session_state.start_date, end_d)
+            st.download_button("📄 Κατέβασε Μεγάλες Εορτές ανά Ιατρό σε PDF", pdf_major_bytes, file_name="major_holidays_by_doctor.pdf", mime="application/pdf")
 
         if st.session_state.holiday_names:
             major_blocks = get_major_holiday_blocks_in_range(st.session_state.start_date, end_d)
