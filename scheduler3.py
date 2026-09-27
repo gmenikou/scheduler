@@ -190,7 +190,6 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
         sun_e = easter
         mon_e = easter + datetime.timedelta(days=1)
 
-        # Αυστηρός και σωστός διαχωρισμός χωρίς ανάμιξη μηνών
         year_blocks = [
             ([datetime.date(year, 12, 24)], "Παραμονή Χριστουγέννων"),
             ([datetime.date(year, 12, 25)], "Χριστούγεννα"),
@@ -203,8 +202,6 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
             ([mon_e], "Δευτέρα του Πάσχα"),
         ]
 
-        # Προσθήκη σωστής ζευγαρωτής λογικής (24/12 + Μεγ. Σάββατο / 26/12 + Μεγ. Παρασκευή)
-        # Χωρίς να χαλάμε τις ημερομηνίες τους
         for dates, base_name in year_blocks:
             valid_dates = [d for d in dates if start_date <= d <= end_date]
             if valid_dates:
@@ -283,31 +280,44 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 
     sorted_cycles = sorted(cycles_dict.keys())
     
+    # Αυστηρή αποφυγή διπλοεγγραφών ανά κύκλο: καταγράφουμε ποιος πήρε ποιο πακέτο στον κύκλο
+    cycle_assigned_packages = defaultdict(set)
+
     for cycle_idx, c_id in enumerate(sorted_cycles):
         cycle_blocks = sorted(cycles_dict[c_id], key=lambda b: b["order"])
         
-        for b_idx, block in enumerate(cycle_blocks):
+        # Κυκλική μετατόπιση ανά έτος ώστε να αλλάζουν οι γιατροί δικαιότατα
+        base_rot = cycle_idx % len(DOCTORS)
+        rotated_docs = DOCTORS[base_rot:] + DOCTORS[:base_rot]
+
+        for block in cycle_blocks:
             block_dates = block["dates"]
             if any(bd in schedule for bd in block_dates):
                 continue
             
             primary_date = block_dates[0]
-            
-            doc_idx = (cycle_idx + b_idx) % len(DOCTORS)
-            assigned_doc = DOCTORS[doc_idx]
-            
-            if not is_valid_assignment(assigned_doc, primary_date, schedule, holiday_dates, exclude_date=None, 
-                                       strict_monthly=True, min_gap=3, max_special=1, avoid_consecutive_weekends=True):
-                found = False
-                for offset in range(len(DOCTORS)):
-                    cand = DOCTORS[(doc_idx + offset) % len(DOCTORS)]
+            pkg_name = block["base_name"]
+
+            # Βρίσκουμε γιατρό που ΔΕΝ έχει πάρει αυτό το συγκεκριμένο πακέτο στον τρέχοντα κύκλο
+            assigned_doc = None
+            for cand in rotated_docs:
+                if pkg_name not in cycle_assigned_packages[(c_id, cand)]:
                     if is_valid_assignment(cand, primary_date, schedule, holiday_dates, exclude_date=None, 
                                            strict_monthly=True, min_gap=3, max_special=1, avoid_consecutive_weekends=True):
                         assigned_doc = cand
-                        found = True
                         break
-                if not found:
-                    assigned_doc = DOCTORS[doc_idx]
+            
+            if assigned_doc is None:
+                # Fallback στον πρώτο διαθέσιμο αν υπάρχει αυστηρό κώλυμα
+                for cand in rotated_docs:
+                    if is_valid_assignment(cand, primary_date, schedule, holiday_dates, exclude_date=None, 
+                                           strict_monthly=True, min_gap=3, max_special=1, avoid_consecutive_weekends=True):
+                        assigned_doc = cand
+                        break
+                if assigned_doc is None:
+                    assigned_doc = rotated_docs[0]
+
+            cycle_assigned_packages[(c_id, assigned_doc)].add(pkg_name)
 
             for bd in block_dates:
                 schedule[bd] = assigned_doc
@@ -885,7 +895,7 @@ with right_col:
             st.rerun()
 
     if st.session_state.warnings:
-        with st.expander("⚠️ Προειδοποιήσεις / Παραβάσεις Κανόνων", expanded5=False):
+        with st.expander("⚠️ Προειδοποιήσεις / Παραβάσεις Κανόνων", expanded=False):
             for w in st.session_state.warnings:
                 st.warning(w)
 
