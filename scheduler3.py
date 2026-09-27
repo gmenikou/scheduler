@@ -44,7 +44,6 @@ FIXED_HOLIDAYS = [
 ]
 
 # Σειρά προτεραιότητας πακέτων όπως ζητήθηκε:
-# 1: Χριστούγεννα, 2: Πάσχα 1, 3: Κοινό 1, 4: Χριστ. 2, 5: Πάσχα 2, 6: Κοινό 2, 7: Χριστ. 3 (Παραμονή Πρωτοχρονιάς)
 PACKAGE_ROTATION_ORDER = {
     "Χριστούγεννα": 1,
     "Κυριακή του Πάσχα": 2,
@@ -203,7 +202,6 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
         for dates, base_name in year_blocks:
             valid_dates = [d for d in dates if start_date <= d <= end_date]
             if valid_dates:
-                # Καθορισμός κύκλου Σεπτεμβρίου για ταξινόμηση
                 primary_date = valid_dates[0]
                 cycle_id = primary_date.year if primary_date.month >= 9 else primary_date.year - 1
                 blocks.append({
@@ -214,9 +212,6 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
                     "cycle_id": cycle_id,
                     "order": PACKAGE_ROTATION_ORDER.get(base_name, 99)
                 })
-                
-    # Ταξινόμηση ανά κύκλο Σεπτεμβρίου και στη συνέχεια με βάση τη σειρά ροτας που ορίσατε
-    blocks.sort(key=lambda b: (b["cycle_id"], b["order"]))
     return blocks
 
 
@@ -249,7 +244,7 @@ def find_all_violations(schedule):
 
 
 # ----------------------------
-# SCHEDULING LOGIC (STRICT ROTATION SEQUENCE)
+# SCHEDULING LOGIC (STRICT SHIFT ROTATION)
 # ----------------------------
 def generate_full_schedule(start_date, end_date, initial_week, manual_assignments=None):
     manual_assignments = manual_assignments or {}
@@ -265,51 +260,38 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         if start_date <= d <= end_date:
             schedule[d] = doc
 
-    doctor_cycle_packages = {doc: defaultdict(set) for doc in DOCTORS}
-    doctor_history_packages = {doc: set() for doc in DOCTORS}
-
+    # Ομαδοποίηση των πακέτων ανά κύκλο Σεπτεμβρίου
+    cycles_dict = defaultdict(list)
     for block in major_blocks:
-        block_dates = block["dates"]
-        if any(bd in schedule for bd in block_dates):
-            continue
+        cycles_dict[block["cycle_id"]].append(block)
 
-        base_name = block["base_name"]
-        c_id = block["cycle_id"]
+    sorted_cycles = sorted(cycles_dict.keys())
 
-        # Αυστηρός κανόνας: 1 πακέτο ανά γιατρό ανά κύκλο και χωρίς επανάληψη προηγούμενου πακέτου
-        eligible = [
-            doc for doc in DOCTORS 
-            if len(doctor_cycle_packages[doc][c_id]) == 0 
-            and base_name not in doctor_history_packages[doc]
-        ]
-
-        if not eligible:
-            eligible = [doc for doc in DOCTORS if len(doctor_cycle_packages[doc][c_id]) == 0]
-
-        if not eligible:
-            eligible = DOCTORS
-
-        candidates = sorted(
-            eligible, 
-            key=lambda d: (len(doctor_history_packages[d]), d)
-        )
-
-        best_doc = None
-        for doc in candidates:
-            if all(is_valid_assignment(doc, bd, schedule, holiday_dates, exclude_date=bd,
-                                        strict_monthly=True, min_gap=1, avoid_consecutive_weekends=False) for bd in block_dates):
-                best_doc = doc
-                break
-
-        if not best_doc:
-            best_doc = candidates[0]
-            warnings.append(f"{block['name']}: ανατέθηκε χωρίς πλήρη τήρηση κανόνων ({best_doc})")
-
-        for bd in block_dates:
-            schedule[bd] = best_doc
+    # Αυστηρή ανάθεση με μαθηματικό shift ανά έτος (χωρίς επαναλήψεις)
+    for cycle_idx, c_id in enumerate(sorted_cycles):
+        cycle_blocks = sorted(cycles_dict[c_id], key=lambda b: b["order"])
         
-        doctor_cycle_packages[best_doc][c_id].add(base_name)
-        doctor_history_packages[best_doc].add(base_name)
+        for b_idx, block in enumerate(cycle_blocks):
+            block_dates = block["dates"]
+            if any(bd in schedule for bd in block_dates):
+                continue
+            
+            # Κυκλική μετατόπιση: Κανένας γιατρός δεν ξαναπαίρνει το ίδιο πακέτο πριν περάσουν 7 κύκλοι
+            doc_idx = (b_idx + cycle_idx) % len(DOCTORS)
+            best_doc = DOCTORS[doc_idx]
+            
+            # Έλεγχος εγκυρότητας
+            valid = all(
+                is_valid_assignment(best_doc, bd, schedule, holiday_dates, exclude_date=bd,
+                                    strict_monthly=True, min_gap=1, avoid_consecutive_weekends=False)
+                for bd in block_dates
+            )
+            
+            if not valid:
+                warnings.append(f"{block['name']}: ο/η {best_doc} φορτίστηκε αλλά επιβάλλεται αυστηρά από τη ροτά.")
+
+            for bd in block_dates:
+                schedule[bd] = best_doc
 
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
     all_major_dates = {d for block in major_blocks for d in block["dates"]}
