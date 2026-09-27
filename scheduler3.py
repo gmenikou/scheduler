@@ -278,22 +278,25 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         target_year = block_year if not is_jan_1 else block_year - 1
         c_id = get_cycle_id(target_year)
 
+        # 1. Προτεραιότητα: Ούτε έχει πάρει άλλο πακέτο φέτος (<=1 ανά έτος) ΟΥΤΕ έχει πάρει το ίδιο πακέτο στον κύκλο 7ετίας
         eligible = [
             doc for doc in DOCTORS 
             if doctor_yearly_major_count[doc][target_year] == 0 
             and doctor_package_cycle_counts[doc][c_id][base_name] == 0
         ]
         
+        # 2. Fallback: Αν δεν υπάρχει διαθέσιμος χωρίς καθόλου πακέτο φέτος, τηρούμε ΑΥΣΤΩΡΑ τον κύκλο 7ετίας (να μην ξαναπιάσει το ίδιο πακέτο)
         if not eligible:
             eligible = [
                 doc for doc in DOCTORS 
-                if doctor_yearly_major_count[doc][target_year] == 0
+                if doctor_package_cycle_counts[doc][c_id][base_name] == 0
             ]
         
+        # 3. Τελευταίο fallback αν όλα εξαντληθούν
         if not eligible:
             eligible = DOCTORS
 
-        candidates = sorted(eligible, key=lambda d: sum(doctor_yearly_major_count[d].values()))
+        candidates = sorted(eligible, key=lambda d: (sum(doctor_yearly_major_count[d].values()), sum(doctor_package_cycle_counts[d][c_id].values())))
 
         best_doc = None
         for doc in candidates:
@@ -733,7 +736,7 @@ with left_col:
         if st.button("✅ Επικύρωση"):
             st.session_state.manual_assignments[manual_date] = manual_doctor
             st.session_state.schedule[manual_date] = manual_doctor
-            end_d = max(st.session_state.schedule.keys())
+            end_d = max(st.session_state.schedule.keys()) if st.session_state.schedule else st.session_state.start_date
             st.session_state.balance = compute_balance(
                 st.session_state.schedule, st.session_state.start_date, end_d,
                 st.session_state.holiday_names)
@@ -742,7 +745,6 @@ with left_col:
             st.rerun()
 
     if st.session_state.balance is not None and not st.session_state.balance.empty:
-        # ΑΣΦΑΛΗΣ ΟΡΙΣΜΟΣ ΤΗΣ end_d ΕΔΩ
         end_d = max(st.session_state.schedule.keys()) if st.session_state.schedule else st.session_state.start_date
 
         st.dataframe(st.session_state.balance, use_container_width=True, height=260)
