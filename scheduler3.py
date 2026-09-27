@@ -44,15 +44,13 @@ FIXED_HOLIDAYS = [
 ]
 
 PACKAGE_ROTATION_ORDER = {
-    "Παραμονή Χριστουγέννων": 1,
-    "Χριστούγεννα": 2,
-    "2η Μέρα Χριστουγέννων": 3,
+    "Παραμονή Χριστουγέννων + Μεγάλο Σάββατο": 1,
+    "2η Μέρα Χριστουγέννων + Μεγάλη Παρασκευή": 2,
+    "Χριστούγεννα": 3,
     "Παραμονή Πρωτοχρονιάς": 4,
     "Πρωτοχρονιά": 5,
-    "Μεγάλη Παρασκευή": 6,
-    "Μεγάλο Σάββατο": 7,
-    "Κυριακή του Πάσχα": 8,
-    "Δευτέρα του Πάσχα": 9,
+    "Κυριακή του Πάσχα": 6,
+    "Δευτέρα του Πάσχα": 7,
 }
 
 # ----------------------------
@@ -191,13 +189,11 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
         mon_e = easter + datetime.timedelta(days=1)
 
         year_blocks = [
-            ([datetime.date(year, 12, 24)], "Παραμονή Χριστουγέννων"),
+            ([datetime.date(year, 12, 24), s_sat], "Παραμονή Χριστουγέννων + Μεγάλο Σάββατο"),
+            ([datetime.date(year, 12, 26), g_fri], "2η Μέρα Χριστουγέννων + Μεγάλη Παρασκευή"),
             ([datetime.date(year, 12, 25)], "Χριστούγεννα"),
-            ([datetime.date(year, 12, 26)], "2η Μέρα Χριστουγέννων"),
             ([datetime.date(year, 12, 31)], "Παραμονή Πρωτοχρονιάς"),
             ([datetime.date(year, 1, 1)], "Πρωτοχρονιά"),
-            ([g_fri], "Μεγάλη Παρασκευή"),
-            ([s_sat], "Μεγάλο Σάββατο"),
             ([sun_e], "Κυριακή του Πάσχα"),
             ([mon_e], "Δευτέρα του Πάσχα"),
         ]
@@ -263,7 +259,6 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
     holiday_dates = set(holiday_names.keys())
     major_blocks = get_major_holiday_blocks_in_range(start_date, end_date)
 
-    # 1. Eisagwgi arxikis rotas stis prwtes 7 imeres
     if initial_week and isinstance(initial_week, (list, tuple)) and len(initial_week) >= 7:
         week_start_monday = start_date - datetime.timedelta(days=start_date.weekday())
         for i in range(7):
@@ -271,12 +266,10 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             if start_date <= d <= end_date:
                 schedule[d] = initial_week[i]
 
-    # 2. Xειροnakthkes anatheseis
     for d, doc in manual_assignments.items():
         if start_date <= d <= end_date:
             schedule[d] = doc
 
-    # Omadopoihsh se kyklo Sept-Avg me syndyasmo twn paketon (zefgaria 24/12 + Meg. Savvato kai 26/12 + Meg. Paraskevi)
     cycles_dict = defaultdict(list)
     for block in major_blocks:
         cycles_dict[block["cycle_id"]].append(block)
@@ -286,7 +279,6 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 
     for cycle_idx, c_id in enumerate(sorted_cycles):
         cycle_blocks = sorted(cycles_dict[c_id], key=lambda b: b["order"])
-        # Efarmogi strict rotation sta paketa tou kykloy
         shifted_doctors = base_doctors[cycle_idx % len(base_doctors):] + base_doctors[:cycle_idx % len(base_doctors)]
         
         for b_idx, block in enumerate(cycle_blocks):
@@ -861,7 +853,7 @@ with right_col:
     if st.button("💾 Αποθήκευση Αρχικής Ρότας"):
         st.session_state.initial_week = [initial_week[d] for d in sorted(initial_week)]
         st.session_state.start_date = week_dates[0]
-        st.success("Η αρχική ρότα αποθηκεύτηκε επιτυχώς!")
+        st.success("I arxiki rota apothikeytike epityxws!")
         st.rerun()
 
     if st.session_state.initial_week:
