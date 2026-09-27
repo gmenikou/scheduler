@@ -71,7 +71,6 @@ def get_rotation_indices():
         if doc in BASE_ROTATION_INDICES:
             indices[doc] = BASE_ROTATION_INDICES[doc]
         else:
-            # Fallback για τυχόν νέους γιατρούς που θα προσθέσει ο χρήστης
             indices[doc] = [(i + j) % 3 for j in range(7)]
     return indices
 
@@ -481,26 +480,32 @@ def compute_balance(schedule, start_date, end_date, holiday_names):
 
 
 # ----------------------------
-# PDF EXPORT FUNCTIONS
+# PDF EXPORT FUNCTIONS (WITH SAFE TEXT ENCODING)
 # ----------------------------
+def safe_pdf_text(text):
+    if not isinstance(text, str):
+        text = str(text)
+    return text.encode('latin-1', 'replace').decode('latin-1')
+
+
 def generate_pdf_report(df, title):
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.add_page()
     pdf.set_font("Arial", "B", 14)
-    pdf.cell(0, 10, title, align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 10, safe_pdf_text(title), align="C", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(5)
     
     pdf.set_font("Arial", "B", 10)
     col_width = pdf.w / (len(df.columns) + 1)
     
     for col in df.columns:
-        pdf.cell(col_width * 1.2, 8, str(col), border=1, align="C")
+        pdf.cell(col_width * 1.2, 8, safe_pdf_text(str(col)), border=1, align="C")
     pdf.ln()
     
     pdf.set_font("Arial", "", 9)
     for _, row in df.iterrows():
         for val in row:
-            pdf.cell(col_width * 1.2, 7, str(val), border=1, align="C")
+            pdf.cell(col_width * 1.2, 7, safe_pdf_text(str(val)), border=1, align="C")
         pdf.ln()
         
     return bytes(pdf.output())
