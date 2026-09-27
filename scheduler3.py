@@ -4,11 +4,12 @@ import calendar
 import pandas as pd
 from collections import defaultdict
 from fpdf import FPDF
+import io
 
 # ----------------------------
 # CONSTANTS & SETUP
 # ----------------------------
-DOCTORS = ["Χριστίνα", "Αθηνά", "Μαρία", "Έλια", "Αλέξανδρος", "Εύα", "Έλενα"]
+DEFAULT_DOCTORS = ["Χριστίνα", "Αθηνά", "Μαρία", "Έλια", "Αλέξανδρος", "Εύα", "Έλενα"]
 
 DOCTOR_COLORS = {
     "Έλενα": (255, 182, 193),
@@ -43,9 +44,8 @@ FIXED_HOLIDAYS = [
     (12, 31, "Παραμονή Πρωτοχρονιάς"),
 ]
 
-# 7ετής κατανομή ομάδων ανά γιατρό (Εξασφαλίζει 3 Xmas, 2 Easter, 2 Common ανά γιατρό)
-# 0: Xmas, 1: Easter, 2: Common
-DOCTOR_ROTATION_INDICES = {
+# 7ετής κατανομή ομάδων ανά γιατρό (0: Xmas, 1: Easter, 2: Common)
+BASE_ROTATION_INDICES = {
     "Χριστίνα": [0, 1, 2, 0, 1, 2, 0],
     "Αθηνά":    [1, 2, 0, 1, 2, 0, 0],
     "Μαρία":    [2, 0, 1, 2, 0, 0, 1],
@@ -56,6 +56,25 @@ DOCTOR_ROTATION_INDICES = {
 }
 
 GROUP_NAMES = {0: "Xmas", 1: "Easter", 2: "Common"}
+
+
+def get_doctors():
+    if "doctors_list" not in st.session_state:
+        st.session_state.doctors_list = DEFAULT_DOCTORS.copy()
+    return st.session_state.doctors_list
+
+
+def get_rotation_indices():
+    docs = get_doctors()
+    indices = {}
+    for i, doc in enumerate(docs):
+        if doc in BASE_ROTATION_INDICES:
+            indices[doc] = BASE_ROTATION_INDICES[doc]
+        else:
+            # Fallback για τυχόν νέους γιατρούς που θα προσθέσει ο χρήστης
+            indices[doc] = [(i + j) % 3 for j in range(7)]
+    return indices
+
 
 # ----------------------------
 # HELPER FUNCTIONS
@@ -184,10 +203,6 @@ def get_holidays_in_range(start_date, end_date):
 
 
 def get_major_holiday_blocks_in_range(start_date, end_date):
-    """
-    Ομαδοποίηση σε 3 υποομάδες (Xmas, Easter, Common) 
-    για αποφυγή επικαλύψεων και τήρηση της 7ετούς ρότας.
-    """
     blocks = []
     for year in range(start_date.year - 2, end_date.year + 2):
         easter_next = orthodox_easter(year + 1)
@@ -196,18 +211,12 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
         sun_e_next = easter_next
         mon_e_next = easter_next + datetime.timedelta(days=1)
 
-        # Ομαδοποίηση πακέτων ανάλογα με το subgroup τους
         year_packages = [
-            # Xmas subgroup
             {"dates": [datetime.date(year + 1, 1, 1)], "name": "Πρωτοχρονιά (1/1)", "group": "Xmas", "year": year},
             {"dates": [datetime.date(year, 12, 25)], "name": "Χριστούγεννα (25/12)", "group": "Xmas", "year": year},
             {"dates": [datetime.date(year, 12, 31)], "name": "Παραμονή Πρωτοχρονιάς (31/12)", "group": "Xmas", "year": year},
-            
-            # Easter subgroup
             {"dates": [sun_e_next], "name": "Κυριακή του Πάσχα", "group": "Easter", "year": year},
             {"dates": [mon_e_next], "name": "Δευτέρα του Πάσχα", "group": "Easter", "year": year},
-            
-            # Common subgroup
             {"dates": [s_sat_next, datetime.date(year, 12, 24)], "name": "Μεγάλο Σάββατο + 24/12", "group": "Common", "year": year},
             {"dates": [g_fri_next, datetime.date(year, 12, 26)], "name": "Μεγάλη Παρασκευή + 26/12", "group": "Common", "year": year},
         ]
@@ -243,10 +252,6 @@ def is_valid_assignment(doctor, date, schedule, holiday_dates, exclude_date=None
     return True
 
 
-def find_all_violations(schedule):
-    return []
-
-
 # ----------------------------
 # SCHEDULING LOGIC
 # ----------------------------
@@ -254,6 +259,9 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
     manual_assignments = manual_assignments or {}
     schedule = {}
     warnings = []
+
+    doctors = get_doctors()
+    rotation_indices = get_rotation_indices()
 
     total_days = (end_date - start_date).days + 1
     holiday_names = get_holidays_in_range(start_date, end_date)
@@ -271,7 +279,6 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         if start_date <= d <= end_date:
             schedule[d] = doc
 
-    # Ταξινόμηση μπλοκ κατά κύκλο/έτος και εφαρμογή της 7ετούς ρότας
     all_major_blocks = sorted(major_blocks, key=lambda b: (b["year"], b["dates"][0]))
 
     for block in all_major_blocks:
@@ -281,25 +288,19 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         
         primary_date = block_dates[0]
         cycle_year = block["year"]
-        target_group_name = block["group"]  # "Xmas", "Easter", or "Common"
+        target_group_name = block["group"]
         
-        # Αντιστοίχιση ονόματος ομάδας σε κωδικό (0, 1, 2)
         group_name_to_code = {"Xmas": 0, "Easter": 1, "Common": 2}
         target_group_code = group_name_to_code[target_group_name]
 
-        # Βρίσκουμε ποιοι γιατροί έχουν ως υποχρέωση για το συγκεκριμένο έτος (cycle_year) 
-        # να πάρουν αυτό το subgroup βάσει του DOCTOR_ROTATION_INDICES
-        year_index = (cycle_year - 2026) % 7 # Υποθέτοντας βάση το 2026
-
+        year_index = (cycle_year - 2026) % 7
         assigned_doc = None
         
-        # Πρώτα προσπαθούμε να βρούμε γιατρό που ταιριάζει ακριβώς στη ρότα αυτού του έτους
         rotation_candidates = [
-            doc for doc in DOCTORS 
-            if DOCTOR_ROTATION_INDICES[doc][year_index] == target_group_code
+            doc for doc in doctors 
+            if doc in rotation_indices and rotation_indices[doc][year_index] == target_group_code
         ]
 
-        # Έλεγχος εγκυρότητας για τους γιατρούς της ρότας
         for avoid_cons in (True, False):
             for min_gap in (3, 2, 1, 0):
                 valid_candidates = [
@@ -313,12 +314,11 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             if assigned_doc:
                 break
 
-        # Αν η ρότα πέσει σε σύγκρουση, κάνουμε fallback σε οποιονδήποτε διαθέσιμο γιατρό
         if assigned_doc is None:
             for avoid_cons in (True, False):
                 for min_gap in (3, 2, 1, 0):
                     valid_candidates = [
-                        doc for doc in DOCTORS
+                        doc for doc in doctors
                         if is_valid_assignment(doc, primary_date, schedule, holiday_dates, exclude_date=None, 
                                                strict_monthly=True, min_gap=min_gap, max_special=2, avoid_consecutive_weekends=avoid_cons)
                     ]
@@ -329,12 +329,11 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                     break
 
         if assigned_doc is None:
-            assigned_doc = DOCTORS[0]
+            assigned_doc = doctors[0]
 
         for bd in block_dates:
             schedule[bd] = assigned_doc
 
-    # Υπόλοιπες ημέρες (Μικρές αργίες & καθημερινές/Σαββατοκύριακα)
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
     all_major_dates = {d for block in major_blocks for d in block["dates"]}
     minor_dates = {d for d in holiday_dates if d not in all_major_dates}
@@ -347,13 +346,10 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 
     for d in special_dates:
         chosen = None
-        wd = d.weekday()
-        is_minor_holiday = d in minor_dates
-        
         for avoid_cons in (True, False):
             for min_gap in (3, 2, 1, 0):
                 for max_special in (1, 2):
-                    valid = [doc for doc in DOCTORS if is_valid_assignment(
+                    valid = [doc for doc in doctors if is_valid_assignment(
                         doc, d, schedule, holiday_dates, exclude_date=d,
                         strict_monthly=True, min_gap=min_gap, max_special=max_special, 
                         avoid_consecutive_weekends=avoid_cons)]
@@ -368,7 +364,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                 break
 
         if chosen is None:
-            chosen = DOCTORS[0]
+            chosen = doctors[0]
             warnings.append(f"{d.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
         schedule[d] = chosen
 
@@ -378,7 +374,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 
         chosen = None
         for min_gap in (3, 2, 1, 0):
-            valid = [doc for doc in DOCTORS if is_valid_assignment(
+            valid = [doc for doc in doctors if is_valid_assignment(
                 doc, current_date, schedule, holiday_dates, exclude_date=current_date,
                 strict_monthly=True, min_gap=min_gap, avoid_consecutive_weekends=False)]
             if valid:
@@ -386,7 +382,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                 break
 
         if chosen is None:
-            chosen = DOCTORS[0]
+            chosen = doctors[0]
             warnings.append(f"{current_date.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
         schedule[current_date] = chosen
 
@@ -404,7 +400,8 @@ def compute_major_holidays_by_doctor(schedule, start_date, end_date):
     blocks = get_major_holiday_blocks_in_range(start_date, end_date)
     sorted_blocks = sorted(blocks, key=lambda b: b["dates"][0])
     
-    doctor_rows = {doc: [] for doc in DOCTORS}
+    doctors = get_doctors()
+    doctor_rows = {doc: [] for doc in doctors}
     
     for block in sorted_blocks:
         for d in block["dates"]:
@@ -419,7 +416,7 @@ def compute_major_holidays_by_doctor(schedule, start_date, end_date):
                 })
                 
     all_data = []
-    for doc in DOCTORS:
+    for doc in doctors:
         sorted_items = sorted(doctor_rows[doc], key=lambda x: x["date_obj"])
         for item in sorted_items:
             all_data.append({
@@ -451,7 +448,8 @@ def compute_regular_holidays_chronological(schedule, regular_holidays):
 
 
 def compute_balance(schedule, start_date, end_date, holiday_names):
-    counts = {doc: {wd: 0 for wd in WEEKDAY_LABELS} for doc in DOCTORS}
+    doctors = get_doctors()
+    counts = {doc: {wd: 0 for wd in WEEKDAY_LABELS} for doc in doctors}
     for date, doc in schedule.items():
         if doc in counts:
             counts[doc][WEEKDAY_LABELS[date.weekday()]] += 1
@@ -466,7 +464,7 @@ def compute_balance(schedule, start_date, end_date, holiday_names):
     for block in major_blocks:
         for d in block["dates"]:
             doc = schedule.get(d)
-            if doc in DOCTORS:
+            if doc in doctors:
                 major_counts[doc] += 1
 
     all_major_dates = {d for block in major_blocks for d in block["dates"]}
@@ -474,7 +472,7 @@ def compute_balance(schedule, start_date, end_date, holiday_names):
     regular_counts = defaultdict(int)
     for d in regular_hols:
         doc = schedule.get(d)
-        if doc in DOCTORS:
+        if doc in doctors:
             regular_counts[doc] += 1
 
     df["Αργίες"] = df["Doctor"].apply(lambda doc: major_counts.get(doc, 0) + regular_counts.get(doc, 0))
@@ -483,13 +481,28 @@ def compute_balance(schedule, start_date, end_date, holiday_names):
 
 
 # ----------------------------
-# PDF EXPORT HELPERS (Simplified)
+# PDF EXPORT FUNCTIONS
 # ----------------------------
-def create_balance_pdf(df, start_date, end_date):
-    pdf = FPDF(orientation="L", unit="mm", format="A4")
+def generate_pdf_report(df, title):
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.add_page()
-    pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, "Doctor Balance Summary", align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Arial", "B", 14)
+    pdf.cell(0, 10, title, align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(5)
+    
+    pdf.set_font("Arial", "B", 10)
+    col_width = pdf.w / (len(df.columns) + 1)
+    
+    for col in df.columns:
+        pdf.cell(col_width * 1.2, 8, str(col), border=1, align="C")
+    pdf.ln()
+    
+    pdf.set_font("Arial", "", 9)
+    for _, row in df.iterrows():
+        for val in row:
+            pdf.cell(col_width * 1.2, 7, str(val), border=1, align="C")
+        pdf.ln()
+        
     return bytes(pdf.output())
 
 
@@ -545,6 +558,22 @@ for key, default in [
 left_col, right_col = st.columns([0.35, 0.65])
 
 with left_col:
+    st.subheader("👥 Διαχείριση Ιατρών")
+    current_docs = get_doctors()
+    edited_doctors = st.text_area(
+        "Σειρά / Λίστα Γιατρών (ένας ανά γραμμή)",
+        value="\n".join(current_docs),
+        help="Αλλάξτε τη σειρά ή τα ονόματα. Η σειρά καθορίζει τη σειρά προτεραιότητας."
+    )
+    if st.button("💾 Αποθήκευση Λίστας Ιατρών"):
+        new_docs = [doc.strip() for doc in edited_doctors.split("\n") if doc.strip()]
+        if new_docs:
+            st.session_state.doctors_list = new_docs
+            st.success("Η λίστα ενημερώθηκε επιτυχώς!")
+        else:
+            st.error("Η λίστα δεν μπορεί να είναι κενή.")
+
+    st.markdown("---")
     st.subheader("📊 Παραμετροποίηση Εύρους")
     start_date = st.date_input("Ημερομηνία Έναρξης", value=datetime.date(2026, 1, 1))
     end_date = st.date_input("Ημερομηνία Λήξης", value=datetime.date(2026, 12, 31))
@@ -563,11 +592,51 @@ with left_col:
         st.success("Το πρόγραμμα δημιουργήθηκε επιτυχώς!")
 
     if st.session_state.balance is not None and not st.session_state.balance.empty:
+        st.subheader("📈 Ισοζύγιο Εφημεριών")
         st.dataframe(st.session_state.balance, use_container_width=True, height=260)
+        
+        # Κουμπί PDF για το Ισοζύγιο
+        pdf_bytes = generate_pdf_report(st.session_state.balance, "Doctor Balance Summary")
+        st.download_button(
+            label="📄 Εξαγωγή Ισοζυγίου σε PDF",
+            data=pdf_bytes,
+            file_name="doctor_balance.pdf",
+            mime="application/pdf"
+        )
 
 with right_col:
     st.subheader("🗓️ Ημερολόγιο Εφημεριών")
     if st.session_state.schedule:
         display_calendar(st.session_state.schedule, st.session_state.holiday_names)
+        
+        st.markdown("---")
+        st.subheader("📋 Συγκεντρωτικές Αναφορές & PDF")
+        
+        all_major_dates = {d for block in get_major_holiday_blocks_in_range(st.session_state.start_date, end_date) for d in block["dates"]}
+        regular_hols = {d: n for d, n in st.session_state.holiday_names.items() if d not in all_major_dates}
+        
+        col_pdf1, col_pdf2 = st.columns(2)
+        
+        with col_pdf1:
+            major_df = compute_major_holidays_by_doctor(st.session_state.schedule, st.session_state.start_date, end_date)
+            if not major_df.empty:
+                pdf_major = generate_pdf_report(major_df, "Major Holidays by Doctor")
+                st.download_button(
+                    label="📄 PDF: Μεγάλεs Εορτές ανά Γιατρό",
+                    data=pdf_major,
+                    file_name="major_holidays.pdf",
+                    mime="application/pdf"
+                )
+                
+        with col_pdf2:
+            reg_df = compute_regular_holidays_chronological(st.session_state.schedule, regular_hols)
+            if not reg_df.empty:
+                pdf_reg = generate_pdf_report(reg_df, "Regular Holidays Chronological")
+                st.download_button(
+                    label="📄 PDF: Μικρές Αργίες (Χρονολογικά)",
+                    data=pdf_reg,
+                    file_name="regular_holidays.pdf",
+                    mime="application/pdf"
+                )
     else:
-        st.info("Πατήστε «Δημιουργία Προγράμματος» για να εμφανιστεί το ημερολόγιο.")
+        st.info("Πατήστε «Δημιουργία Προγράμματος» για να εμφανιστεί το ημερολόγιο και οι επιλογές εξαγωγής.")
