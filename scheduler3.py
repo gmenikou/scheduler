@@ -43,17 +43,6 @@ FIXED_HOLIDAYS = [
     (12, 31, "Παραμονή Πρωτοχρονιάς"),
 ]
 
-# Σειρά προτεραιότητας των 7 πακέτων για τη ρότα ανά ακαδημαϊκό κύκλο
-PACKAGE_ROTATION_ORDER = {
-    "Πρωτοχρονιά (1/1)": 0,
-    "Χριστούγεννα (25/12)": 1,
-    "Παραμονή Πρωτοχρονιάς (31/12)": 2,
-    "Κυριακή του Πάσχα": 3,
-    "Δευτέρα του Πάσχα": 4,
-    "Μεγάλο Σάββατο + 24/12": 5,
-    "Μεγάλη Παρασκευή + 26/12": 6,
-}
-
 # ----------------------------
 # HELPER FUNCTIONS
 # ----------------------------
@@ -182,7 +171,15 @@ def get_holidays_in_range(start_date, end_date):
 
 def get_major_holiday_blocks_in_range(start_date, end_date):
     blocks = []
-    # Ομαδοποίηση βάσει ακαδημαϊκού κύκλου (Σεπτέμβριος έτους y έως Αύγουστος y+1)
+    PACKAGE_ROTATION_ORDER = {
+        "Πρωτοχρονιά (1/1)": 0,
+        "Χριστούγεννα (25/12)": 1,
+        "Παραμονή Πρωτοχρονιάς (31/12)": 2,
+        "Κυριακή του Πάσχα": 3,
+        "Δευτέρα του Πάσχα": 4,
+        "Μεγάλο Σάββατο + 24/12": 5,
+        "Μεγάλη Παρασκευή + 26/12": 6,
+    }
     for y in range(start_date.year - 2, end_date.year + 2):
         easter = orthodox_easter(y + 1)
         g_fri = easter - datetime.timedelta(days=2)
@@ -237,10 +234,6 @@ def _global_weekday_total(doctor, wd, schedule, exclude_date=None):
     )
 
 
-def find_all_violations(schedule):
-    return []
-
-
 # ----------------------------
 # SCHEDULING LOGIC
 # ----------------------------
@@ -265,31 +258,20 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         if start_date <= d <= end_date:
             schedule[d] = doc
 
-    cycles_dict = defaultdict(list)
+    # ----------------------------
+    # ΑΥΣΤΗΡΗ ΡΟΤΑ ΜΕ ΚΥΚΛΙΚΗ ΕΝΑΛΛΑΓΗ ΑΝΑ ΕΤΟΣ (ΙΣΟΠΟΣΑ 9 ΑΡΓΙΕΣ)
+    # ----------------------------
     for block in major_blocks:
-        cycles_dict[block["cycle_id"]].append(block)
-
-    sorted_cycles = sorted(cycles_dict.keys())
-
-    # Κυκλική εναλλαγή 1-προς-1 ανά ακαδημαϊκό κύκλο
-    for cycle_idx, c_id in enumerate(sorted_cycles):
-        cycle_blocks = sorted(cycles_dict[c_id], key=lambda b: b["order"])
+        cycle_y = block["cycle_id"]
+        order_idx = block["order"]
+        assigned_doc = DOCTORS[(order_idx + cycle_y) % len(DOCTORS)]
         
-        year_shift = cycle_idx % len(DOCTORS)
-        year_doctors = DOCTORS[year_shift:] + DOCTORS[:year_shift]
-        
-        for block_idx, block in enumerate(cycle_blocks):
-            block_dates = block["dates"]
-            if any(bd in schedule for bd in block_dates):
-                continue
-            
-            assigned_doc = year_doctors[block_idx % len(year_doctors)]
-            for bd in block_dates:
-                schedule[bd] = assigned_doc
+        for d in block["dates"]:
+            if start_date <= d <= end_date and d not in schedule:
+                schedule[d] = assigned_doc
 
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
-    all_major_dates = {d for block in major_blocks for d in block["dates"]}
-    minor_dates = {d for d in holiday_dates if d not in all_major_dates}
+    minor_dates = {d for d in holiday_dates if d not in {bd for block in major_blocks for bd in block["dates"]}}
 
     def _minor_total(doc, exclude):
         return sum(1 for dd, dc in schedule.items()
@@ -470,9 +452,9 @@ def create_balance_pdf(df, start_date, end_date):
     pdf.add_font("DejaVu", "B", "DejaVuSans-Bold.ttf")
 
     pdf.set_font("DejaVu", "B", 16)
-    pdf.cell(0, 10, "Doctor Balance Summary", align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 10, "Ισοζύγιο Εφημεριών", align="C", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("DejaVu", "", 12)
-    pdf.cell(0, 8, f"Period: {start_date.strftime('%d/%m/%Y')} – {end_date.strftime('%d/%m/%Y')}",
+    pdf.cell(0, 8, f"Περίοδος: {start_date.strftime('%d/%m/%Y')} – {end_date.strftime('%d/%m/%Y')}",
              align="C", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(6)
 
@@ -542,7 +524,7 @@ def create_major_holidays_pdf_by_doctor(schedule, start_date, end_date):
 
 def create_yearly_major_holidays_pdf(schedule, year, start_date, end_date):
     blocks = get_major_holiday_blocks_in_range(start_date, end_date)
-    year_blocks = [b for b in blocks if b["year"] == year] if "year" in blocks[0] else [b for b in blocks if b["dates"][0].year == year]
+    year_blocks = [b for b in blocks if b["dates"][0].year == year]
     sorted_blocks = sorted(year_blocks, key=lambda b: b["dates"][0])
 
     pdf = FPDF(orientation="P", unit="mm", format="A4")
@@ -578,7 +560,7 @@ def create_yearly_major_holidays_pdf(schedule, year, start_date, end_date):
             found_any = True
 
     if not found_any:
-        pdf.cell(sum(col_widths), 8, "Καμία μεγάλη εορτή καταχωρημένη για αυτό το έτος", border=1, align="C")
+        pdf.cell(sum(col_widths), 8, "Καμία μεγάλη εορτή", border=1, align="C")
         pdf.ln()
 
     return bytes(pdf.output())
@@ -674,8 +656,8 @@ left_col, right_col = st.columns([0.35, 0.65])
 
 with left_col:
     st.subheader("📊 Παραμετροποίηση Εύρους")
-    start_date = st.date_input("Ημερομηνία Έναρξης", value=datetime.date(2026, 1, 1))
-    end_date = st.date_input("Ημερομηνία Λήξης", value=datetime.date(2026, 12, 31))
+    start_date = st.date_input("Ημερομηνία Έναρξης", value=datetime.date(2026, 2, 2))
+    end_date = st.date_input("Ημερομηνία Λήξης", value=datetime.date(2033, 2, 2))
     
     st.markdown("### 📋 Αρχική Σειρά Εβδομάδας (Δευτέρα - Κυριακή)")
     initial_week_list = []
@@ -709,7 +691,7 @@ with left_col:
 
         if st.session_state.schedule:
             st.markdown("---")
-            st.markdown("### 🎄🐣 Μεγάλεs Εορτές ανά Ιατρό")
+            st.markdown("### 🎄🐣 Μεγάλες Εορτές ανά Ιατρό")
             major_doctor_df = compute_major_holidays_by_doctor(
                 st.session_state.schedule, st.session_state.start_date, end_d)
             st.dataframe(major_doctor_df, use_container_width=True, height=220)
