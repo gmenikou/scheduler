@@ -12,7 +12,13 @@ from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFFont
+
+# Ασφαλής εισαγωγή του TTFFont για αποφυγή ImportError
+try:
+    from reportlab.pdfbase.ttfonts import TTFFont
+    HAS_TTF = True
+except ImportError:
+    HAS_TTF = False
 
 # ----------------------------
 # CONSTANTS & SETUP
@@ -52,19 +58,20 @@ FIXED_HOLIDAYS = [
     (12, 31, "Παραμονή Πρωτοχρονιάς"),
 ]
 
-# Register local Greek Fonts for ReportLab
+# Register local Greek Fonts for ReportLab safely
 FONT_NAME = "Helvetica"
 FONT_NAME_BOLD = "Helvetica-Bold"
 
-try:
-    if os.path.exists("DejaVuSans.ttf"):
-        pdfmetrics.registerFont(TTFFont('DejaVuSans', 'DejaVuSans.ttf'))
-        FONT_NAME = 'DejaVuSans'
-    if os.path.exists("dejavu-sans-bold.ttf"):
-        pdfmetrics.registerFont(TTFFont('DejaVuSans-Bold', 'dejavu-sans-bold.ttf'))
-        FONT_NAME_BOLD = 'DejaVuSans-Bold'
-except Exception as e:
-    pass
+if HAS_TTF:
+    try:
+        if os.path.exists("DejaVuSans.ttf"):
+            pdfmetrics.registerFont(TTFFont('DejaVuSans', 'DejaVuSans.ttf'))
+            FONT_NAME = 'DejaVuSans'
+        if os.path.exists("dejavu-sans-bold.ttf"):
+            pdfmetrics.registerFont(TTFFont('DejaVuSans-Bold', 'dejavu-sans-bold.ttf'))
+            FONT_NAME_BOLD = 'DejaVuSans-Bold'
+    except Exception:
+        pass
 
 
 def get_doctors():
