@@ -258,9 +258,6 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         if start_date <= d <= end_date:
             schedule[d] = doc
 
-    # ----------------------------
-    # ΕΞΥΠΝΗ & ΧΡΟΝΟΛΟΓΙΚΗ ΑΝΑΘΕΣΗ ΜΕΓΑΛΩΝ ΕΟΡΤΩΝ (ΕΛΕΓΧΟΣ ΚΕΝΟΥ >= 14 ΗΜΕΡΩΝ)
-    # ----------------------------
     major_blocks.sort(key=lambda b: b["dates"][0])
     assigned_major_dates = {}
 
@@ -270,7 +267,6 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         base_idx = (order_idx + cycle_y) % len(DOCTORS)
         
         best_doc = None
-        # Δοκιμή αρχικά βάσει ρότας, ελέγχοντας αν υπάρχει άλλη μεγάλη εορτή σε απόσταση < 14 ημερών
         for offset in range(len(DOCTORS)):
             doc_idx = (base_idx + offset) % len(DOCTORS)
             doc = DOCTORS[doc_idx]
@@ -290,7 +286,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                 break
         
         if best_doc is None:
-            best_doc = DOCTORS[base_idx]  # Fallback αν συμπέσουν όλα
+            best_doc = DOCTORS[base_idx]
             
         for d in block["dates"]:
             if start_date <= d <= end_date and d not in schedule:
@@ -385,7 +381,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 
 
 # ----------------------------
-# CHRONOLOGICAL SUMMARY FUNCTIONS (SPLIT & SORTED)
+# CHRONOLOGICAL SUMMARY FUNCTIONS
 # ----------------------------
 def compute_major_holidays_by_doctor(schedule, start_date, end_date):
     doctor_rows = {doc: [] for doc in DOCTORS}
@@ -679,6 +675,74 @@ def create_regular_holidays_pdf(schedule, holiday_names, start_date, end_date):
     return bytes(pdf.output())
 
 
+def create_calendar_pdf(schedule, start_date, end_date, holiday_names):
+    pdf = FPDF(orientation="L", unit="mm", format="A4")
+    pdf.add_font("DejaVu", "", "DejaVuSans.ttf")
+    pdf.add_font("DejaVu", "B", "DejaVuSans-Bold.ttf")
+    
+    months_to_print = []
+    curr = datetime.date(start_date.year, start_date.month, 1)
+    while curr <= end_date:
+        months_to_print.append((curr.year, curr.month))
+        if curr.month == 12:
+            curr = datetime.date(curr.year + 1, 1, 1)
+        else:
+            curr = datetime.date(curr.year, curr.month + 1, 1)
+            
+    for year, month in months_to_print:
+        pdf.add_page()
+        pdf.set_font("DejaVu", "B", 16)
+        month_name = GREEK_MONTHS[month]
+        pdf.cell(0, 10, f"{month_name} {year}", align="C", new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(2)
+        
+        col_width = 38
+        row_height = 24
+        
+        pdf.set_font("DejaVu", "B", 11)
+        for d_label in GREEK_WEEKDAY_LABELS:
+            pdf.cell(col_width, 8, d_label, border=1, align="C")
+        pdf.ln()
+        
+        cal = calendar.Calendar(firstweekday=0)
+        month_weeks = cal.monthdatescalendar(year, month)
+        
+        for week in month_weeks:
+            for day in week:
+                x_pos = pdf.get_x()
+                y_pos = pdf.get_y()
+                
+                is_hol = day in holiday_names
+                if is_hol:
+                    pdf.set_fill_color(255, 230, 230)
+                else:
+                    pdf.set_fill_color(255, 255, 255)
+                    
+                pdf.rect(x_pos, y_pos, col_width, row_height, style="FD")
+                
+                if day.month == month:
+                    pdf.set_xy(x_pos, y_pos + 1.5)
+                    pdf.set_font("DejaVu", "B", 10)
+                    pdf.cell(col_width, 5, str(day.day), align="C", new_x="LMARGIN", new_y="NEXT")
+                    
+                    pdf.set_x(x_pos)
+                    pdf.set_font("DejaVu", "", 9)
+                    doc_str = schedule.get(day, "")
+                    pdf.cell(col_width, 5, doc_str, align="C", new_x="LMARGIN", new_y="NEXT")
+                    
+                    if is_hol:
+                        pdf.set_x(x_pos)
+                        pdf.set_font("DejaVu", "", 7)
+                        hol_name = holiday_names[day]
+                        h_short = hol_name[:18] + "..." if len(hol_name) > 18 else hol_name
+                        pdf.cell(col_width, 4, h_short, align="C", new_x="LMARGIN", new_y="NEXT")
+                
+                pdf.set_xy(x_pos + col_width, y_pos)
+            pdf.ln(row_height)
+            
+    return bytes(pdf.output())
+
+
 def display_calendar(schedule, holiday_names):
     manual_assignments = str_lit.session_state.get("manual_assignments", {})
     last_month = None
@@ -803,5 +867,20 @@ with right_col:
     str_lit.subheader("🗓️ Ημερολόγιο Εφημεριών")
     if str_lit.session_state.schedule:
         display_calendar(str_lit.session_state.schedule, str_lit.session_state.holiday_names)
+        
+        str_lit.markdown("---")
+        end_d = max(str_lit.session_state.schedule.keys()) if str_lit.session_state.schedule else str_lit.session_state.start_date
+        pdf_calendar_bytes = create_calendar_pdf(
+            str_lit.session_state.schedule,
+            str_lit.session_state.start_date,
+            end_d,
+            str_lit.session_state.holiday_names
+        )
+        str_lit.download_button(
+            "📥 Λήψη Πλήρους Ημερολογίου σε Landscape PDF (Ανά Μήνα)",
+            pdf_calendar_bytes,
+            file_name="calendar_landscape.pdf",
+            mime="application/pdf"
+        )
     else:
         str_lit.info("Πατήστε «Δημιουργία Προγράμματος» για να εμφανιστεί το ημερολόγιο.")
