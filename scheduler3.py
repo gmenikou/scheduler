@@ -825,23 +825,23 @@ with left_col:
         str_lit.session_state.balance = compute_balance(schedule, start_date, end_date, holiday_names)
         str_lit.success("Το πρόγραμμα δημιουργήθηκε επιτυχώς!")
 
-    if st.session_state.balance is not None and not st.session_state.balance.empty:
-        end_d = max(st.session_state.schedule.keys()) if st.session_state.schedule else st.session_state.start_date
+    if str_lit.session_state.balance is not None and not str_lit.session_state.balance.empty:
+        end_d = max(str_lit.session_state.schedule.keys()) if str_lit.session_state.schedule else str_lit.session_state.start_date
         
         # Κουμπιά εξαγωγής (όλα μαζί στην αριστερή στήλη, με το ημερολόγιο ακριβώς από κάτω)
         str_lit.markdown("---")
         str_lit.markdown("### 📥 Επιλογές Εξαγωγής PDF")
         
-        pdf_balance_bytes = create_balance_pdf(st.session_state.balance, st.session_state.start_date, end_d)
+        pdf_balance_bytes = create_balance_pdf(str_lit.session_state.balance, str_lit.session_state.start_date, end_d)
         str_lit.download_button("📄 Λήψη Ισοζυγίου σε PDF", pdf_balance_bytes, file_name="doctor_balance.pdf", mime="application/pdf")
 
-        if st.session_state.schedule:
-            pdf_major_bytes = create_major_holidays_pdf_by_doctor(st.session_state.schedule, st.session_state.start_date, end_d)
+        if str_lit.session_state.schedule:
+            pdf_major_bytes = create_major_holidays_pdf_by_doctor(str_lit.session_state.schedule, str_lit.session_state.start_date, end_d)
             str_lit.download_button("📄 Λήψη Μεγάλων Εορτών ανά Ιατρό σε PDF", pdf_major_bytes, file_name="major_holidays_by_doctor.pdf", mime="application/pdf")
 
             selected_year = str_lit.selectbox("Επιλογή Έτους για Μεγάλες Εορτές", range(start_date.year, end_date.year + 1))
             if str_lit.button("📥 Λήψη Μεγάλων Εορτών Έτους σε PDF"):
-                pdf_yearly_bytes = create_yearly_major_holidays_pdf(st.session_state.schedule, selected_year, st.session_state.start_date, end_d)
+                pdf_yearly_bytes = create_yearly_major_holidays_pdf(str_lit.session_state.schedule, selected_year, str_lit.session_state.start_date, end_d)
                 str_lit.download_button(
                     label=f"💾 Αποθήκευση PDF Έτους {selected_year}",
                     data=pdf_yearly_bytes,
@@ -849,18 +849,18 @@ with left_col:
                     mime="application/pdf"
                 )
 
-            major_blocks = get_major_holiday_blocks_in_range(st.session_state.start_date, end_d)
+            major_blocks = get_major_holiday_blocks_in_range(str_lit.session_state.start_date, end_d)
             all_major_dates = {d for block in major_blocks for d in block["dates"]}
-            regular_hols = {d: n for d, n in st.session_state.holiday_names.items() if d not in all_major_dates}
+            regular_hols = {d: n for d, n in str_lit.session_state.holiday_names.items() if d not in all_major_dates}
             
-            pdf_reg_bytes = create_regular_holidays_pdf(st.session_state.schedule, st.session_state.holiday_names, st.session_state.start_date, end_d)
+            pdf_reg_bytes = create_regular_holidays_pdf(str_lit.session_state.schedule, str_lit.session_state.holiday_names, str_lit.session_state.start_date, end_d)
             str_lit.download_button("📄 Λήψη Μικρών Αργιών σε PDF", pdf_reg_bytes, file_name="regular_holidays.pdf", mime="application/pdf")
 
             pdf_calendar_bytes = create_calendar_pdf(
-                st.session_state.schedule,
-                st.session_state.start_date,
+                str_lit.session_state.schedule,
+                str_lit.session_state.start_date,
                 end_d,
-                st.session_state.holiday_names
+                str_lit.session_state.holiday_names
             )
             str_lit.download_button(
                 "📥 Λήψη Πλήρους Ημερολογίου σε Landscape PDF (Ανά Μήνα)",
@@ -871,22 +871,22 @@ with left_col:
 
         str_lit.markdown("---")
         str_lit.markdown("### 📊 Πίνακας Ισοζυγίου")
-        str_lit.dataframe(st.session_state.balance, use_container_width=True, height=260)
+        str_lit.dataframe(str_lit.session_state.balance, use_container_width=True, height=260)
 
         str_lit.markdown("---")
         str_lit.markdown("### 🎄🐣 Μεγάλες Εορτές ανά Ιατρό")
         major_doctor_df = compute_major_holidays_by_doctor(
-            st.session_state.schedule, st.session_state.start_date, end_d)
+            str_lit.session_state.schedule, str_lit.session_state.start_date, end_d)
         str_lit.dataframe(major_doctor_df, use_container_width=True, height=220)
 
         str_lit.markdown("---")
         str_lit.markdown("### 🏛️ Μικρές Αργίες Χρονολογικά")
-        reg_df = compute_regular_holidays_chronological(st.session_state.schedule, regular_hols)
+        reg_df = compute_regular_holidays_chronological(str_lit.session_state.schedule, regular_hols)
         str_lit.dataframe(reg_df, use_container_width=True, height=200)
 
 with right_col:
     str_lit.subheader("🗓️ Ημερολόγιο Εφημεριών")
     if str_lit.session_state.schedule:
-        display_calendar(st.session_state.schedule, st.session_state.holiday_names)
+        display_calendar(str_lit.session_state.schedule, str_lit.session_state.holiday_names)
     else:
         str_lit.info("Πατήστε «Δημιουργία Προγράμματος» για να εμφανιστεί το ημερολόγιο.")
