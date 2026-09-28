@@ -43,7 +43,7 @@ FIXED_HOLIDAYS = [
     (12, 31, "Παραμονή Πρωτοχρονιάς"),
 ]
 
-# Σειρά προτεραιότητας των 7 πακέτων για τη ρότα ανά έτος
+# Σειρά προτεραιότητας των 7 πακέτων για τη ρότα ανά ακαδημαϊκό κύκλο
 PACKAGE_ROTATION_ORDER = {
     "Πρωτοχρονιά (1/1)": 0,
     "Χριστούγεννα (25/12)": 1,
@@ -182,38 +182,32 @@ def get_holidays_in_range(start_date, end_date):
 
 def get_major_holiday_blocks_in_range(start_date, end_date):
     blocks = []
-    for year in range(start_date.year - 1, end_date.year + 2):
-        easter = orthodox_easter(year)
+    # Ομαδοποίηση βάσει ακαδημαϊκού κύκλου (Σεπτέμβριος έτους y έως Αύγουστος y+1)
+    for y in range(start_date.year - 2, end_date.year + 2):
+        easter = orthodox_easter(y + 1)
         g_fri = easter - datetime.timedelta(days=2)
         s_sat = easter - datetime.timedelta(days=1)
         sun_e = easter
         mon_e = easter + datetime.timedelta(days=1)
 
         year_blocks = [
-            ([datetime.date(year, 1, 1)], "Πρωτοχρονιά (1/1)"),
-            ([datetime.date(year, 12, 25)], "Χριστούγεννα (25/12)"),
-            ([datetime.date(year, 12, 31)], "Παραμονή Πρωτοχρονιάς (31/12)"),
+            ([datetime.date(y + 1, 1, 1)], "Πρωτοχρονιά (1/1)"),
+            ([datetime.date(y, 12, 25)], "Χριστούγεννα (25/12)"),
+            ([datetime.date(y, 12, 31)], "Παραμονή Πρωτοχρονιάς (31/12)"),
             ([sun_e], "Κυριακή του Πάσχα"),
             ([mon_e], "Δευτέρα του Πάσχα"),
-            ([s_sat, datetime.date(year, 12, 24)], "Μεγάλο Σάββατο + 24/12"),
-            ([g_fri, datetime.date(year, 12, 26)], "Μεγάλη Παρασκευή + 26/12"),
+            ([s_sat, datetime.date(y, 12, 24)], "Μεγάλο Σάββατο + 24/12"),
+            ([g_fri, datetime.date(y, 12, 26)], "Μεγάλη Παρασκευή + 26/12"),
         ]
 
         for dates, base_name in year_blocks:
             valid_dates = [d for d in dates if start_date <= d <= end_date]
             if valid_dates:
-                primary_date = valid_dates[0]
-                if primary_date.month >= 9:
-                    cycle_id = primary_date.year
-                else:
-                    cycle_id = primary_date.year - 1
-
                 blocks.append({
-                    "name": f"{base_name} ({year})",
+                    "name": f"{base_name} ({y+1})",
                     "base_name": base_name,
                     "dates": valid_dates,
-                    "year": year,
-                    "cycle_id": cycle_id,
+                    "cycle_id": y,
                     "order": PACKAGE_ROTATION_ORDER.get(base_name, 99)
                 })
     return blocks
@@ -277,11 +271,10 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 
     sorted_cycles = sorted(cycles_dict.keys())
 
-    # Ρότα 1-προς-1 ανά έτος: Κάθε χρόνο (cycle) τα 7 πακέτα αλλάζουν γιατρό κυκλικά
+    # Κυκλική εναλλαγή 1-προς-1 ανά ακαδημαϊκό κύκλο
     for cycle_idx, c_id in enumerate(sorted_cycles):
         cycle_blocks = sorted(cycles_dict[c_id], key=lambda b: b["order"])
         
-        # Κυκλική μετατόπιση βάσει του έτους/κύκλου ώστε διαφορετικός γιατρός να παίρνει κάθε πακέτο ανά έτος
         year_shift = cycle_idx % len(DOCTORS)
         year_doctors = DOCTORS[year_shift:] + DOCTORS[:year_shift]
         
@@ -290,7 +283,6 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             if any(bd in schedule for bd in block_dates):
                 continue
             
-            # Το πακέτο (είτε μοναδική μέρα είτε αδιάσπαστο ζευγάρι) δίνεται εξ ολοκλήρου στον ίδιο γιατρό
             assigned_doc = year_doctors[block_idx % len(year_doctors)]
             for bd in block_dates:
                 schedule[bd] = assigned_doc
@@ -550,7 +542,7 @@ def create_major_holidays_pdf_by_doctor(schedule, start_date, end_date):
 
 def create_yearly_major_holidays_pdf(schedule, year, start_date, end_date):
     blocks = get_major_holiday_blocks_in_range(start_date, end_date)
-    year_blocks = [b for b in blocks if b["year"] == year]
+    year_blocks = [b for b in blocks if b["year"] == year] if "year" in blocks[0] else [b for b in blocks if b["dates"][0].year == year]
     sorted_blocks = sorted(year_blocks, key=lambda b: b["dates"][0])
 
     pdf = FPDF(orientation="P", unit="mm", format="A4")
