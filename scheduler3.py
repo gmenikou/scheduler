@@ -258,7 +258,6 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         if start_date <= d <= end_date:
             schedule[d] = doc
 
-    # 1. Megales eortes me apolyto global fairness (panta ston giatro me tis ligoteres synolikes efimeries)
     all_major_blocks = sorted(major_blocks, key=lambda b: (b["year"], b["dates"][0]))
 
     for block in all_major_blocks:
@@ -277,7 +276,6 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                                            strict_monthly=True, min_gap=min_gap, max_special=2, avoid_consecutive_weekends=avoid_cons)
                 ]
                 if valid_candidates:
-                    # Epilogi me vasi ton giatro pou exei tis ligoteres synolikes efimeries mexri tora
                     assigned_doc = min(valid_candidates, key=lambda doc: _total_shifts_overall(doc, schedule))
                     break
             if assigned_doc:
@@ -293,7 +291,6 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
     all_major_dates = {d for block in major_blocks for d in block["dates"]}
     minor_dates = {d for d in holiday_dates if d not in all_major_dates}
 
-    # 2. Eidikes imeres (Sabbatokyriaka, Argies) me protereotita sto synoliko isozygio
     special_dates = [
         d for d in all_days
         if d not in schedule and (d.weekday() in (4, 5, 6) or d in holiday_dates)
@@ -322,7 +319,6 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             warnings.append(f"{d.strftime('%d/%m/%Y')}: kamia egkyri epilogi, anatetike {chosen}")
         schedule[d] = chosen
 
-    # 3. Kathimerines
     for current_date in all_days:
         if current_date in schedule:
             continue
@@ -351,6 +347,21 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 # ----------------------------
 # CHRONOLOGICAL SUMMARY FUNCTIONS
 # ----------------------------
+def compute_full_schedule_dataframe(schedule, holiday_names):
+    data = []
+    for d in sorted(schedule.keys()):
+        doc = schedule[d]
+        weekday_str = GREEK_WEEKDAY_LABELS[d.weekday()]
+        holiday_str = holiday_names.get(d, "")
+        data.append({
+            "Ημερομηνία": d.strftime('%d/%m/%Y'),
+            "Ημέρα": weekday_str,
+            "Ακτινολόγος": doc,
+            "Παρατηρήσεις / Αργία": holiday_str
+        })
+    return pd.DataFrame(data)
+
+
 def compute_major_holidays_by_doctor(schedule, start_date, end_date):
     blocks = get_major_holiday_blocks_in_range(start_date, end_date)
     sorted_blocks = sorted(blocks, key=lambda b: b["dates"][0])
@@ -436,7 +447,7 @@ def compute_balance(schedule, start_date, end_date, holiday_names):
 
 
 # ----------------------------
-# PDF EXPORT FUNCTIONS (WITH SAFE TEXT ENCODING)
+# PDF EXPORT FUNCTIONS
 # ----------------------------
 def safe_pdf_text(text):
     if not isinstance(text, str):
@@ -451,17 +462,17 @@ def generate_pdf_report(df, title):
     pdf.cell(0, 10, safe_pdf_text(title), align="C", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(5)
     
-    pdf.set_font("Arial", "B", 10)
+    pdf.set_font("Arial", "B", 9)
     col_width = pdf.w / (len(df.columns) + 1)
     
     for col in df.columns:
         pdf.cell(col_width * 1.2, 8, safe_pdf_text(str(col)), border=1, align="C")
     pdf.ln()
     
-    pdf.set_font("Arial", "", 9)
+    pdf.set_font("Arial", "", 8)
     for _, row in df.iterrows():
         for val in row:
-            pdf.cell(col_width * 1.2, 7, safe_pdf_text(str(val)), border=1, align="C")
+            pdf.cell(col_width * 1.2, 6, safe_pdf_text(str(val)), border=1, align="C")
         pdf.ln()
         
     return bytes(pdf.output())
@@ -550,7 +561,7 @@ with left_col:
         st.session_state.schedule = schedule
         st.session_state.warnings = warnings
         st.session_state.balance = compute_balance(schedule, start_date, end_date, holiday_names)
-        st.success("Το πρόγραμμα δημιουργήθηκε επιτυχώς με απόλυτη ισορροπία!")
+        st.success("Το πρόγραμμα δημιουργήθηκε με απόλυτη παγκόσμια ισορροπία!")
 
     if st.session_state.balance is not None and not st.session_state.balance.empty:
         st.subheader("📈 Ισοζύγιο Εφημεριών")
@@ -570,7 +581,7 @@ with right_col:
         display_calendar(st.session_state.schedule, st.session_state.holiday_names)
         
         st.markdown("---")
-        st.subheader("📋 Συγκεντρωτικές Αναφορές & PDF")
+        st.subheader("📋 Όλες οι Εξαγωγές Αναφορών & PDF")
         
         all_major_dates = {d for block in get_major_holiday_blocks_in_range(st.session_state.start_date, end_date) for d in block["dates"]}
         regular_hols = {d: n for d, n in st.session_state.holiday_names.items() if d not in all_major_dates}
@@ -578,17 +589,39 @@ with right_col:
         col_pdf1, col_pdf2 = st.columns(2)
         
         with col_pdf1:
+            # 1. Πλήρες Πρόγραμμα (Χρονολογικά)
+            full_df = compute_full_schedule_dataframe(st.session_state.schedule, st.session_state.holiday_names)
+            if not full_df.empty:
+                pdf_full = generate_pdf_report(full_df, "Full Schedule Chronological")
+                st.download_button(
+                    label="📄 PDF: Πλήρες Πρόγραμμα (Όλες οι μέρες)",
+                    data=pdf_full,
+                    file_name="full_schedule.pdf",
+                    mime="application/pdf"
+                )
+            
+            # 2. Μεγάλεσ Εορτές ανά Γιατρό
             major_df = compute_major_holidays_by_doctor(st.session_state.schedule, st.session_state.start_date, end_date)
             if not major_df.empty:
                 pdf_major = generate_pdf_report(major_df, "Major Holidays by Doctor")
                 st.download_button(
-                    label="📄 PDF: Μεγάλεs Εορτές ανά Γιατρό",
+                    label="📄 PDF: Μεγάλεσ Εορτές ανά Γιατρό",
                     data=pdf_major,
                     file_name="major_holidays.pdf",
                     mime="application/pdf"
                 )
                 
         with col_pdf2:
+            # 3. Ισοζύγιο Εφημεριών PDF
+            pdf_balance = generate_pdf_report(st.session_state.balance, "Doctor Balance Summary")
+            st.download_button(
+                label="📄 PDF: Ισοζύγιο Εφημεριών",
+                data=pdf_balance,
+                file_name="doctor_balance.pdf",
+                mime="application/pdf"
+            )
+
+            # 4. Μικρές Αργίες Χρονολογικά
             reg_df = compute_regular_holidays_chronological(st.session_state.schedule, regular_hols)
             if not reg_df.empty:
                 pdf_reg = generate_pdf_report(reg_df, "Regular Holidays Chronological")
@@ -599,4 +632,4 @@ with right_col:
                     mime="application/pdf"
                 )
     else:
-        st.info("Πατήστε «Δημιουργία Προγράμματος» για να εμφανιστεί το ημερολόγιο και οι επιλογές εξαγωγής.")
+        st.info("Πατήστε «Δημιουργία Προγράμματος» για να εμφανιστεί το ημερολόγιο και οι επιλογές εξαγωγής PDF.")
