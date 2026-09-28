@@ -43,14 +43,15 @@ FIXED_HOLIDAYS = [
     (12, 31, "Παραμονή Πρωτοχρονιάς"),
 ]
 
+# Σειρά προτεραιότητας των 7 πακέτων για τη ρότα ανά έτος
 PACKAGE_ROTATION_ORDER = {
-    "1/1 (Πρωτοχρονιά)": 0,
-    "Μεγάλη Παρασκευή + 26/12": 1,
-    "Μεγάλο Σάββατο + 24/12": 2,
+    "Πρωτοχρονιά (1/1)": 0,
+    "Χριστούγεννα (25/12)": 1,
+    "Παραμονή Πρωτοχρονιάς (31/12)": 2,
     "Κυριακή του Πάσχα": 3,
     "Δευτέρα του Πάσχα": 4,
-    "25/12 (Χριστούγεννα)": 5,
-    "31/12 (Παραμονή Πρωτοχρονιάς)": 6,
+    "Μεγάλο Σάββατο + 24/12": 5,
+    "Μεγάλη Παρασκευή + 26/12": 6,
 }
 
 # ----------------------------
@@ -189,13 +190,13 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
         mon_e = easter + datetime.timedelta(days=1)
 
         year_blocks = [
-            ([datetime.date(year, 1, 1)], "1/1 (Πρωτοχρονιά)"),
-            ([g_fri, datetime.date(year, 12, 26)], "Μεγάλη Παρασκευή + 26/12"),
-            ([s_sat, datetime.date(year, 12, 24)], "Μεγάλο Σάββατο + 24/12"),
+            ([datetime.date(year, 1, 1)], "Πρωτοχρονιά (1/1)"),
+            ([datetime.date(year, 12, 25)], "Χριστούγεννα (25/12)"),
+            ([datetime.date(year, 12, 31)], "Παραμονή Πρωτοχρονιάς (31/12)"),
             ([sun_e], "Κυριακή του Πάσχα"),
             ([mon_e], "Δευτέρα του Πάσχα"),
-            ([datetime.date(year, 12, 25)], "25/12 (Χριστούγεννα)"),
-            ([datetime.date(year, 12, 31)], "31/12 (Παραμονή Πρωτοχρονιάς)"),
+            ([s_sat, datetime.date(year, 12, 24)], "Μεγάλο Σάββατο + 24/12"),
+            ([g_fri, datetime.date(year, 12, 26)], "Μεγάλη Παρασκευή + 26/12"),
         ]
 
         for dates, base_name in year_blocks:
@@ -247,7 +248,7 @@ def find_all_violations(schedule):
 
 
 # ----------------------------
-# SCHEDULING LOGIC (GUARANTEED 1-TO-1 ROTATION)
+# SCHEDULING LOGIC
 # ----------------------------
 def generate_full_schedule(start_date, end_date, initial_week, manual_assignments=None):
     manual_assignments = manual_assignments or {}
@@ -276,22 +277,21 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 
     sorted_cycles = sorted(cycles_dict.keys())
 
-    # Απολύτως εγγυημένη 1-προς-1 κατανομή ανά κύκλο: 7 πακέτα σε 7 γιατρούς ακριβώς
+    # Ρότα 1-προς-1 ανά έτος: Κάθε χρόνο (cycle) τα 7 πακέτα αλλάζουν γιατρό κυκλικά
     for cycle_idx, c_id in enumerate(sorted_cycles):
         cycle_blocks = sorted(cycles_dict[c_id], key=lambda b: b["order"])
         
-        # Περιστροφή της λίστας γιατρών ανά κύκλο για δίκαιη εναλλαγή
-        shift = cycle_idx % len(DOCTORS)
-        cycle_doctors = DOCTORS[shift:] + DOCTORS[:shift]
+        # Κυκλική μετατόπιση βάσει του έτους/κύκλου ώστε διαφορετικός γιατρός να παίρνει κάθε πακέτο ανά έτος
+        year_shift = cycle_idx % len(DOCTORS)
+        year_doctors = DOCTORS[year_shift:] + DOCTORS[:year_shift]
         
         for block_idx, block in enumerate(cycle_blocks):
             block_dates = block["dates"]
             if any(bd in schedule for bd in block_dates):
                 continue
             
-            # Ανάθεση ακριβώς στον αντίστοιχο γιατρό της λίστας για αυτό το πακέτο
-            assigned_doc = cycle_doctors[block_idx % len(cycle_doctors)]
-
+            # Το πακέτο (είτε μοναδική μέρα είτε αδιάσπαστο ζευγάρι) δίνεται εξ ολοκλήρου στον ίδιο γιατρό
+            assigned_doc = year_doctors[block_idx % len(year_doctors)]
             for bd in block_dates:
                 schedule[bd] = assigned_doc
 
