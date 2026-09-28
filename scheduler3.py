@@ -258,14 +258,44 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         if start_date <= d <= end_date:
             schedule[d] = doc
 
+    # ----------------------------
+    # ΕΞΥΠΝΗ & ΧΡΟΝΟΛΟΓΙΚΗ ΑΝΑΘΕΣΗ ΜΕΓΑΛΩΝ ΕΟΡΤΩΝ (ΕΛΕΓΧΟΣ ΚΕΝΟΥ >= 14 ΗΜΕΡΩΝ)
+    # ----------------------------
+    major_blocks.sort(key=lambda b: b["dates"][0])
+    assigned_major_dates = {}
+
     for block in major_blocks:
         cycle_y = block["cycle_id"]
         order_idx = block["order"]
-        assigned_doc = DOCTORS[(order_idx + cycle_y) % len(DOCTORS)]
+        base_idx = (order_idx + cycle_y) % len(DOCTORS)
         
+        best_doc = None
+        # Δοκιμή αρχικά βάσει ρότας, ελέγχοντας αν υπάρχει άλλη μεγάλη εορτή σε απόσταση < 14 ημερών
+        for offset in range(len(DOCTORS)):
+            doc_idx = (base_idx + offset) % len(DOCTORS)
+            doc = DOCTORS[doc_idx]
+            
+            has_conflict = False
+            for d_existing, d_doc in assigned_major_dates.items():
+                if d_doc == doc:
+                    for b_date in block["dates"]:
+                        if abs((b_date - d_existing).days) < 14:
+                            has_conflict = True
+                            break
+                if has_conflict:
+                    break
+            
+            if not has_conflict:
+                best_doc = doc
+                break
+        
+        if best_doc is None:
+            best_doc = DOCTORS[base_idx]  # Fallback αν συμπέσουν όλα
+            
         for d in block["dates"]:
             if start_date <= d <= end_date and d not in schedule:
-                schedule[d] = assigned_doc
+                schedule[d] = best_doc
+                assigned_major_dates[d] = best_doc
 
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
     minor_dates = {d for d in holiday_dates if d not in {bd for block in major_blocks for bd in block["dates"]}}
@@ -317,7 +347,6 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 
     for current_date in all_days:
         if current_date in schedule:
-        # Check if manual
             continue
 
         chosen = None
@@ -394,7 +423,6 @@ def compute_major_holidays_by_doctor(schedule, start_date, end_date):
                 
     all_data = []
     for doc in DOCTORS:
-        # Ταξινόμηση ανά ημερολογιακή σειρά (date_obj)
         sorted_items = sorted(doctor_rows[doc], key=lambda x: x["date_obj"])
         for item in sorted_items:
             all_data.append({
