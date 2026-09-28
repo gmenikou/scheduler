@@ -4,7 +4,6 @@ import calendar
 import pandas as pd
 from collections import defaultdict
 from fpdf import FPDF
-import os
 
 # ----------------------------
 # CONSTANTS & SETUP
@@ -182,26 +181,22 @@ def compute_balance(schedule, start_date, end_date, holiday_names):
 
 
 def create_balance_pdf(df, start_date, end_date):
+    """Ασφαλής δημιουργία PDF χωρίς σφάλματα κωδικοποίησης (font compatibility)."""
     pdf = FPDF(orientation="L", unit="mm", format="A4")
     pdf.add_page()
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 10, "Doctor Balance Summary", align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Arial", "", 10)
     
-    # Προσθήκη unicode font (DejaVuSans) για υποστήριξη ελληνικών χαρακτήρων στο PDF
-    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-    if os.path.exists(font_path):
-        pdf.add_font("DejaVu", "", font_path, uni=True)
-        pdf.set_font("DejaVu", "B", 16)
-    else:
-        pdf.set_font("Arial", "B", 16)
-
-    pdf.cell(0, 10, "Ισοζύγιο Εφημεριών Ακτινολόγων", align="C", new_x="LMARGIN", new_y="NEXT")
+    # Αντιστοίχιση ονομάτων γιατρών σε λατινικούς χαρακτήρες αποκλειστικά για το PDF προς αποφυγή κρασαρίσματος
+    doc_map = {
+        "Χριστίνα": "Christina", "Αθηνά": "Athena", "Μαρία": "Maria",
+        "Έλια": "Elia", "Αλέξανδρος": "Alexandros", "Εύα": "Eva", "Έλενα": "Elena"
+    }
     
-    if os.path.exists(font_path):
-        pdf.set_font("DejaVu", "", 10)
-    else:
-        pdf.set_font("Arial", "", 10)
-        
     for index, row in df.iterrows():
-        txt = f"{row['Doctor']} | Weekdays: {row['Weekdays']} | Fri: {row['Fri']} | Sat: {row['Sat']} | Sun: {row['Sun']} | Αργίες: {row['Αργίες']} | Total: {row['Total']}"
+        doc_en = doc_map.get(str(row['Doctor']), str(row['Doctor']))
+        txt = f"{doc_en} - Weekdays: {row['Weekdays']}, Fri: {row['Fri']}, Sat: {row['Sat']}, Sun: {row['Sun']}, Argies: {row['Αργίες']}, Total: {row['Total']}"
         pdf.cell(0, 8, txt, new_x="LMARGIN", new_y="NEXT")
     return bytes(pdf.output())
 
