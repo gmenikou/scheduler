@@ -4,6 +4,7 @@ import calendar
 import pandas as pd
 from collections import defaultdict
 import io
+import os
 
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
@@ -51,20 +52,18 @@ FIXED_HOLIDAYS = [
     (12, 31, "Παραμονή Πρωτοχρονιάς"),
 ]
 
-# Register Greek Font for ReportLab safely
+# Register local Greek Fonts for ReportLab
 FONT_NAME = "Helvetica"
+FONT_NAME_BOLD = "Helvetica-Bold"
+
 try:
-    # Prospathoume na anazitisoyme kai na egrapsoume mia Unicode font an yparxei sto systima
-    for font_path in [
-        "DejaVuSans.ttf", 
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "C:/Windows/Fonts/arial.ttf"
-    ]:
-        if os.path.exists(font_path) or font_path == "DejaVuSans.ttf":
-            pdfmetrics.registerFont(TTFFont('GreekUnicode', font_path))
-            FONT_NAME = 'GreekUnicode'
-            break
-except Exception:
+    if os.path.exists("DejaVuSans.ttf"):
+        pdfmetrics.registerFont(TTFFont('DejaVuSans', 'DejaVuSans.ttf'))
+        FONT_NAME = 'DejaVuSans'
+    if os.path.exists("dejavu-sans-bold.ttf"):
+        pdfmetrics.registerFont(TTFFont('DejaVuSans-Bold', 'dejavu-sans-bold.ttf'))
+        FONT_NAME_BOLD = 'DejaVuSans-Bold'
+except Exception as e:
     pass
 
 
@@ -473,7 +472,7 @@ def generate_reportlab_pdf(df, title):
     title_style = ParagraphStyle(
         'GreekTitle',
         parent=styles['Heading1'],
-        fontName=FONT_NAME,
+        fontName=FONT_NAME_BOLD,
         fontSize=16,
         alignment=1,
         spaceAfter=15
@@ -490,7 +489,7 @@ def generate_reportlab_pdf(df, title):
     header_style = ParagraphStyle(
         'GreekHeader',
         parent=styles['Normal'],
-        fontName=FONT_NAME,
+        fontName=FONT_NAME_BOLD,
         fontSize=10,
         alignment=1,
         textColor=colors.whitesmoke
@@ -635,7 +634,6 @@ with right_col:
         col_pdf1, col_pdf2 = st.columns(2)
         
         with col_pdf1:
-            # 1. Πλήρες Πρόγραμμα (Χρονολογικά)
             full_df = compute_full_schedule_dataframe(st.session_state.schedule, st.session_state.holiday_names)
             if not full_df.empty:
                 pdf_full = generate_reportlab_pdf(full_df, "Πλήρες Πρόγραμμα Εφημεριών")
@@ -646,7 +644,6 @@ with right_col:
                     mime="application/pdf"
                 )
             
-            # 2. Μεγάλεs Εορτές ανά Γιατρό
             major_df = compute_major_holidays_by_doctor(st.session_state.schedule, st.session_state.start_date, end_date)
             if not major_df.empty:
                 pdf_major = generate_reportlab_pdf(major_df, "Μεγάλεs Εορτές ανά Γιατρό")
@@ -658,7 +655,6 @@ with right_col:
                 )
                 
         with col_pdf2:
-            # 3. Ισοζύγιο Εφημεριών PDF
             pdf_balance = generate_reportlab_pdf(st.session_state.balance, "Ισοζύγιο Εφημεριών")
             st.download_button(
                 label="📄 PDF: Ισοζύγιο Εφημεριών",
@@ -667,7 +663,6 @@ with right_col:
                 mime="application/pdf"
             )
 
-            # 4. Μικρές Αργίες Χρονολογικά
             reg_df = compute_regular_holidays_chronological(st.session_state.schedule, regular_hols)
             if not reg_df.empty:
                 pdf_reg = generate_reportlab_pdf(reg_df, "Μικρές Αργίες (Χρονολογικά)")
