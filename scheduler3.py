@@ -3,8 +3,15 @@ import datetime
 import calendar
 import pandas as pd
 from collections import defaultdict
-from fpdf import FPDF
 import io
+
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFFont
 
 # ----------------------------
 # CONSTANTS & SETUP
@@ -44,6 +51,22 @@ FIXED_HOLIDAYS = [
     (12, 31, "Παραμονή Πρωτοχρονιάς"),
 ]
 
+# Register Greek Font for ReportLab safely
+FONT_NAME = "Helvetica"
+try:
+    # Prospathoume na anazitisoyme kai na egrapsoume mia Unicode font an yparxei sto systima
+    for font_path in [
+        "DejaVuSans.ttf", 
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "C:/Windows/Fonts/arial.ttf"
+    ]:
+        if os.path.exists(font_path) or font_path == "DejaVuSans.ttf":
+            pdfmetrics.registerFont(TTFFont('GreekUnicode', font_path))
+            FONT_NAME = 'GreekUnicode'
+            break
+except Exception:
+    pass
+
 
 def get_doctors():
     if "doctors_list" not in st.session_state:
@@ -82,14 +105,6 @@ def _shifts_in_week(doctor, date, schedule, exclude_date=None):
     return sum(
         1 for d, doc in schedule.items()
         if doc == doctor and d != exclude_date and _week_monday(d) == wk
-    )
-
-
-def _total_shifts_in_month(doctor, date, schedule, exclude_date=None):
-    return sum(
-        1 for d, doc in schedule.items()
-        if d != exclude_date and doc == doctor
-        and d.year == date.year and d.month == date.month
     )
 
 
@@ -234,7 +249,7 @@ def is_valid_assignment(doctor, date, schedule, holiday_dates, exclude_date=None
 
 
 # ----------------------------
-# SCHEDULING LOGIC (STRICT GLOBAL FAIRNESS)
+# SCHEDULING LOGIC
 # ----------------------------
 def generate_full_schedule(start_date, end_date, initial_week, manual_assignments=None):
     manual_assignments = manual_assignments or {}
@@ -447,35 +462,66 @@ def compute_balance(schedule, start_date, end_date, holiday_names):
 
 
 # ----------------------------
-# PDF EXPORT FUNCTIONS
+# REPORTLAB PDF GENERATOR
 # ----------------------------
-def safe_pdf_text(text):
-    if not isinstance(text, str):
-        text = str(text)
-    return text.encode('latin-1', 'replace').decode('latin-1')
+def generate_reportlab_pdf(df, title):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+    elements = []
+    
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        'GreekTitle',
+        parent=styles['Heading1'],
+        fontName=FONT_NAME,
+        fontSize=16,
+        alignment=1,
+        spaceAfter=15
+    )
+    
+    cell_style = ParagraphStyle(
+        'GreekCell',
+        parent=styles['Normal'],
+        fontName=FONT_NAME,
+        fontSize=9,
+        alignment=1
+    )
+    
+    header_style = ParagraphStyle(
+        'GreekHeader',
+        parent=styles['Normal'],
+        fontName=FONT_NAME,
+        fontSize=10,
+        alignment=1,
+        textColor=colors.whitesmoke
+    )
 
-
-def generate_pdf_report(df, title):
-    pdf = FPDF(orientation="P", unit="mm", format="A4")
-    pdf.add_page()
-    pdf.set_font("Arial", "B", 14)
-    pdf.cell(0, 10, safe_pdf_text(title), align="C", new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(5)
+    elements.append(Paragraph(title, title_style))
+    elements.append(Spacer(1, 10))
     
-    pdf.set_font("Arial", "B", 9)
-    col_width = pdf.w / (len(df.columns) + 1)
+    table_data = []
+    headers = [str(c) for c in df.columns]
+    table_data.append([Paragraph(h, header_style) for h in headers])
     
-    for col in df.columns:
-        pdf.cell(col_width * 1.2, 8, safe_pdf_text(str(col)), border=1, align="C")
-    pdf.ln()
-    
-    pdf.set_font("Arial", "", 8)
     for _, row in df.iterrows():
-        for val in row:
-            pdf.cell(col_width * 1.2, 6, safe_pdf_text(str(val)), border=1, align="C")
-        pdf.ln()
+        row_data = [Paragraph(str(val), cell_style) for val in row]
+        table_data.append(row_data)
         
-    return bytes(pdf.output())
+    t = Table(table_data, colWidths=[None]*len(df.columns))
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2c3e50')),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+        ('TOPPADDING', (0,0), (-1,-1), 6),
+    ]))
+    
+    elements.append(t)
+    doc.build(elements)
+    
+    buffer.seek(0)
+    return buffer.getvalue()
 
 
 def display_calendar(schedule, holiday_names):
@@ -567,7 +613,7 @@ with left_col:
         st.subheader("📈 Ισοζύγιο Εφημεριών")
         st.dataframe(st.session_state.balance, use_container_width=True, height=260)
         
-        pdf_bytes = generate_pdf_report(st.session_state.balance, "Doctor Balance Summary")
+        pdf_bytes = generate_reportlab_pdf(st.session_state.balance, "Ισοζύγιο Εφημεριών")
         st.download_button(
             label="📄 Εξαγωγή Ισοζυγίου σε PDF",
             data=pdf_bytes,
@@ -592,7 +638,7 @@ with right_col:
             # 1. Πλήρες Πρόγραμμα (Χρονολογικά)
             full_df = compute_full_schedule_dataframe(st.session_state.schedule, st.session_state.holiday_names)
             if not full_df.empty:
-                pdf_full = generate_pdf_report(full_df, "Full Schedule Chronological")
+                pdf_full = generate_reportlab_pdf(full_df, "Πλήρες Πρόγραμμα Εφημεριών")
                 st.download_button(
                     label="📄 PDF: Πλήρες Πρόγραμμα (Όλες οι μέρες)",
                     data=pdf_full,
@@ -600,12 +646,12 @@ with right_col:
                     mime="application/pdf"
                 )
             
-            # 2. Μεγάλεσ Εορτές ανά Γιατρό
+            # 2. Μεγάλεs Εορτές ανά Γιατρό
             major_df = compute_major_holidays_by_doctor(st.session_state.schedule, st.session_state.start_date, end_date)
             if not major_df.empty:
-                pdf_major = generate_pdf_report(major_df, "Major Holidays by Doctor")
+                pdf_major = generate_reportlab_pdf(major_df, "Μεγάλεs Εορτές ανά Γιατρό")
                 st.download_button(
-                    label="📄 PDF: Μεγάλεσ Εορτές ανά Γιατρό",
+                    label="📄 PDF: Μεγάλεs Εορτές ανά Γιατρό",
                     data=pdf_major,
                     file_name="major_holidays.pdf",
                     mime="application/pdf"
@@ -613,7 +659,7 @@ with right_col:
                 
         with col_pdf2:
             # 3. Ισοζύγιο Εφημεριών PDF
-            pdf_balance = generate_pdf_report(st.session_state.balance, "Doctor Balance Summary")
+            pdf_balance = generate_reportlab_pdf(st.session_state.balance, "Ισοζύγιο Εφημεριών")
             st.download_button(
                 label="📄 PDF: Ισοζύγιο Εφημεριών",
                 data=pdf_balance,
@@ -624,7 +670,7 @@ with right_col:
             # 4. Μικρές Αργίες Χρονολογικά
             reg_df = compute_regular_holidays_chronological(st.session_state.schedule, regular_hols)
             if not reg_df.empty:
-                pdf_reg = generate_pdf_report(reg_df, "Regular Holidays Chronological")
+                pdf_reg = generate_reportlab_pdf(reg_df, "Μικρές Αργίες (Χρονολογικά)")
                 st.download_button(
                     label="📄 PDF: Μικρές Αργίες (Χρονολογικά)",
                     data=pdf_reg,
