@@ -54,8 +54,11 @@ FIXED_HOLIDAYS = [
 def get_doctor_color(doc_name, doctors_list):
     if doc_name in DEFAULT_DOCTOR_COLORS:
         return DEFAULT_DOCTOR_COLORS[doc_name]
-    idx = doctors_list.index(doc_name) % len(EXTRA_COLORS)
-    return EXTRA_COLORS[idx]
+    try:
+        idx = doctors_list.index(doc_name) % len(EXTRA_COLORS)
+        return EXTRA_COLORS[idx]
+    except ValueError:
+        return (220, 220, 220)  # Default γκρι αν δεν βρεθεί
 
 
 def _week_monday(date):
@@ -134,13 +137,10 @@ def _month_stats(doctor, date, schedule, exclude_date=None):
 
 
 def _within_dynamic_month_cap(doctor, date, schedule, num_docs, exclude_date=None):
-    """Δυναμικός υπολογισμός μηνιαίου ορίου βάσει του πλήθους των ιατρών"""
     total, _, _ = _month_stats(doctor, date, schedule, exclude_date)
     total += 1
-    
-     # Υπολογισμός ημερών μήνα
     _, days_in_month = calendar.monthrange(date.year, date.month)
-    base_limit = (days_in_month // num_docs) + 2  # Επιτρέπει τη φυσική κατανομή (π.χ. 6 ή 7 σε μήνα 31 ημερών για 5 γιατρούς)
+    base_limit = (days_in_month // num_docs) + 2
     return total <= base_limit
 
 
@@ -224,7 +224,6 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
 
 def is_valid_assignment(doctor, date, schedule, holiday_dates, num_docs, exclude_date=None,
                         min_gap=3, max_special=1, avoid_consecutive_weekends=True):
-    # Δυναμική μείωση του min_gap αν οι γιατροί είναι λίγοι (< 5)
     effective_gap = min(min_gap, 1 if num_docs <= 4 else 2 if num_docs == 5 else 3)
     
     if _has_nearby_shift(doctor, date, schedule, min_gap=effective_gap):
