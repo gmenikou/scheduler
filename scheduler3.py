@@ -58,17 +58,21 @@ FIXED_HOLIDAYS = [
     (12, 31, "Παραμονή Πρωτοχρονιάς"),
 ]
 
-# Register local Greek Fonts for ReportLab safely
+# Register local Greek Fonts for ReportLab safely using absolute path
 FONT_NAME = "Helvetica"
 FONT_NAME_BOLD = "Helvetica-Bold"
 
 if HAS_TTF:
     try:
-        if os.path.exists("DejaVuSans.ttf"):
-            pdfmetrics.registerFont(TTFFont('DejaVuSans', 'DejaVuSans.ttf'))
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        regular_path = os.path.join(current_dir, "DejaVuSans.ttf")
+        bold_path = os.path.join(current_dir, "dejavu-sans-bold.ttf")
+        
+        if os.path.exists(regular_path):
+            pdfmetrics.registerFont(TTFFont('DejaVuSans', regular_path))
             FONT_NAME = 'DejaVuSans'
-        if os.path.exists("dejavu-sans-bold.ttf"):
-            pdfmetrics.registerFont(TTFFont('DejaVuSans-Bold', 'dejavu-sans-bold.ttf'))
+        if os.path.exists(bold_path):
+            pdfmetrics.registerFont(TTFFont('DejaVuSans-Bold', bold_path))
             FONT_NAME_BOLD = 'DejaVuSans-Bold'
     except Exception:
         pass
