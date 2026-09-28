@@ -180,15 +180,16 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
         "Μεγάλο Σάββατο + 24/12": 5,
         "Μεγάλη Παρασκευή + 26/12": 6,
     }
-    for y in range(start_date.year - 2, end_date.year + 2):
-        easter = orthodox_easter(y + 1)
+    # Αυστηρός περιορισμός εντός του ίδιου ημερολογιακού έτους y
+    for y in range(start_date.year, end_date.year + 1):
+        easter = orthodox_easter(y)
         g_fri = easter - datetime.timedelta(days=2)
         s_sat = easter - datetime.timedelta(days=1)
         sun_e = easter
         mon_e = easter + datetime.timedelta(days=1)
 
         year_blocks = [
-            ([datetime.date(y + 1, 1, 1)], "Πρωτοχρονιά (1/1)"),
+            ([datetime.date(y, 1, 1)], "Πρωτοχρονιά (1/1)"),
             ([datetime.date(y, 12, 25)], "Χριστούγεννα (25/12)"),
             ([datetime.date(y, 12, 31)], "Παραμονή Πρωτοχρονιάς (31/12)"),
             ([sun_e], "Κυριακή του Πάσχα"),
@@ -201,7 +202,7 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
             valid_dates = [d for d in dates if start_date <= d <= end_date]
             if valid_dates:
                 blocks.append({
-                    "name": f"{base_name} ({y+1})",
+                    "name": f"{base_name} ({y})",
                     "base_name": base_name,
                     "dates": valid_dates,
                     "cycle_id": y,
@@ -259,7 +260,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
             schedule[d] = doc
 
     # ----------------------------
-    # ΑΥΣΤΗΡΗ ΡΟΤΑ ΜΕ ΚΥΚΛΙΚΗ ΕΝΑΛΛΑΓΗ ΑΝΑ ΕΤΟΣ (ΙΣΟΠΟΣΑ 9 ΑΡΓΙΕΣ)
+    # ΑΥΣΤΗΡΗ ΡΟΤΑ ΜΕ ΚΥΚΛΙΚΗ ΕΝΑΛΛΑΓΗ ΑΝΑ ΕΤΟΣ (ΕΝΤΟΣ ΙΔΙΟΥ ΕΤΟΥΣ)
     # ----------------------------
     for block in major_blocks:
         cycle_y = block["cycle_id"]
