@@ -247,7 +247,7 @@ def find_all_violations(schedule):
 
 
 # ----------------------------
-# SCHEDULING LOGIC (STRICT 7-YEAR / 9-HOLIDAYS PER DOCTOR RULE)
+# SCHEDULING LOGIC (GUARANTEED 1-TO-1 ROTATION)
 # ----------------------------
 def generate_full_schedule(start_date, end_date, initial_week, manual_assignments=None):
     manual_assignments = manual_assignments or {}
@@ -276,44 +276,21 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
 
     sorted_cycles = sorted(cycles_dict.keys())
 
-    # Αυστηρή κατανομή ρότας ανά κύκλο χωρίς επαναλήψεις στον ίδιο κύκλο
+    # Απολύτως εγγυημένη 1-προς-1 κατανομή ανά κύκλο: 7 πακέτα σε 7 γιατρούς ακριβώς
     for cycle_idx, c_id in enumerate(sorted_cycles):
         cycle_blocks = sorted(cycles_dict[c_id], key=lambda b: b["order"])
         
-        # Λίστα διαθέσιμων γιατρών ανακατεμένη κυκλικά για αποφυγή διπλοεγγραφών
-        available_doctors_for_cycle = DOCTORS[cycle_idx % len(DOCTORS):] + DOCTORS[:cycle_idx % len(DOCTORS)]
+        # Περιστροφή της λίστας γιατρών ανά κύκλο για δίκαιη εναλλαγή
+        shift = cycle_idx % len(DOCTORS)
+        cycle_doctors = DOCTORS[shift:] + DOCTORS[:shift]
         
         for block_idx, block in enumerate(cycle_blocks):
             block_dates = block["dates"]
             if any(bd in schedule for bd in block_dates):
                 continue
             
-            primary_date = block_dates[0]
-            
-            # Επιλογή γιατρού με βάση τη σειρά του κύκλου
-            assigned_doc = None
-            candidate_index = block_idx % len(available_doctors_for_cycle)
-            
-            # Δοκιμή αρχικά του δικαιωματικού γιατρού βάσει ρότας
-            ordered_doctors = [available_doctors_for_cycle[candidate_index]] + [d for i, d in enumerate(available_doctors_for_cycle) if i != candidate_index]
-
-            for avoid_cons in (True, False):
-                for min_gap in (3, 2, 1, 0):
-                    for cand in ordered_doctors:
-                        if is_valid_assignment(cand, primary_date, schedule, holiday_dates, exclude_date=None, 
-                                               strict_monthly=True, min_gap=min_gap, max_special=2, avoid_consecutive_weekends=avoid_cons):
-                            assigned_doc = cand
-                            break
-                    if assigned_doc:
-                        break
-                if assigned_doc:
-                    break
-
-            if assigned_doc is None:
-                assigned_doc = available_doctors_for_cycle[candidate_index]
-
-            # Αφαίρεση του γιατρού από τη λίστα αυτού του κύκλου για να μην ξαναπάρει μεγάλη αργία στον ίδιο κύκλο
-            available_doctors_for_cycle.remove(assigned_doc)
+            # Ανάθεση ακριβώς στον αντίστοιχο γιατρό της λίστας για αυτό το πακέτο
+            assigned_doc = cycle_doctors[block_idx % len(cycle_doctors)]
 
             for bd in block_dates:
                 schedule[bd] = assigned_doc
