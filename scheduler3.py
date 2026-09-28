@@ -93,6 +93,13 @@ def _total_shifts_in_month(doctor, date, schedule, exclude_date=None):
     )
 
 
+def _total_shifts_overall(doctor, schedule, exclude_date=None):
+    return sum(
+        1 for d, doc in schedule.items()
+        if d != exclude_date and doc == doctor
+    )
+
+
 def _special_bucket(date, holiday_dates):
     if date.weekday() == 5:
         return "sat"
@@ -227,7 +234,7 @@ def is_valid_assignment(doctor, date, schedule, holiday_dates, exclude_date=None
 
 
 # ----------------------------
-# SCHEDULING LOGIC (FAIR DISTRIBUTION)
+# SCHEDULING LOGIC (STRICT GLOBAL FAIRNESS)
 # ----------------------------
 def generate_full_schedule(start_date, end_date, initial_week, manual_assignments=None):
     manual_assignments = manual_assignments or {}
@@ -251,7 +258,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         if start_date <= d <= end_date:
             schedule[d] = doc
 
-    # Δίκαιη κατανομή μεγάλων εορτών χρονολογικά
+    # 1. Megales eortes me apolyto global fairness (panta ston giatro me tis ligoteres synolikes efimeries)
     all_major_blocks = sorted(major_blocks, key=lambda b: (b["year"], b["dates"][0]))
 
     for block in all_major_blocks:
@@ -262,27 +269,22 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
         primary_date = block_dates[0]
         assigned_doc = None
 
-        # Υπολογισμός πόσες μεγάλες αργίες έχει πάρει μέχρι τώρα ο καθένας για απόλυτη ισορροπία
-        major_counts_so_far = {doc: sum(1 for bd, d_doc in schedule.items() if d_doc == doc and any(bd in b["dates"] for b in all_major_blocks)) for doc in doctors}
-
-        # Δοκιμή με χαλάρωση περιορισμών αν χρειαστεί, αλλά πάντα με βάση ποιος έχει τις λιγότερες αργίες
-        sorted_docs_by_fairness = sorted(doctors, key=lambda doc: (major_counts_so_far.get(doc, 0), _total_shifts_in_month(doc, primary_date, schedule)))
-
         for avoid_cons in (True, False):
             for min_gap in (3, 2, 1, 0):
                 valid_candidates = [
-                    doc for doc in sorted_docs_by_fairness
+                    doc for doc in doctors
                     if is_valid_assignment(doc, primary_date, schedule, holiday_dates, exclude_date=None, 
                                            strict_monthly=True, min_gap=min_gap, max_special=2, avoid_consecutive_weekends=avoid_cons)
                 ]
                 if valid_candidates:
-                    assigned_doc = valid_candidates[0]
+                    # Epilogi me vasi ton giatro pou exei tis ligoteres synolikes efimeries mexri tora
+                    assigned_doc = min(valid_candidates, key=lambda doc: _total_shifts_overall(doc, schedule))
                     break
             if assigned_doc:
                 break
 
         if assigned_doc is None:
-            assigned_doc = sorted_docs_by_fairness[0]
+            assigned_doc = min(doctors, key=lambda doc: _total_shifts_overall(doc, schedule))
 
         for bd in block_dates:
             schedule[bd] = assigned_doc
@@ -291,6 +293,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
     all_major_dates = {d for block in major_blocks for d in block["dates"]}
     minor_dates = {d for d in holiday_dates if d not in all_major_dates}
 
+    # 2. Eidikes imeres (Sabbatokyriaka, Argies) me protereotita sto synoliko isozygio
     special_dates = [
         d for d in all_days
         if d not in schedule and (d.weekday() in (4, 5, 6) or d in holiday_dates)
@@ -307,9 +310,7 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                         strict_monthly=True, min_gap=min_gap, max_special=max_special, 
                         avoid_consecutive_weekends=avoid_cons)]
                     if valid:
-                        chosen = min(valid, key=lambda doc: (
-                            _total_shifts_in_month(doc, d, schedule, exclude_date=d)
-                        ))
+                        chosen = min(valid, key=lambda doc: _total_shifts_overall(doc, schedule, exclude_date=d))
                         break
                 if chosen:
                     break
@@ -317,10 +318,11 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                 break
 
         if chosen is None:
-            chosen = min(doctors, key=lambda doc: _total_shifts_in_month(doc, d, schedule, exclude_date=d))
-            warnings.append(f"{d.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
+            chosen = min(doctors, key=lambda doc: _total_shifts_overall(doc, schedule, exclude_date=d))
+            warnings.append(f"{d.strftime('%d/%m/%Y')}: kamia egkyri epilogi, anatetike {chosen}")
         schedule[d] = chosen
 
+    # 3. Kathimerines
     for current_date in all_days:
         if current_date in schedule:
             continue
@@ -331,12 +333,12 @@ def generate_full_schedule(start_date, end_date, initial_week, manual_assignment
                 doc, current_date, schedule, holiday_dates, exclude_date=current_date,
                 strict_monthly=True, min_gap=min_gap, avoid_consecutive_weekends=False)]
             if valid:
-                chosen = min(valid, key=lambda doc: _total_shifts_in_month(doc, current_date, schedule, exclude_date=current_date))
+                chosen = min(valid, key=lambda doc: _total_shifts_overall(doc, schedule, exclude_date=current_date))
                 break
 
         if chosen is None:
-            chosen = min(doctors, key=lambda doc: _total_shifts_in_month(doc, current_date, schedule, exclude_date=current_date))
-            warnings.append(f"{current_date.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
+            chosen = min(doctors, key=lambda doc: _total_shifts_overall(doc, schedule, exclude_date=current_date))
+            warnings.append(f"{current_date.strftime('%d/%m/%Y')}: kamia egkyri epilogi, anatetike {chosen}")
         schedule[current_date] = chosen
 
     for d, doc in manual_assignments.items():
@@ -548,7 +550,7 @@ with left_col:
         st.session_state.schedule = schedule
         st.session_state.warnings = warnings
         st.session_state.balance = compute_balance(schedule, start_date, end_date, holiday_names)
-        st.success("Το πρόγραμμα δημιουργήθηκε επιτυχώς και κατανεμήθηκε δίκαια!")
+        st.success("Το πρόγραμμα δημιουργήθηκε επιτυχώς με απόλυτη ισορροπία!")
 
     if st.session_state.balance is not None and not st.session_state.balance.empty:
         st.subheader("📈 Ισοζύγιο Εφημεριών")
