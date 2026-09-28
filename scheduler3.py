@@ -4,6 +4,7 @@ import calendar
 import pandas as pd
 from collections import defaultdict
 from fpdf import FPDF
+import os
 
 # ----------------------------
 # CONSTANTS & SETUP
@@ -95,7 +96,6 @@ def get_holidays_in_range(start_date, end_date):
 
 
 def get_day_category(date, holiday_dates):
-    """Κατηγοριοποίηση ημέρας για δίκαιη κατανομή."""
     if date in holiday_dates:
         return "Αργίες"
     wd = date.weekday()
@@ -120,39 +120,26 @@ def generate_full_schedule(start_date, end_date, initial_week=None, manual_assig
     holiday_names = get_holidays_in_range(start_date, end_date)
     holiday_dates = set(holiday_names.keys())
 
-    # 1. Εφαρμογή χειροκίνητων αναθέσεων πρώτα
     for d, doc in manual_assignments.items():
         if start_date <= d <= end_date:
             schedule[d] = doc
 
-    # 2. Συλλογή όλων των ημερών που χρειάζονται ανάθεση
     total_Days = (end_date - start_date).days + 1
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_Days)]
     
     unassigned_days = [d for d in all_days if d not in schedule]
-
-    # Κατανομή ανα κατηγορία για απόλυτη ισότητα
-    # Κατηγορίες: "Weekdays", "Fri", "Sat", "Sun", "Αργίες"
     category_counters = {cat: {doc: 0 for doc in DOCTORS} for cat in ["Weekdays", "Fri", "Sat", "Sun", "Αργίες"]}
 
-    # Ενημέρωση μετρητών από ό,τι έχει ήδη ανατεθεί (manual ή αρχική εβδομάδα)
     for d, doc in schedule.items():
         cat = get_day_category(d, holiday_dates)
         if doc in category_counters[cat]:
             category_counters[cat][doc] += 1
 
-    # Ταξινόμηση ημερών χρονολογικά
     unassigned_days.sort()
 
     for d in unassigned_days:
         cat = get_day_category(d, holiday_dates)
-        
-        # Βρίσκουμε ποιος γιατρός έχει τις λιγότερες εφημερίες σε αυτήν την κατηγορία
-        # Με κριτήριο ισσοροπίας: λιγότερες συνολικά στην κατηγορία, και αποφυγή κοντινών ημερών (min_gap)
         best_doc = None
-        min_score = float('inf')
-
-        # Τυχαία ή σταθερή σειρά για ισότητα σε ισοβαθμίες
         sorted_doctors = sorted(DOCTORS, key=lambda doc: (category_counters[cat][doc], doc))
 
         assigned = False
@@ -172,7 +159,6 @@ def generate_full_schedule(start_date, end_date, initial_week=None, manual_assig
         schedule[d] = best_doc
         category_counters[cat][best_doc] += 1
 
-    # Τελικός έλεγχος χειροκίνητων
     for d, doc in manual_assignments.items():
         if start_date <= d <= end_date:
             schedule[d] = doc
@@ -180,9 +166,6 @@ def generate_full_schedule(start_date, end_date, initial_week=None, manual_assig
     return schedule, holiday_names, warnings
 
 
-# ----------------------------
-# CHRONOLOGICAL & BALANCE SUMMARY
-# ----------------------------
 def compute_balance(schedule, start_date, end_date, holiday_names):
     holiday_dates = set(holiday_names.keys())
     counts = {doc: {"Weekdays": 0, "Fri": 0, "Sat": 0, "Sun": 0, "Αργίες": 0, "Total": 0} for doc in DOCTORS}
@@ -201,11 +184,24 @@ def compute_balance(schedule, start_date, end_date, holiday_names):
 def create_balance_pdf(df, start_date, end_date):
     pdf = FPDF(orientation="L", unit="mm", format="A4")
     pdf.add_page()
-    pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, "Doctor Balance Summary", align="C", new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font("Arial", "", 10)
+    
+    # Προσθήκη unicode font (DejaVuSans) για υποστήριξη ελληνικών χαρακτήρων στο PDF
+    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+    if os.path.exists(font_path):
+        pdf.add_font("DejaVu", "", font_path, uni=True)
+        pdf.set_font("DejaVu", "B", 16)
+    else:
+        pdf.set_font("Arial", "B", 16)
+
+    pdf.cell(0, 10, "Ισοζύγιο Εφημεριών Ακτινολόγων", align="C", new_x="LMARGIN", new_y="NEXT")
+    
+    if os.path.exists(font_path):
+        pdf.set_font("DejaVu", "", 10)
+    else:
+        pdf.set_font("Arial", "", 10)
+        
     for index, row in df.iterrows():
-        txt = f"{row['Doctor']} - Weekdays: {row['Weekdays']}, Fri: {row['Fri']}, Sat: {row['Sat']}, Sun: {row['Sun']}, Argies: {row['Αργίες']}, Total: {row['Total']}"
+        txt = f"{row['Doctor']} | Weekdays: {row['Weekdays']} | Fri: {row['Fri']} | Sat: {row['Sat']} | Sun: {row['Sun']} | Αργίες: {row['Αργίες']} | Total: {row['Total']}"
         pdf.cell(0, 8, txt, new_x="LMARGIN", new_y="NEXT")
     return bytes(pdf.output())
 
