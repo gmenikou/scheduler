@@ -687,7 +687,7 @@ st.markdown("<span style='font-size:14px; color:gray;'>© Γιώργος Μεν�
 
 for key, default in [
     ("manual_assignments", {}), ("schedule", None), ("holiday_names", {}),
-    ("balance", None), ("initial_week", None), ("warnings", []),
+    ("balance", None), ("initial_week", [DOCTORS[i % len(DOCTORS)] for i in range(7)]), ("warnings", []),
     ("start_date", datetime.date.today()),
 ]:
     if key not in st.session_state:
@@ -700,6 +700,16 @@ with left_col:
     start_date = st.date_input("Ημερομηνία Έναρξης", value=datetime.date(2026, 1, 1))
     end_date = st.date_input("Ημερομηνία Λήξης", value=datetime.date(2026, 12, 31))
     
+    st.markdown("### 📋 Αρχική Σειρά Εβδομάδας (Δευτέρα - Κυριακή)")
+    initial_week_list = []
+    cols_init = st.columns(7)
+    for i, day_label in enumerate(GREEK_WEEKDAY_LABELS):
+        with cols_init[i]:
+            default_doc = st.session_state.initial_week[i] if i < len(st.session_state.initial_week) else DOCTORS[i % len(DOCTORS)]
+            doc_sel = st.selectbox(day_label, DOCTORS, index=DOCTORS.index(default_doc) if default_doc in DOCTORS else 0, key=f"init_day_{i}")
+            initial_week_list.append(doc_sel)
+    st.session_state.initial_week = initial_week_list
+
     if st.button("🚀 Δημιουργία Προγράμματος"):
         st.session_state.start_date = start_date
         holiday_names = get_holidays_in_range(start_date, end_date)
@@ -717,7 +727,6 @@ with left_col:
         end_d = max(st.session_state.schedule.keys()) if st.session_state.schedule else st.session_state.start_date
         st.dataframe(st.session_state.balance, use_container_width=True, height=260)
 
-        # Κουμπί λήψης ισοζυγίου σε PDF
         pdf_balance_bytes = create_balance_pdf(st.session_state.balance, st.session_state.start_date, end_d)
         st.download_button("📄 Λήψη Ισοζυγίου σε PDF", pdf_balance_bytes, file_name="doctor_balance.pdf", mime="application/pdf")
 
