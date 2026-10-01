@@ -274,7 +274,7 @@ def generate_full_schedule(start_date, end_date, doctors_list, initial_week, man
         if start_date <= d <= end_date and doc in doctors_list:
             schedule[d] = doc
 
-    # --- ΒΗΜΑ 2: ΜΕΓΑΛΕΣ ΕΟΡΤΕΣ ---
+    # --- ΒΗΜΑ 2: ΜΕΓΑΛΕΣ ΕΟΡΤΕΣ (ΜΕ ΕΛΕΓΧΟ ΚΥΚΛΟΥ ΓΙΑ ΧΕΙΡΟΚΙΝΗΤΕΣ) ---
     major_blocks.sort(key=lambda b: b["dates"][0])
     assigned_major_dates = {d: doc for d, doc in schedule.items()}
 
@@ -295,6 +295,17 @@ def generate_full_schedule(start_date, end_date, doctors_list, initial_week, man
             doc_idx = (base_idx + offset) % num_docs
             doc = doctors_list[doc_idx]
             
+            # Έλεγχος αν ο γιατρός έχει πάρει ήδη μεγάλη εορτή στον ίδιο κύκλο (συμπεριλαμβανομένων χειροκίνητων)
+            has_holiday_in_this_cycle = False
+            for d_existing, d_doc in assigned_major_dates.items():
+                if d_doc == doc:
+                    if abs((d_existing - block["dates"][0]).days) < 180:
+                        has_holiday_in_this_cycle = True
+                        break
+
+            if has_holiday_in_this_cycle:
+                continue
+
             has_conflict = False
             for d_existing, d_doc in assigned_major_dates.items():
                 if d_doc == doc:
