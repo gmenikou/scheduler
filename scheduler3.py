@@ -58,7 +58,7 @@ def get_doctor_color(doc_name, doctors_list):
         idx = doctors_list.index(doc_name) % len(EXTRA_COLORS)
         return EXTRA_COLORS[idx]
     except ValueError:
-        return (220, 220, 220)  # Default γκρι αν δεν βρεθεί
+        return (220, 220, 220)
 
 
 def _week_monday(date):
@@ -182,6 +182,10 @@ def get_holidays_in_range(start_date, end_date):
 
 
 def get_major_holiday_blocks_in_range(start_date, end_date):
+    """
+    Ορισμός πακέτων μεγάλων εορτών ανά ΣΧΟΛΙΚΟ ΕΤΟΣ (Σεπτέμβριος y έως Αύγουστος y+1).
+    Τα Χριστούγεννα/Πρωτοχρονιά του έτους y συνδέονται με το Πάσχα του έτους y+1.
+    """
     blocks = []
     PACKAGE_ROTATION_ORDER = {
         "Πρωτοχρονιά (1/1)": 0,
@@ -192,31 +196,32 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
         "Μεγάλο Σάββατο + 24/12": 5,
         "Μεγάλη Παρασκευή + 26/12": 6,
     }
-    for y in range(start_date.year, end_date.year + 1):
-        easter = orthodox_easter(y)
-        g_fri = easter - datetime.timedelta(days=2)
-        s_sat = easter - datetime.timedelta(days=1)
-        sun_e = easter
-        mon_e = easter + datetime.timedelta(days=1)
+    
+    for y in range(start_date.year - 1, end_date.year + 2):
+        easter_next = orthodox_easter(y + 1)
+        g_fri_next = easter_next - datetime.timedelta(days=2)
+        s_sat_next = easter_next - datetime.timedelta(days=1)
+        sun_e_next = easter_next
+        mon_e_next = easter_next + datetime.timedelta(days=1)
 
         year_blocks = [
-            ([datetime.date(y, 1, 1)], "Πρωτοχρονιά (1/1)"),
+            ([datetime.date(y + 1, 1, 1)], "Πρωτοχρονιά (1/1)"),
             ([datetime.date(y, 12, 25)], "Χριστούγεννα (25/12)"),
             ([datetime.date(y, 12, 31)], "Παραμονή Πρωτοχρονιάς (31/12)"),
-            ([sun_e], "Κυριακή του Πάσχα"),
-            ([mon_e], "Δευτέρα του Πάσχα"),
-            ([s_sat, datetime.date(y, 12, 24)], "Μεγάλο Σάββατο + 24/12"),
-            ([g_fri, datetime.date(y, 12, 26)], "Μεγάλη Παρασκευή + 26/12"),
+            ([sun_e_next], "Κυριακή του Πάσχα"),
+            ([mon_e_next], "Δευτέρα του Πάσχα"),
+            ([s_sat_next, datetime.date(y, 12, 24)], "Μεγάλο Σάββατο + 24/12"),
+            ([g_fri_next, datetime.date(y, 12, 26)], "Μεγάλη Παρασκευή + 26/12"),
         ]
 
         for dates, base_name in year_blocks:
             valid_dates = [d for d in dates if start_date <= d <= end_date]
             if valid_dates:
                 blocks.append({
-                    "name": f"{base_name} ({y})",
+                    "name": f"{base_name} ({y}-{y+1})",
                     "base_name": base_name,
                     "dates": valid_dates,
-                    "cycle_id": y,
+                    "cycle_id": y,  # Σχολικό έτος (π.χ. 2026 για το ακαδημαϊκό έτος 2026-2027)
                     "order": PACKAGE_ROTATION_ORDER.get(base_name, 99)
                 })
     return blocks
