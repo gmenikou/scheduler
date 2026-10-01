@@ -2,6 +2,8 @@ import streamlit as str_lit
 import datetime
 import calendar
 import pandas as pd
+import json
+import os
 from collections import defaultdict
 from fpdf import FPDF
 
@@ -47,6 +49,44 @@ FIXED_HOLIDAYS = [
     (12, 26, "Δεύτερη μέρα Χριστουγέννων"),
     (12, 31, "Παραμονή Πρωτοχρονιάς"),
 ]
+
+STATE_FILE = "last_schedule_state.json"
+
+# ----------------------------
+# STATE PERSISTENCE FUNCTIONS
+# ----------------------------
+def save_state_to_file(schedule, holiday_names, balance, manual_assignments, doctors, initial_week):
+    data = {
+        "schedule": {d.strftime("%Y-%m-%d"): doc for d, doc in schedule.items()} if schedule else {},
+        "holiday_names": {d.strftime("%Y-%m-%d"): name for d, name in holiday_names.items()} if holiday_names else {},
+        "manual_assignments": {d.strftime("%Y-%m-%d"): doc for d, doc in manual_assignments.items()} if manual_assignments else {},
+        "doctors": doctors,
+        "initial_week": initial_week
+    }
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
+def load_state_from_file():
+    if not os.path.exists(STATE_FILE):
+        return None
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        
+        schedule = {datetime.datetime.strptime(d, "%Y-%m-%d").date(): doc for d, doc in data.get("schedule", {}).items()}
+        holiday_names = {datetime.datetime.strptime(d, "%Y-%m-%d").date(): name for d, name in data.get("holiday_names", {}).items()}
+        manual_assignments = {datetime.datetime.strptime(d, "%Y-%m-%d").date(): doc for d, doc in data.get("manual_assignments", {}).items()}
+        
+        return {
+            "schedule": schedule,
+            "holiday_names": holiday_names,
+            "manual_assignments": manual_assignments,
+            "doctors": data.get("doctors", DEFAULT_DOCTORS),
+            "initial_week": data.get("initial_week", DEFAULT_DOCTORS[:7])
+        }
+    except Exception as e:
+        print("Σφάλμα φόρτωσης state:", e)
+        return None
 
 # ----------------------------
 # HELPER FUNCTIONS
@@ -142,10 +182,6 @@ def _within_dynamic_month_cap(doctor, date, schedule, num_docs, exclude_date=Non
     _, days_in_month = calendar.monthrange(date.year, date.month)
     base_limit = (days_in_month // num_docs) + 2
     return total <= base_limit
-
-
-def get_school_year(date):
-    return date.year if date.month >= 9 else date.year - 1
 
 
 def orthodox_easter(year):
@@ -290,19 +326,15 @@ def generate_full_schedule(start_date, end_date, doctors_list, initial_week, man
             if start_date <= d <= end_date:
                 schedule[d] = initial_week[i]
 
-    # --- ΒΗΜΑ 1: ΚΛΕΙΔΩΜΑ ΧΕΙΡΟΚΙΝΗΤΩΝ ΑΝΑΘΕΣΕΩΝ ---
     for d, doc in manual_entries.items():
         if start_date <= d <= end_date and doc in doctors_list:
             schedule[d] = doc
 
-    # --- ΒΗΜΑ 2: ΜΕΓΑΛΕΣ ΕΟΡΤΕΣ (ΔΕΣΜΕΥΣΗ 7 ΠΑΚΕΤΩΝ & ΜΟΝΑΔΙΚΟΤΗΤΑ ΑΝΑ ΕΥΡΟΣ) ---
     major_blocks.sort(key=lambda b: b["dates"][0])
     assigned_major_dates = {d: doc for d, doc in schedule.items()}
 
-    # Καταγραφή ποια πακέτα (base_name) έχει ήδη κάνει ο κάθε γιατρός σε ΟΛΟΚΛΗΡΟ το εύρος (αποφυγή διπλής ανάθεσης της ίδιας αργίας)
-    doctor_done_packages = defaultdict(set) # doctor -> set of base_names
+    doctor_done_packages = defaultdict(set)
 
-    # Πρώτα κατοχυρώνουμε ό,τι έχει μπει χειροκίνητα ή προϋπάρχει στο schedule
     for block in major_blocks:
         block_doc = None
         for d in block["dates"]:
@@ -318,8 +350,7 @@ def generate_full_schedule(start_date, end_date, doctors_list, initial_week, man
                     assigned_major_dates[d] = schedule[d]
             doctor_done_packages[block_doc].add(block["base_name"])
 
-    # Παρακολούθηση εξαιρέσεων ανά σχολικό κύκλο
-    doctors_with_package_in_cycle = defaultdict(set) # cycle_id -> set of doctors
+    doctors_with_package_in_cycle = defaultdict(set)
     for block in major_blocks:
         cycle_y = block["cycle_id"]
         for d in block["dates"]:
@@ -330,7 +361,6 @@ def generate_full_schedule(start_date, end_date, doctors_list, initial_week, man
         cycle_y = block["cycle_id"]
         base_name = block["base_name"]
         
-        # Αν το πακέτο έχει ήδη καλυφθεί (π.χ. από χειροκίνητη ανάθεση), συνεχίζουμε
         already_assigned = all(d in schedule for d in block["dates"])
         if already_assigned:
             continue
@@ -343,15 +373,11 @@ def generate_full_schedule(start_date, end_date, doctors_list, initial_week, man
             doc_idx = (base_idx + offset) % num_docs
             doc = doctors_list[doc_idx]
             
-            # ΚΑΝΟΝΑΣ 1: Ο γιατρός δεν έχει πάρει άλλο πακέτο στον ίδιο σχολικό κύκλο
             if doc in doctors_with_package_in_cycle[cycle_y]:
                 continue
-            
-            # ΚΑΝΟΝΑΣ 2: Ο γιατρός ΔΕΝ ΕΧΕΙ ΞΑΝΑΚΑΝΕΙ ΑΥΤΟ ΤΟ ΠΑΚΕΤΟ σε άλλο έτος μέσα στο συνολικό εύρος (μοναδικότητα)
             if base_name in doctor_done_packages[doc]:
                 continue
 
-            # ΚΑΝΟΝΑΣ 3: Καθολικός έλεγχος ελάχιστης απόστασης (min_gap=3)
             has_conflict = False
             for d_existing, d_doc in assigned_major_dates.items():
                 if d_doc == doc:
@@ -366,7 +392,6 @@ def generate_full_schedule(start_date, end_date, doctors_list, initial_week, man
                 best_doc = doc
                 break
         
-        # Fallback αν υπάρχει αυστηρός περιορισμός αλλά πρέπει να καλυφθεί
         if best_doc is None:
             for offset in range(num_docs):
                 doc_idx = (base_idx + offset) % num_docs
@@ -391,7 +416,6 @@ def generate_full_schedule(start_date, end_date, doctors_list, initial_week, man
         doctors_with_package_in_cycle[cycle_y].add(best_doc)
         doctor_done_packages[best_doc].add(base_name)
 
-    # --- ΒΗΜΑ 3: ΥΠΟΛΟΙΠΕΣ ΕΙΔΙΚΕΣ / ΑΡΓΙΕΣ / ΣΑΒΒΑΤΟΚΥΡΙΑΚΑ ---
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
     minor_dates = {d for d in holiday_dates if d not in {bd for block in major_blocks for bd in block["dates"]}}
 
@@ -442,7 +466,6 @@ def generate_full_schedule(start_date, end_date, doctors_list, initial_week, man
             warnings.append(f"{d.strftime('%d/%m/%Y')}: καμία πλήρως έγκυρη επιλογή, ανατέθηκε {chosen}")
         schedule[d] = chosen
 
-    # --- ΒΗΜΑ 4: ΚΑΘΗΜΕΡΙΝΕΣ ---
     for current_date in all_days:
         if current_date in schedule:
             continue
@@ -844,96 +867,138 @@ str_lit.title("📅 Πρόγραμμα Εφημεριών Ακτινολόγων
 str_lit.markdown("<span style='font-size:14px; color:gray;'>© Γιώργος Μενοίκου, PhD</span>",
             unsafe_allow_html=True)
 
-for key, default in [
-    ("manual_assignments", {}), ("schedule", None), ("holiday_names", {}),
-    ("balance", None), ("doctors", DEFAULT_DOCTORS),
-    ("initial_week", [DEFAULT_DOCTORS[i % len(DEFAULT_DOCTORS)] for i in range(7)]),
-    ("warnings", []), ("start_date", datetime.date.today()),
-]:
+# --- ΦΟΡΤΩΣΗ ΤΕΛΕΥΤΑΙΟΥ STATE ΑΠΟ ΤΟ ΑΡΧΕΙΟ ---
+saved_state = load_state_from_file()
+
+defaults = {
+    "manual_assignments": saved_state["manual_assignments"] if saved_state else {},
+    "schedule": saved_state["schedule"] if saved_state else None,
+    "holiday_names": saved_state["holiday_names"] if saved_state else {},
+    "doctors": saved_state["doctors"] if saved_state else DEFAULT_DOCTORS,
+    "initial_week": saved_state["initial_week"] if saved_state else DEFAULT_DOCTORS[:7],
+    "warnings": [],
+    "start_date": datetime.date.today(),
+}
+
+for key, default_val in defaults.items():
     if key not in str_lit.session_state:
-        str_lit.session_state[key] = default
+        str_lit.session_state[key] = default_val
+
+# Αν υπάρχει αποθηκευμένο schedule αλλά λείπει το balance, το υπολογίζουμε
+if str_lit.session_state.schedule and "balance" not in str_lit.session_state:
+    start_d = min(str_lit.session_state.schedule.keys())
+    end_d = max(str_lit.session_state.schedule.keys())
+    str_lit.session_state.balance = compute_balance(
+        str_lit.session_state.schedule, start_d, end_d, 
+        str_lit.session_state.holiday_names, str_lit.session_state.doctors
+    )
+
+# --- ΕΠΙΛΟΓΗ ΡΟΛΟΥ ΧΡΗΣΤΗ ---
+str_lit.sidebar.markdown("### 🔐 Έλεγχος Πρόσβασης")
+user_role = str_lit.sidebar.selectbox("Επιλέξτε Ρόλο Χρήστη", ["Διαχειριστής (Moderator)", "Γιατρός / Αναγνώστης (View-Only)"])
+is_moderator = (user_role == "Διαχειριστής (Moderator)")
 
 left_col, right_col = str_lit.columns([0.35, 0.65])
 
 with left_col:
-    str_lit.subheader("📊 Παραμετροποίηση Εύρους & Ιατρών")
-    start_date = str_lit.date_input("Ημερομηνία Έναρξης", value=datetime.date(2026, 2, 2))
-    end_date = str_lit.date_input("Ημερομηνία Λήξης", value=datetime.date(2033, 2, 2))
+    if is_moderator:
+        str_lit.subheader("📊 Παραμετροποίηση Εύρους & Ιατρών")
+        start_date = str_lit.date_input("Ημερομηνία Έναρξης", value=datetime.date(2026, 2, 2))
+        end_date = str_lit.date_input("Ημερομηνία Λήξης", value=datetime.date(2033, 2, 2))
 
-    str_lit.markdown("### 👥 Διαχείριση Ομάδας Ιατρών")
-    valid_options = list(DEFAULT_DOCTOR_COLORS.keys()) + ["Νέος Γιατρός 1", "Νέος Γιατρός 2"]
-    safe_defaults = [doc for doc in str_lit.session_state.doctors if doc in valid_options]
-    if not safe_defaults:
-        safe_defaults = DEFAULT_DOCTORS
+        str_lit.markdown("### 👥 Διαχείριση Ομάδας Ιατρών")
+        valid_options = list(DEFAULT_DOCTOR_COLORS.keys()) + ["Νέος Γιατρός 1", "Νέος Γιατρός 2"]
+        safe_defaults = [doc for doc in str_lit.session_state.doctors if doc in valid_options]
+        if not safe_defaults:
+            safe_defaults = DEFAULT_DOCTORS
 
-    current_doctors = str_lit.multiselect(
-        "Επιλογή & Σειρά Ιατρών",
-        options=valid_options,
-        default=safe_defaults
-    )
-    if current_doctors:
-        str_lit.session_state.doctors = current_doctors
-    else:
-        str_lit.warning("Πρέπει να επιλέξετε τουλάχιστον έναν ιατρό.")
-        str_lit.stop()
-
-    active_doctors = str_lit.session_state.doctors
-
-    str_lit.markdown("### 📋 Αρχική Σειρά Εβδομάδας (Δευτέρα - Κυριακή)")
-    initial_week_list = []
-    cols_init = str_lit.columns(7)
-    for i, day_label in enumerate(GREEK_WEEKDAY_LABELS):
-        with cols_init[i]:
-            default_doc = str_lit.session_state.initial_week[i] if i < len(str_lit.session_state.initial_week) else active_doctors[0]
-            if default_doc not in active_doctors:
-                default_doc = active_doctors[0]
-            doc_sel = str_lit.selectbox(day_label, active_doctors, index=active_doctors.index(default_doc), key=f"init_day_{i}")
-            initial_week_list.append(doc_sel)
-    str_lit.session_state.initial_week = initial_week_list
-
-    str_lit.markdown("### ✏️ Χειροκίνητες Αναθέσεις")
-    with str_lit.form(key="manual_form"):
-        str_lit.markdown("Επιλέξτε ημερομηνία και γιατρό για προσθήκη στη λίστα αλλαγών:")
-        f_date = str_lit.date_input("Ημερομηνία Ανάθεσης", value=datetime.date(2026, 12, 25))
-        f_doc = str_lit.selectbox("Ιατρός", active_doctors)
-        
-        f_col1, f_col2 = str_lit.columns(2)
-        submit_add = f_col1.form_submit_button("➕ Προσθήκη / Κλείδωμα")
-        submit_del = f_col2.form_submit_button("🗑️ Αφαίρεση Ημερομηνίας")
-
-        if submit_add:
-            str_lit.session_state.manual_assignments[f_date] = f_doc
-            str_lit.success(f"Προστέθηκε: {f_date.strftime('%d/%m/%Y')} -> {f_doc}")
-        elif submit_del:
-            if f_date in str_lit.session_state.manual_assignments:
-                del str_lit.session_state.manual_assignments[f_date]
-                str_lit.info(f"Αφαιρέθηκε η ημερομηνία {f_date.strftime('%d/%m/%Y')}")
-
-    if str_lit.session_state.manual_assignments:
-        str_lit.markdown("**📋 Εκκρεμείς Χειροκίνητες Αλλαγές:**")
-        for d, doc in sorted(str_lit.session_state.manual_assignments.items()):
-            str_lit.write(f"- {d.strftime('%d/%m/%Y')}: **{doc}**")
-        
-        if str_lit.button("🗑️ Εκκαθάριση Όλων των Αλλαγών"):
-            str_lit.session_state.manual_assignments = {}
-            str_lit.rerun()
-
-    str_lit.markdown("---")
-    if str_lit.button("🔄 Υπολογισμός Προγράμματος με τις Αλλαγές", type="primary"):
-        str_lit.session_state.start_date = start_date
-        holiday_names = get_holidays_in_range(start_date, end_date)
-        str_lit.session_state.holiday_names = holiday_names
-        
-        schedule, holiday_names, warnings = generate_full_schedule(
-            start_date, end_date, active_doctors, str_lit.session_state.initial_week, str_lit.session_state.manual_assignments
+        current_doctors = str_lit.multiselect(
+            "Επιλογή & Σειρά Ιατρών",
+            options=valid_options,
+            default=safe_defaults
         )
-        str_lit.session_state.schedule = schedule
-        str_lit.session_state.warnings = warnings
-        str_lit.session_state.balance = compute_balance(schedule, start_date, end_date, holiday_names, active_doctors)
-        str_lit.success("Το πρόγραμμα υπολογίστηκε επιτυχώς!")
+        if current_doctors:
+            str_lit.session_state.doctors = current_doctors
+        else:
+            str_lit.warning("Πρέπει να επιλέξετε τουλάχιστον έναν ιατρό.")
+            str_lit.stop()
+
+        active_doctors = str_lit.session_state.doctors
+
+        str_lit.markdown("### 📋 Αρχική Σειρά Εβδομάδας (Δευτέρα - Κυριακή)")
+        initial_week_list = []
+        cols_init = str_lit.columns(7)
+        for i, day_label in enumerate(GREEK_WEEKDAY_LABELS):
+            with cols_init[i]:
+                default_doc = str_lit.session_state.initial_week[i] if i < len(str_lit.session_state.initial_week) else active_doctors[0]
+                if default_doc not in active_doctors:
+                    default_doc = active_doctors[0]
+                doc_sel = str_lit.selectbox(day_label, active_doctors, index=active_doctors.index(default_doc), key=f"init_day_{i}")
+                initial_week_list.append(doc_sel)
+        str_lit.session_state.initial_week = initial_week_list
+
+        str_lit.markdown("### ✏️ Χειροκίνητες Αναθέσεις")
+        with str_lit.form(key="manual_form"):
+            str_lit.markdown("Επιλέξτε ημερομηνία και γιατρό για προσθήκη στη λίστα αλλαγών:")
+            f_date = str_lit.date_input("Ημερομηνία Ανάθεσης", value=datetime.date(2026, 12, 25))
+            f_doc = str_lit.selectbox("Ιατρός", active_doctors)
+            
+            f_col1, f_col2 = str_lit.columns(2)
+            submit_add = f_col1.form_submit_button("➕ Προσθήκη / Κλείδωμα")
+            submit_del = f_col2.form_submit_button("🗑️ Αφαίρεση Ημερομηνίας")
+
+            if submit_add:
+                str_lit.session_state.manual_assignments[f_date] = f_doc
+                str_lit.success(f"Προστέθηκε: {f_date.strftime('%d/%m/%Y')} -> {f_doc}")
+            elif submit_del:
+                if f_date in str_lit.session_state.manual_assignments:
+                    del str_lit.session_state.manual_assignments[f_date]
+                    str_lit.info(f"Αφαιρέθηκε η ημερομηνία {f_date.strftime('%d/%m/%Y')}")
+
+        if str_lit.session_state.manual_assignments:
+            str_lit.markdown("**📋 Εκκρεμείς Χειροκίνητες Αλλαγές:**")
+            for d, doc in sorted(str_lit.session_state.manual_assignments.items()):
+                str_lit.write(f"- {d.strftime('%d/%m/%Y')}: **{doc}**")
+            
+            if str_lit.button("🗑️ Εκκαθάριση Όλων των Αλλαγών"):
+                str_lit.session_state.manual_assignments = {}
+                str_lit.rerun()
+
+        str_lit.markdown("---")
+        if str_lit.button("🔄 Υπολογισμός Προγράμματος με τις Αλλαγές", type="primary"):
+            str_lit.session_state.start_date = start_date
+            holiday_names = get_holidays_in_range(start_date, end_date)
+            str_lit.session_state.holiday_names = holiday_names
+            
+            schedule, holiday_names, warnings = generate_full_schedule(
+                start_date, end_date, active_doctors, str_lit.session_state.initial_week, str_lit.session_state.manual_assignments
+            )
+            str_lit.session_state.schedule = schedule
+            str_lit.session_state.warnings = warnings
+            str_lit.session_state.balance = compute_balance(schedule, start_date, end_date, holiday_names, active_doctors)
+            
+            # 💾 ΑΠΟΘΗΚΕΥΣΗ ΣΤΟ ΑΡΧΕΙΟ JSON ΓΙΑ ΝΑ ΜΕΙΝΕΙ ΤΟ LAST STATE
+            save_state_to_file(
+                schedule, holiday_names, str_lit.session_state.balance, 
+                str_lit.session_state.manual_assignments, active_doctors, str_lit.session_state.initial_week
+            )
+            
+            str_lit.success("Το πρόγραμμα υπολογίστηκε και αποθηκεύτηκε επιτυχώς!")
+
+        active_doctors = str_lit.session_state.doctors
+    else:
+        # ΛΕΙΤΟΥΡΓΙΑ ΓΙΑΤΡΟΥ - ΑΝΑΓΝΩΣΗΣ ΜΟΝΟ
+        str_lit.subheader("👁️ Λειτουργία Προβολής (Γιατρός)")
+        str_lit.info("Βρίσκεστε σε κατάσταση **μόνο ανάγνωσης (View-Only)**. Μπορείτε να δείτε το τρέχον πρόγραμμα, τα ισοζύγια και να κατεβάσετε τα PDF.")
+        
+        active_doctors = str_lit.session_state.doctors
+        start_date = str_lit.session_state.start_date
+        
+        if str_lit.session_state.schedule is None:
+            str_lit.warning("Δεν έχει αποθηκευτεί ακόμα πρόγραμμα από τον Διαχειριστή.")
 
     if str_lit.session_state.warnings:
-        with str_lit.expander("⚠️ Προειδοποιήσεις Κανόνων", expanded=False):
+        with str_lit.expander("⚠️️ Προειδοποιήσεις Κανόνων", expanded=False):
             for w in str_lit.session_state.warnings:
                 str_lit.write(f"- {w}")
 
@@ -997,8 +1062,8 @@ with left_col:
         str_lit.dataframe(reg_df, use_container_width=True, height=200)
 
 with right_col:
-    str_lit.subheader("🗓️ Ημερολόγιο Εφημεριών")
+    str_lit.subheader("🗓 Ημερολόγιο Εφημεριών")
     if str_lit.session_state.schedule:
         display_calendar(str_lit.session_state.schedule, str_lit.session_state.holiday_names, active_doctors)
     else:
-        str_lit.info("Προσθέστε αλλαγές και πατήστε «Υπολογισμός Προγράμματος με τις Αλλαγές».")
+        str_lit.info("Δεν υπάρχει διαθέσιμο πρόγραμμα προς προβολή ακόμη.")
