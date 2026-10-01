@@ -878,7 +878,7 @@ defaults = {
     "initial_week": saved_state["initial_week"] if saved_state else DEFAULT_DOCTORS[:7],
     "warnings": [],
     "start_date": datetime.date.today(),
-    "balance": None,  # <-- Προστέθηκε εδώ για να αποφεύγεται το KeyError
+    "balance": None,
 }
 
 for key, default_val in defaults.items():
@@ -914,11 +914,19 @@ else:
 
 left_col, right_col = str_lit.columns([0.35, 0.65])
 
+# Ορισμός ασφαλών τιμών προεπιλογής για start_date και end_date παντού
+if str_lit.session_state.schedule:
+    default_start = min(str_lit.session_state.schedule.keys())
+    default_end = max(str_lit.session_state.schedule.keys())
+else:
+    default_start = datetime.date.today()
+    default_end = datetime.date.today() + datetime.timedelta(days=365)
+
 with left_col:
     if is_moderator:
         str_lit.subheader("📊 Παραμετροποίηση Εύρους & Ιατρών")
-        start_date = str_lit.date_input("Ημερομηνία Έναρξης", value=datetime.date(2026, 2, 2))
-        end_date = str_lit.date_input("Ημερομηνία Λήξης", value=datetime.date(2033, 2, 2))
+        start_date = str_lit.date_input("Ημερομηνία Έναρξης", value=default_start)
+        end_date = str_lit.date_input("Ημερομηνία Λήξης", value=default_end)
 
         str_lit.markdown("### 👥 Διαχείριση Ομάδας Ιατρών")
         valid_options = list(DEFAULT_DOCTOR_COLORS.keys()) + ["Νέος Γιατρός 1", "Νέος Γιατρός 2"]
@@ -954,7 +962,7 @@ with left_col:
         str_lit.markdown("### ✏️ Χειροκίνητες Αναθέσεις")
         with str_lit.form(key="manual_form"):
             str_lit.markdown("Επιλέξτε ημερομηνία και γιατρό για προσθήκη στη λίστα αλλαγών:")
-            f_date = str_lit.date_input("Ημερομηνία Ανάθεσης", value=datetime.date(2026, 12, 25))
+            f_date = str_lit.date_input("Ημερομηνία Ανάθεσης", value=default_start)
             f_doc = str_lit.selectbox("Ιατρός", active_doctors)
             
             f_col1, f_col2 = str_lit.columns(2)
@@ -991,7 +999,6 @@ with left_col:
             str_lit.session_state.warnings = warnings
             str_lit.session_state.balance = compute_balance(schedule, start_date, end_date, holiday_names, active_doctors)
             
-            # 💾 ΑΠΟΘΗΚΕΥΣΗ ΣΤΟ ΑΡΧΕΙΟ JSON ΓΙΑ ΝΑ ΜΕΙΝΕΙ ΤΟ LAST STATE
             save_state_to_file(
                 schedule, holiday_names, str_lit.session_state.balance, 
                 str_lit.session_state.manual_assignments, active_doctors, str_lit.session_state.initial_week
@@ -1009,7 +1016,8 @@ with left_col:
             str_lit.info("Βρίσκεστε σε κατάσταση **μόνο ανάγνωσης (View-Only)**. Μπορείτε να δείτε το τρέχον πρόγραμμα, τα ισοζύγια και να κατεβάσετε τα PDF.")
         
         active_doctors = str_lit.session_state.doctors
-        start_date = str_lit.session_state.start_date
+        start_date = default_start
+        end_date = default_end
         
         if str_lit.session_state.schedule is None:
             str_lit.warning("Δεν έχει αποθηκευτεί ακόμα πρόγραμμα από τον Διαχειριστή.")
@@ -1020,7 +1028,7 @@ with left_col:
                 str_lit.write(f"- {w}")
 
     if str_lit.session_state.balance is not None and not str_lit.session_state.balance.empty:
-        end_d = max(str_lit.session_state.schedule.keys()) if str_lit.session_state.schedule else str_lit.session_state.start_date
+        end_d = max(str_lit.session_state.schedule.keys()) if str_lit.session_state.schedule else end_date
         
         str_lit.markdown("---")
         str_lit.markdown("### 📥 Επιλογές Εξαγωγής PDF")
