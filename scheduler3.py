@@ -225,7 +225,7 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
 
 def is_valid_assignment(doctor, date, schedule, holiday_dates, num_docs, exclude_date=None,
                         min_gap=3, max_special=1, avoid_consecutive_weekends=True):
-    effective_gap = min(min_gap, 1 if num_docs <= 4 else 2 if num_docs == 5 else 3)
+    effective_gap = max(1, min(min_gap, 1 if num_docs <= 4 else 2 if num_docs == 5 else 3))
     
     if _has_nearby_shift(doctor, date, schedule, min_gap=effective_gap):
         return False
@@ -269,14 +269,14 @@ def generate_full_schedule(start_date, end_date, doctors_list, initial_week, man
             if start_date <= d <= end_date:
                 schedule[d] = initial_week[i]
 
+    # --- ΒΗΜΑ 1: ΚΛΕΙΔΩΜΑ ΧΕΙΡΟΚΙΝΗΤΩΝ ΑΝΑΘΕΣΕΩΝ ---
     for d, doc in manual_entries.items():
         if start_date <= d <= end_date and doc in doctors_list:
-            if _has_nearby_shift(doc, d, schedule, min_gap=2):
-                warnings.append(f"⚠️ [Χειροκίνητη Ανάθεση] {d.strftime('%d/%m/%Y')}: Ο/Η {doc} έχει κοντινή εφημερίδα.")
             schedule[d] = doc
 
+    # --- ΒΗΜΑ 2: ΜΕΓΑΛΕΣ ΕΟΡΤΕΣ ---
     major_blocks.sort(key=lambda b: b["dates"][0])
-    assigned_major_dates = {}
+    assigned_major_dates = {d: doc for d, doc in schedule.items()}
 
     for block in major_blocks:
         block_already_assigned = any(d in schedule for d in block["dates"])
@@ -317,6 +317,7 @@ def generate_full_schedule(start_date, end_date, doctors_list, initial_week, man
                 schedule[d] = best_doc
                 assigned_major_dates[d] = best_doc
 
+    # --- ΒΗΜΑ 3: ΥΠΟΛΟΙΠΕΣ ΕΙΔΙΚΕΣ / ΑΡΓΙΕΣ / ΣΑΒΒΑΤΟΚΥΡΙΑΚΑ ---
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
     minor_dates = {d for d in holiday_dates if d not in {bd for block in major_blocks for bd in block["dates"]}}
 
@@ -336,7 +337,7 @@ def generate_full_schedule(start_date, end_date, doctors_list, initial_week, man
         is_minor_holiday = d in minor_dates
         
         for avoid_cons in (True, False):
-            for min_gap in (3, 2, 1, 0):
+            for min_gap in (3, 2, 1):
                 for max_special in (1, 2, 3):
                     valid = [doc for doc in doctors_list if is_valid_assignment(
                         doc, d, schedule, holiday_dates, num_docs, exclude_date=d,
@@ -356,21 +357,24 @@ def generate_full_schedule(start_date, end_date, doctors_list, initial_week, man
                 break
 
         if chosen is None:
-            chosen = min(doctors_list, key=lambda doc: (
+            valid_fallback = [doc for doc in doctors_list if not _has_nearby_shift(doc, d, schedule, min_gap=1)]
+            pool = valid_fallback if valid_fallback else doctors_list
+            chosen = min(pool, key=lambda doc: (
                 _minor_total(doc, d) if is_minor_holiday else 0,
                 _global_weekday_total(doc, wd, schedule, exclude_date=d),
                 not _within_dynamic_month_cap(doc, d, schedule, num_docs, exclude_date=d),
                 _total_shifts_in_month(doc, d, schedule, exclude_date=d)
             ))
-            warnings.append(f"{d.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
+            warnings.append(f"{d.strftime('%d/%m/%Y')}: καμία πλήρως έγκυρη επιλογή, ανατέθηκε {chosen}")
         schedule[d] = chosen
 
+    # --- ΒΗΜΑ 4: ΚΑΘΗΜΕΡΙΝΕΣ ---
     for current_date in all_days:
         if current_date in schedule:
             continue
 
         chosen = None
-        for min_gap in (3, 2, 1, 0):
+        for min_gap in (3, 2, 1):
             valid = [doc for doc in doctors_list if is_valid_assignment(
                 doc, current_date, schedule, holiday_dates, num_docs, exclude_date=current_date,
                 min_gap=min_gap, avoid_consecutive_weekends=False)]
@@ -391,15 +395,13 @@ def generate_full_schedule(start_date, end_date, doctors_list, initial_week, man
             break
 
         if chosen is None:
-            chosen = min(doctors_list, key=lambda doc: (
+            valid_fallback = [doc for doc in doctors_list if not _has_nearby_shift(doc, current_date, schedule, min_gap=1)]
+            pool = valid_fallback if valid_fallback else doctors_list
+            chosen = min(pool, key=lambda doc: (
                 not _within_dynamic_month_cap(doc, current_date, schedule, num_docs, exclude_date=current_date),
                 _total_shifts_in_month(doc, current_date, schedule, exclude_date=current_date)))
-            warnings.append(f"{current_date.strftime('%d/%m/%Y')}: καμία έγκυρη επιλογή, ανατέθηκε {chosen}")
+            warnings.append(f"{current_date.strftime('%d/%m/%Y')}: καμία πλήρως έγκυρη επιλογή, ανατέθηκε {chosen}")
         schedule[current_date] = chosen
-
-    for d, doc in manual_entries.items():
-        if start_date <= d <= end_date and doc in doctors_list:
-            schedule[d] = doc
 
     return schedule, holiday_names, warnings
 
@@ -859,41 +861,52 @@ with left_col:
             initial_week_list.append(doc_sel)
     str_lit.session_state.initial_week = initial_week_list
 
-    # --- ΧΕΙΡΟΚΙΝΗΤΕΣ ΑΝΑΘΕΣΕΙΣ (ΑΥΤΟΜΑΤΗ ΕΝΗΜΕΡΩΣΗ) ---
-    str_lit.markdown("### ✏️ Χειροκίνητη Ανάθεση Ημερομηνίας")
-    with str_lit.expander("Προσθήκη / Επεξεργασία Χειροκίνητης Εφημερίας"):
-        manual_date = str_lit.date_input("Επιλογή Ημερομηνίας", value=datetime.date(2026, 12, 25))
-        manual_doc = str_lit.selectbox("Επιλογή Ιατρού", active_doctors, key="manual_doc_sel")
+    # --- ΧΡΗΣΗ st.form ΓΙΑ ΜΑΖΙΚΗ ΠΡΟΣΘΗΚΗ ΧΩΡΙΣ ΑΥΤΟΜΑΤΟ RE-RUN ---
+    str_lit.markdown("### ✏️ Χειροκίνητες Αναθέσεις")
+    with str_lit.form(key="manual_form"):
+        str_lit.markdown("Επιλέξτε ημερομηνία και γιατρό για προσθήκη στη λίστα αλλαγών:")
+        f_date = str_lit.date_input("Ημερομηνία Ανάθεσης", value=datetime.date(2026, 12, 25))
+        f_doc = str_lit.selectbox("Ιατρός", active_doctors)
         
-        col_m1, col_m2 = str_lit.columns(2)
-        with col_m1:
-            if str_lit.button("➕ Κλείδωμα Ανάθεσης"):
-                str_lit.session_state.manual_assignments[manual_date] = manual_doc
-        with col_m2:
-            if str_lit.button("🗑️ Διαγραφή"):
-                if manual_date in str_lit.session_state.manual_assignments:
-                    del str_lit.session_state.manual_assignments[manual_date]
+        f_col1, f_col2 = str_lit.columns(2)
+        submit_add = f_col1.form_submit_button("➕ Προσθήκη / Κλείδωμα")
+        submit_del = f_col2.form_submit_button("🗑️ Αφαίρεση Ημερομηνίας")
 
-        if str_lit.session_state.manual_assignments:
-            str_lit.markdown("**Ενεργές Χειροκίνητες Αναθέσεις:**")
-            for d, doc in sorted(str_lit.session_state.manual_assignments.items()):
-                str_lit.write(f"- {d.strftime('%d/%m/%Y')}: **{doc}**")
+        if submit_add:
+            str_lit.session_state.manual_assignments[f_date] = f_doc
+            str_lit.success(f"Προστέθηκε: {f_date.strftime('%d/%m/%Y')} -> {f_doc}")
+        elif submit_del:
+            if f_date in str_lit.session_state.manual_assignments:
+                del str_lit.session_state.manual_assignments[f_date]
+                str_lit.info(f"Αφαιρέθηκε η ημερομηνία {f_date.strftime('%d/%m/%Y')}")
 
-    # --- ΑΥΤΟΜΑΤΟΣ ΥΠΟΛΟΓΙΣΜΟΣ ΠΡΟΓΡΑΜΜΑΤΟΣ ΣΕ ΚΑΘΕ ΑΛΛΑΓΗ ---
-    str_lit.session_state.start_date = start_date
-    holiday_names = get_holidays_in_range(start_date, end_date)
-    str_lit.session_state.holiday_names = holiday_names
-    
-    schedule, holiday_names, warnings = generate_full_schedule(
-        start_date, end_date, active_doctors, str_lit.session_state.initial_week, str_lit.session_state.manual_assignments
-    )
-    str_lit.session_state.schedule = schedule
-    str_lit.session_state.warnings = warnings
-    str_lit.session_state.balance = compute_balance(schedule, start_date, end_date, holiday_names, active_doctors)
+    if str_lit.session_state.manual_assignments:
+        str_lit.markdown("**📋 Εκκρεμείς Χειροκίνητες Αλλαγές:**")
+        for d, doc in sorted(str_lit.session_state.manual_assignments.items()):
+            str_lit.write(f"- {d.strftime('%d/%m/%Y')}: **{doc}**")
+        
+        if str_lit.button("🗑️ Εκκαθάριση Όλων των Αλλαγών"):
+            str_lit.session_state.manual_assignments = {}
+            str_lit.rerun()
 
-    if warnings:
+    str_lit.markdown("---")
+    # --- ΚΕΝΤΡΙΚΟ ΚΟΥΜΠΙ ΥΠΟΛΟΓΙΣΜΟΥ ---
+    if str_lit.button("🔄 Υπολογισμός Προγράμματος με τις Αλλαγές", type="primary"):
+        str_lit.session_state.start_date = start_date
+        holiday_names = get_holidays_in_range(start_date, end_date)
+        str_lit.session_state.holiday_names = holiday_names
+        
+        schedule, holiday_names, warnings = generate_full_schedule(
+            start_date, end_date, active_doctors, str_lit.session_state.initial_week, str_lit.session_state.manual_assignments
+        )
+        str_lit.session_state.schedule = schedule
+        str_lit.session_state.warnings = warnings
+        str_lit.session_state.balance = compute_balance(schedule, start_date, end_date, holiday_names, active_doctors)
+        str_lit.success("Το πρόγραμμα υπολογίστηκε επιτυχώς!")
+
+    if str_lit.session_state.warnings:
         with str_lit.expander("⚠️ Προειδοποιήσεις Κανόνων", expanded=False):
-            for w in warnings:
+            for w in str_lit.session_state.warnings:
                 str_lit.write(f"- {w}")
 
     if str_lit.session_state.balance is not None and not str_lit.session_state.balance.empty:
@@ -960,4 +973,4 @@ with right_col:
     if str_lit.session_state.schedule:
         display_calendar(str_lit.session_state.schedule, str_lit.session_state.holiday_names, active_doctors)
     else:
-        str_lit.info("Το πρόγραμμα υπολογίζεται αυτόματα...")
+        str_lit.info("Προσθέστε αλλαγές και πατήστε «Υπολογισμός Προγράμματος με τις Αλλαγές».")
