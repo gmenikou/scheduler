@@ -221,7 +221,7 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
                     "name": f"{base_name} ({y}-{y+1})" if "+" in base_name else f"{base_name} ({valid_dates[0].year})",
                     "base_name": base_name,
                     "dates": valid_dates,
-                    "cycle_id": y,  # Σταθερό id κύκλου ανά σεζόν Δεκεμβρίου-Πάσχα
+                    "cycle_id": y,
                     "order": PACKAGE_ROTATION_ORDER.get(base_name, 99)
                 })
     return blocks
@@ -295,24 +295,15 @@ def generate_full_schedule(start_date, end_date, doctors_list, initial_week, man
         if start_date <= d <= end_date and doc in doctors_list:
             schedule[d] = doc
 
-    # --- ΒΗΜΑ 2: ΜΕΓΑΛΕΣ ΕΟΡΤΕΣ (ΔΕΣΜΕΥΣΗ 7 ΠΑΚΕΤΩΝ & ΕΞΑΙΡΕΣΗ ΑΝΑ ΚΥΚΛΟ) ---
+    # --- ΒΗΜΑ 2: ΜΕΓΑΛΕΣ ΕΟΡΤΕΣ (ΔΕΣΜΕΥΣΗ 7 ΠΑΚΕΤΩΝ & ΜΟΝΑΔΙΚΟΤΗΤΑ ΑΝΑ ΕΥΡΟΣ) ---
     major_blocks.sort(key=lambda b: b["dates"][0])
     assigned_major_dates = {d: doc for d, doc in schedule.items()}
 
-    # Εντοπισμός ποιοι γιατροί έχουν ήδη πάρει πακέτο (είτε χειροκίνητα είτε από προηγούμενο έλεγχο) ανά cycle_id
-    doctors_with_package_in_cycle = defaultdict(set) # cycle_id -> set of doctors
-    for block in major_blocks:
-        cycle_y = block["cycle_id"]
-        for d in block["dates"]:
-            if d in schedule:
-                doc = schedule[d]
-                doctors_with_package_in_cycle[cycle_y].add(doc)
+    # Καταγραφή ποια πακέτα (base_name) έχει ήδη κάνει ο κάθε γιατρός σε ΟΛΟΚΛΗΡΟ το εύρος (αποφυγή διπλής ανάθεσης της ίδιας αργίας)
+    doctor_done_packages = defaultdict(set) # doctor -> set of base_names
 
+    # Πρώτα κατοχυρώνουμε ό,τι έχει μπει χειροκίνητα ή προϋπάρχει στο schedule
     for block in major_blocks:
-        cycle_y = block["cycle_id"]
-        
-        # Αν κάποια ημερομηνία του πακέτου είναι ήδη στο schedule (π.χ. από χειροκίνητη ανάθεση), 
-        # δεσμεύουμε ολόκληρο το πακέτο σε αυτόν τον γιατρό και τον προσθέτουμε στις εξαιρέσεις του κύκλου.
         block_doc = None
         for d in block["dates"]:
             if d in schedule:
@@ -325,10 +316,25 @@ def generate_full_schedule(start_date, end_date, doctors_list, initial_week, man
                     schedule[d] = block_doc
                 if d in schedule:
                     assigned_major_dates[d] = schedule[d]
-            doctors_with_package_in_cycle[cycle_y].add(block_doc)
+            doctor_done_packages[block_doc].add(block["base_name"])
+
+    # Παρακολούθηση εξαιρέσεων ανά σχολικό κύκλο
+    doctors_with_package_in_cycle = defaultdict(set) # cycle_id -> set of doctors
+    for block in major_blocks:
+        cycle_y = block["cycle_id"]
+        for d in block["dates"]:
+            if d in schedule:
+                doctors_with_package_in_cycle[cycle_y].add(schedule[d])
+
+    for block in major_blocks:
+        cycle_y = block["cycle_id"]
+        base_name = block["base_name"]
+        
+        # Αν το πακέτο έχει ήδη καλυφθεί (π.χ. από χειροκίνητη ανάθεση), συνεχίζουμε
+        already_assigned = all(d in schedule for d in block["dates"])
+        if already_assigned:
             continue
 
-        # Αν δεν έχει ανατεθεί, το μοιράζουμε αυτόματα σε γιατρό που ΔΕΝ έχει πάρει άλλο πακέτο στον ίδιο κύκλο
         order_idx = block["order"]
         base_idx = (order_idx + cycle_y) % num_docs
         
@@ -337,11 +343,15 @@ def generate_full_schedule(start_date, end_date, doctors_list, initial_week, man
             doc_idx = (base_idx + offset) % num_docs
             doc = doctors_list[doc_idx]
             
-            # Έλεγχος αν ο γιατρός έχει ήδη πάρει πακέτο σε αυτόν τον σχολικό κύκλο
+            # ΚΑΝΟΝΑΣ 1: Ο γιατρός δεν έχει πάρει άλλο πακέτο στον ίδιο σχολικό κύκλο
             if doc in doctors_with_package_in_cycle[cycle_y]:
                 continue
+            
+            # ΚΑΝΟΝΑΣ 2: Ο γιατρός ΔΕΝ ΕΧΕΙ ΞΑΝΑΚΑΝΕΙ ΑΥΤΟ ΤΟ ΠΑΚΕΤΟ σε άλλο έτος μέσα στο συνολικό εύρος (μοναδικότητα)
+            if base_name in doctor_done_packages[doc]:
+                continue
 
-            # Καθολικός έλεγχος ελάχιστης απόστασης (min_gap=3)
+            # ΚΑΝΟΝΑΣ 3: Καθολικός έλεγχος ελάχιστης απόστασης (min_gap=3)
             has_conflict = False
             for d_existing, d_doc in assigned_major_dates.items():
                 if d_doc == doc:
@@ -356,13 +366,21 @@ def generate_full_schedule(start_date, end_date, doctors_list, initial_week, man
                 best_doc = doc
                 break
         
+        # Fallback αν υπάρχει αυστηρός περιορισμός αλλά πρέπει να καλυφθεί
         if best_doc is None:
-            # Fallback αν όλοι έχουν πάρει
             for offset in range(num_docs):
                 doc_idx = (base_idx + offset) % num_docs
-                if doctors_list[doc_idx] not in doctors_with_package_in_cycle[cycle_y]:
-                    best_doc = doctors_list[doc_idx]
+                doc = doctors_list[doc_idx]
+                if doc not in doctors_with_package_in_cycle[cycle_y] and base_name not in doctor_done_packages[doc]:
+                    best_doc = doc
                     break
+            if best_doc is None:
+                for offset in range(num_docs):
+                    doc_idx = (base_idx + offset) % num_docs
+                    doc = doctors_list[doc_idx]
+                    if doc not in doctors_with_package_in_cycle[cycle_y]:
+                        best_doc = doc
+                        break
             if best_doc is None:
                 best_doc = doctors_list[base_idx]
             
@@ -371,6 +389,7 @@ def generate_full_schedule(start_date, end_date, doctors_list, initial_week, man
                 schedule[d] = best_doc
                 assigned_major_dates[d] = best_doc
         doctors_with_package_in_cycle[cycle_y].add(best_doc)
+        doctor_done_packages[best_doc].add(base_name)
 
     # --- ΒΗΜΑ 3: ΥΠΟΛΟΙΠΕΣ ΕΙΔΙΚΕΣ / ΑΡΓΙΕΣ / ΣΑΒΒΑΤΟΚΥΡΙΑΚΑ ---
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
