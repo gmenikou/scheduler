@@ -182,10 +182,6 @@ def get_holidays_in_range(start_date, end_date):
 
 
 def get_major_holiday_blocks_in_range(start_date, end_date):
-    """
-    Ορισμός πακέτων μεγάλων εορτών ανά ΣΧΟΛΙΚΟ ΕΤΟΣ (Σεπτέμβριος y έως Αύγουστος y+1).
-    Τα Χριστούγεννα/Πρωτοχρονιά του έτους y συνδέονται με το Πάσχα του έτους y+1.
-    """
     blocks = []
     PACKAGE_ROTATION_ORDER = {
         "Πρωτοχρονιά (1/1)": 0,
@@ -221,7 +217,7 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
                     "name": f"{base_name} ({y}-{y+1})",
                     "base_name": base_name,
                     "dates": valid_dates,
-                    "cycle_id": y,  # Σχολικό έτος (π.χ. 2026 για το ακαδημαϊκό έτος 2026-2027)
+                    "cycle_id": y,
                     "order": PACKAGE_ROTATION_ORDER.get(base_name, 99)
                 })
     return blocks
@@ -273,14 +269,26 @@ def generate_full_schedule(start_date, end_date, doctors_list, initial_week, man
             if start_date <= d <= end_date:
                 schedule[d] = initial_week[i]
 
+    # --- ΕΛΕΓΧΟΣ ΚΑΙ ΕΝΣΩΜΑΤΩΣΗ ΧΕΙΡΟΚΙΝΗΤΩΝ ΑΝΑΘΕΣΕΩΝ ΜΕ WARNINGS ---
     for d, doc in manual_entries.items():
         if start_date <= d <= end_date and doc in doctors_list:
+            # Ελέγχουμε αν η χειροκίνητη ανάθεση παραβιάζει τους κανόνες κοντινού κενού
+            if _has_nearby_shift(doc, d, schedule, min_gap=2):
+                warnings.append(f"⚠️ [Χειροκίνητη Ανάθεση] {d.strftime('%d/%m/%Y')}: Ο/Η {doc} έχει κοντινή εφημερίδα (παραβίαση κενού ασφαλείας).")
             schedule[d] = doc
 
     major_blocks.sort(key=lambda b: b["dates"][0])
     assigned_major_dates = {}
 
     for block in major_blocks:
+        # Αν κάποια ημερομηνία του block έχει δοθεί χειροκίνητα, τη σεβόμαστε απόλυτα
+        block_already_assigned = any(d in schedule for d in block["dates"])
+        if block_already_assigned:
+            for d in block["dates"]:
+                if d in schedule:
+                    assigned_major_dates[d] = schedule[d]
+            continue
+
         cycle_y = block["cycle_id"]
         order_idx = block["order"]
         base_idx = (order_idx + cycle_y) % num_docs
@@ -861,6 +869,11 @@ with left_col:
         str_lit.session_state.warnings = warnings
         str_lit.session_state.balance = compute_balance(schedule, start_date, end_date, holiday_names, active_doctors)
         str_lit.success("Το πρόγραμμα δημιουργήθηκε επιτυχώς!")
+        
+        if warnings:
+            str_lit.warning("⚠️ Υπήρξαν προειδοποιήσεις/παραβιάσεις κανόνων (συμπεριλαμβανομένων χειροκίνητων):")
+            for w in warnings:
+                str_lit.write(f"- {w}")
 
     if str_lit.session_state.balance is not None and not str_lit.session_state.balance.empty:
         end_d = max(str_lit.session_state.schedule.keys()) if str_lit.session_state.schedule else str_lit.session_state.start_date
