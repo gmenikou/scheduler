@@ -210,7 +210,6 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
             ([datetime.date(y, 12, 31)], "Παραμονή Πρωτοχρονιάς (31/12)"),
             ([sun_e_next], "Κυριακή του Πάσχα"),
             ([mon_e_next], "Δευτέρα του Πάσχα"),
-            # Σωστά ζευγαρωμένα πακέτα (Δεκέμβριος έτους y μαζί με Πάσχα έτους y+1)
             ([s_sat_next, datetime.date(y, 12, 24)], "Μεγάλο Σάββατο + 24/12"),
             ([g_fri_next, datetime.date(y, 12, 26)], "Μεγάλη Παρασκευή + 26/12"),
         ]
@@ -218,9 +217,6 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
         for dates, base_name in year_blocks:
             valid_dates = [d for d in dates if start_date <= d <= end_date]
             if valid_dates:
-                # Χρησιμοποιούμε σταθερά ως cycle_id το έτος του Δεκεμβρίου (ή της πρώτης ημερομηνίας)
-                # ώστε τα ζευγαρωμένα πακέτα να ανήκουν ενιαία στον σωστό σχολικό κύκλο (Σεπ - Αύγ).
-                anchor_date = datetime.date(y, 12, 1) if y < datetime.date(y + 1, 1, 1).year else valid_dates[0]
                 blocks.append({
                     "name": f"{base_name} ({y}-{y+1})" if "+" in base_name else f"{base_name} ({valid_dates[0].year})",
                     "base_name": base_name,
@@ -246,7 +242,6 @@ def is_valid_assignment(doctor, date, schedule, holiday_dates, num_docs, exclude
     if not _within_dynamic_month_cap(doctor, date, schedule, num_docs, exclude_date=exclude_date):
         return False
 
-    # --- ΚΑΘΟΛΙΚΟΣ ΚΑΝΟΝΑΣ ΣΚ: 2+ Σαββατοκύριακα (2 Σάββατα, 2 Κυριακές, ή Σάββατο + Κυριακή) -> Μέγιστο 4 εφημερίδες συνολικά στον μήνα ---
     sats_count = sum(1 for d, doc in schedule.items() 
                      if doc == doctor and d != exclude_date 
                      and d.year == date.year and d.month == date.month and d.weekday() == 5)
@@ -300,19 +295,40 @@ def generate_full_schedule(start_date, end_date, doctors_list, initial_week, man
         if start_date <= d <= end_date and doc in doctors_list:
             schedule[d] = doc
 
-    # --- ΒΗΜΑ 2: ΜΕΓΑΛΕΣ ΕΟΡΤΕΣ (ΑΥΣΤΗΡΟΣ ΕΛΕΓΧΟΣ ΚΥΚΛΟΥ & ΚΑΘΟΛΙΚΟΥ MIN_GAP) ---
+    # --- ΒΗΜΑ 2: ΜΕΓΑΛΕΣ ΕΟΡΤΕΣ (ΔΕΣΜΕΥΣΗ 7 ΠΑΚΕΤΩΝ & ΕΞΑΙΡΕΣΗ ΑΝΑ ΚΥΚΛΟ) ---
     major_blocks.sort(key=lambda b: b["dates"][0])
     assigned_major_dates = {d: doc for d, doc in schedule.items()}
 
+    # Εντοπισμός ποιοι γιατροί έχουν ήδη πάρει πακέτο (είτε χειροκίνητα είτε από προηγούμενο έλεγχο) ανά cycle_id
+    doctors_with_package_in_cycle = defaultdict(set) # cycle_id -> set of doctors
     for block in major_blocks:
-        block_already_assigned = any(d in schedule for d in block["dates"])
-        if block_already_assigned:
+        cycle_y = block["cycle_id"]
+        for d in block["dates"]:
+            if d in schedule:
+                doc = schedule[d]
+                doctors_with_package_in_cycle[cycle_y].add(doc)
+
+    for block in major_blocks:
+        cycle_y = block["cycle_id"]
+        
+        # Αν κάποια ημερομηνία του πακέτου είναι ήδη στο schedule (π.χ. από χειροκίνητη ανάθεση), 
+        # δεσμεύουμε ολόκληρο το πακέτο σε αυτόν τον γιατρό και τον προσθέτουμε στις εξαιρέσεις του κύκλου.
+        block_doc = None
+        for d in block["dates"]:
+            if d in schedule:
+                block_doc = schedule[d]
+                break
+
+        if block_doc:
             for d in block["dates"]:
+                if start_date <= d <= end_date and d not in schedule:
+                    schedule[d] = block_doc
                 if d in schedule:
                     assigned_major_dates[d] = schedule[d]
+            doctors_with_package_in_cycle[cycle_y].add(block_doc)
             continue
 
-        cycle_y = block["cycle_id"]
+        # Αν δεν έχει ανατεθεί, το μοιράζουμε αυτόματα σε γιατρό που ΔΕΝ έχει πάρει άλλο πακέτο στον ίδιο κύκλο
         order_idx = block["order"]
         base_idx = (order_idx + cycle_y) % num_docs
         
@@ -321,23 +337,11 @@ def generate_full_schedule(start_date, end_date, doctors_list, initial_week, man
             doc_idx = (base_idx + offset) % num_docs
             doc = doctors_list[doc_idx]
             
-            # Αυστηρός έλεγχος σχολικού κύκλου (Sept - Aug) για να μην παίρνει >1 πακέτο ανά κύκλο
-            has_holiday_in_this_cycle = False
-            for d_existing, d_doc in assigned_major_dates.items():
-                if d_doc == doc:
-                    # Ελέγχουμε αν η υπάρχουσα ημερομηνία ανήκει στον ίδιο κύκλο cycle_y
-                    ex_cycle = get_school_year(d_existing)
-                    if ex_cycle == cycle_y or abs(ex_cycle - cycle_y) <= 1:
-                        # Έλεγχος αν πέφτουν στην ίδια αλυσίδα σεζόν (Σεπ - Αύγ)
-                        # Ορίζουμε το σχολικό έτος έναρξης ως σημείο αναφοράς
-                        if get_school_year(d_existing) == get_school_year(block["dates"][0]):
-                            has_holiday_in_this_cycle = True
-                            break
-
-            if has_holiday_in_this_cycle:
+            # Έλεγχος αν ο γιατρός έχει ήδη πάρει πακέτο σε αυτόν τον σχολικό κύκλο
+            if doc in doctors_with_package_in_cycle[cycle_y]:
                 continue
 
-            # Καθολικός έλεγχος ελάχιστης απόστασης (min_gap=3) για αποφυγή συνεχόμενων/κοντινών ημερών
+            # Καθολικός έλεγχος ελάχιστης απόστασης (min_gap=3)
             has_conflict = False
             for d_existing, d_doc in assigned_major_dates.items():
                 if d_doc == doc:
@@ -353,12 +357,20 @@ def generate_full_schedule(start_date, end_date, doctors_list, initial_week, man
                 break
         
         if best_doc is None:
-            best_doc = doctors_list[base_idx]
+            # Fallback αν όλοι έχουν πάρει
+            for offset in range(num_docs):
+                doc_idx = (base_idx + offset) % num_docs
+                if doctors_list[doc_idx] not in doctors_with_package_in_cycle[cycle_y]:
+                    best_doc = doctors_list[doc_idx]
+                    break
+            if best_doc is None:
+                best_doc = doctors_list[base_idx]
             
         for d in block["dates"]:
             if start_date <= d <= end_date and d not in schedule:
                 schedule[d] = best_doc
                 assigned_major_dates[d] = best_doc
+        doctors_with_package_in_cycle[cycle_y].add(best_doc)
 
     # --- ΒΗΜΑ 3: ΥΠΟΛΟΙΠΕΣ ΕΙΔΙΚΕΣ / ΑΡΓΙΕΣ / ΣΑΒΒΑΤΟΚΥΡΙΑΚΑ ---
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
@@ -860,7 +872,6 @@ with left_col:
             initial_week_list.append(doc_sel)
     str_lit.session_state.initial_week = initial_week_list
 
-    # --- ΧΡΗΣΗ st.form ΓΙΑ ΜΑΖΙΚΗ ΠΡΟΣΘΗΚΗ ΧΩΡΙΣ ΑΥΤΟΜΑΤΟ RE-RUN ---
     str_lit.markdown("### ✏️ Χειροκίνητες Αναθέσεις")
     with str_lit.form(key="manual_form"):
         str_lit.markdown("Επιλέξτε ημερομηνία και γιατρό για προσθήκη στη λίστα αλλαγών:")
@@ -889,7 +900,6 @@ with left_col:
             str_lit.rerun()
 
     str_lit.markdown("---")
-    # --- ΚΕΝΤΡΙΚΟ ΚΟΥΜΠΙ ΥΠΟΛΟΓΙΣΜΟΥ ---
     if str_lit.button("🔄 Υπολογισμός Προγράμματος με τις Αλλαγές", type="primary"):
         str_lit.session_state.start_date = start_date
         holiday_names = get_holidays_in_range(start_date, end_date)
