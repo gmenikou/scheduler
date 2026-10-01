@@ -144,6 +144,10 @@ def _within_dynamic_month_cap(doctor, date, schedule, num_docs, exclude_date=Non
     return total <= base_limit
 
 
+def get_school_year(date):
+    return date.year if date.month >= 9 else date.year - 1
+
+
 def orthodox_easter(year):
     a = year % 4
     b = year % 7
@@ -237,6 +241,24 @@ def is_valid_assignment(doctor, date, schedule, holiday_dates, num_docs, exclude
         return False
     if not _within_dynamic_month_cap(doctor, date, schedule, num_docs, exclude_date=exclude_date):
         return False
+
+    # --- ΚΑΘΟΛΙΚΟΣ ΚΑΝΟΝΑΣ ΣΚ: 2+ Σαββατοκύριακα (2 Σάββατα, 2 Κυριακές, ή Σάββατο + Κυριακή) -> Μέγιστο 4 εφημερίδες συνολικά στον μήνα ---
+    sats_count = sum(1 for d, doc in schedule.items() 
+                     if doc == doctor and d != exclude_date 
+                     and d.year == date.year and d.month == date.month and d.weekday() == 5)
+    suns_count = sum(1 for d, doc in schedule.items() 
+                     if doc == doctor and d != exclude_date 
+                     and d.year == date.year and d.month == date.month and d.weekday() == 6)
+    
+    if date.weekday() == 5:
+        sats_count += 1
+    if date.weekday() == 6:
+        suns_count += 1
+        
+    total_m, _, _ = _month_stats(doctor, date, schedule, exclude_date=exclude_date)
+    if (sats_count + suns_count >= 2) and (total_m + 1) > 4:
+        return False
+
     return True
 
 
@@ -274,7 +296,7 @@ def generate_full_schedule(start_date, end_date, doctors_list, initial_week, man
         if start_date <= d <= end_date and doc in doctors_list:
             schedule[d] = doc
 
-    # --- ΒΗΜΑ 2: ΜΕΓΑΛΕΣ ΕΟΡΤΕΣ (ΜΕ ΕΛΕΓΧΟ ΚΥΚΛΟΥ ΓΙΑ ΧΕΙΡΟΚΙΝΗΤΕΣ) ---
+    # --- ΒΗΜΑ 2: ΜΕΓΑΛΕΣ ΕΟΡΤΕΣ (ΑΥΣΤΗΡΟΣ ΕΛΕΓΧΟΣ ΚΥΚΛΟΥ & ΚΑΘΟΛΙΚΟΥ MIN_GAP) ---
     major_blocks.sort(key=lambda b: b["dates"][0])
     assigned_major_dates = {d: doc for d, doc in schedule.items()}
 
@@ -295,22 +317,24 @@ def generate_full_schedule(start_date, end_date, doctors_list, initial_week, man
             doc_idx = (base_idx + offset) % num_docs
             doc = doctors_list[doc_idx]
             
-            # Έλεγχος αν ο γιατρός έχει πάρει ήδη μεγάλη εορτή στον ίδιο κύκλο (συμπεριλαμβανομένων χειροκίνητων)
+            # Έλεγχος σχολικού κύκλου (Sept - Aug)
+            current_cycle = get_school_year(block["dates"][0])
             has_holiday_in_this_cycle = False
             for d_existing, d_doc in assigned_major_dates.items():
                 if d_doc == doc:
-                    if abs((d_existing - block["dates"][0]).days) < 180:
+                    if get_school_year(d_existing) == current_cycle:
                         has_holiday_in_this_cycle = True
                         break
 
             if has_holiday_in_this_cycle:
                 continue
 
+            # Καθολικός έλεγχος ελάχιστης απόστασης (min_gap=3) για αποφυγή συνεχόμενων/κοντινών ημερών
             has_conflict = False
             for d_existing, d_doc in assigned_major_dates.items():
                 if d_doc == doc:
                     for b_date in block["dates"]:
-                        if abs((b_date - d_existing).days) < (7 if num_docs <= 4 else 14):
+                        if abs((b_date - d_existing).days) <= 3:
                             has_conflict = True
                             break
                 if has_conflict:
@@ -975,7 +999,7 @@ with left_col:
         str_lit.dataframe(major_doctor_df, use_container_width=True, height=220)
 
         str_lit.markdown("---")
-        str_lit.markdown("### 🏛️ Μικρές Αργίες Χρονολογικά")
+        str_lit.markdown("### 🏛 Μικρές Αργίες Χρονολογικά")
         reg_df = compute_regular_holidays_chronological(str_lit.session_state.schedule, regular_hols)
         str_lit.dataframe(reg_df, use_container_width=True, height=200)
 
