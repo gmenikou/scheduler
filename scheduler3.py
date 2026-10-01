@@ -893,10 +893,23 @@ if str_lit.session_state.schedule and "balance" not in str_lit.session_state:
         str_lit.session_state.holiday_names, str_lit.session_state.doctors
     )
 
-# --- ΕΠΙΛΟΓΗ ΡΟΛΟΥ ΧΡΗΣΤΗ ---
+# --- ΕΠΙΛΟΓΗ ΡΟΛΟΥ ΧΡΗΣΤΗ ΜΕ ΚΩΔΙΚΟ ---
 str_lit.sidebar.markdown("### 🔐 Έλεγχος Πρόσβασης")
-user_role = str_lit.sidebar.selectbox("Επιλέξτε Ρόλο Χρήστη", ["Διαχειριστής (Moderator)", "Γιατρός / Αναγνώστης (View-Only)"])
-is_moderator = (user_role == "Διαχειριστής (Moderator)")
+user_role = str_lit.sidebar.selectbox("Επιλέξτε Ρόλο Χρήστη", ["Γιατρός / Αναγνώστης (View-Only)", "Διαχειριστής (Moderator)"])
+
+is_moderator = False
+
+if user_role == "Διαχειριστής (Moderator)":
+    admin_password = str_lit.sidebar.text_input("Κωδικός Διαχειριστή", type="password")
+    
+    if admin_password == "borland1!":
+        is_moderator = True
+        str_lit.sidebar.success("Επιτυχής σύνδεση ως Διαχειριστής!")
+    elif admin_password != "":
+        str_lit.sidebar.error("Λανθασμένος κωδικός!")
+        is_moderator = False
+else:
+    is_moderator = False
 
 left_col, right_col = str_lit.columns([0.35, 0.65])
 
@@ -989,7 +1002,10 @@ with left_col:
     else:
         # ΛΕΙΤΟΥΡΓΙΑ ΓΙΑΤΡΟΥ - ΑΝΑΓΝΩΣΗΣ ΜΟΝΟ
         str_lit.subheader("👁️ Λειτουργία Προβολής (Γιατρός)")
-        str_lit.info("Βρίσκεστε σε κατάσταση **μόνο ανάγνωσης (View-Only)**. Μπορείτε να δείτε το τρέχον πρόγραμμα, τα ισοζύγια και να κατεβάσετε τα PDF.")
+        if user_role == "Διαχειριστής (Moderator)":
+            str_lit.warning("Παρακαλώ εισάγετε τον σωστό κωδικό διαχειριστή στην πλαϊνή μπάρα για πρόσβαση στις ρυθμίσεις.")
+        else:
+            str_lit.info("Βρίσκεστε σε κατάσταση **μόνο ανάγνωσης (View-Only)**. Μπορείτε να δείτε το τρέχον πρόγραμμα, τα ισοζύγια και να κατεβάσετε τα PDF.")
         
         active_doctors = str_lit.session_state.doctors
         start_date = str_lit.session_state.start_date
@@ -998,7 +1014,7 @@ with left_col:
             str_lit.warning("Δεν έχει αποθηκευτεί ακόμα πρόγραμμα από τον Διαχειριστή.")
 
     if str_lit.session_state.warnings:
-        with str_lit.expander("⚠️️ Προειδοποιήσεις Κανόνων", expanded=False):
+        with str_lit.expander("⚠ Προειδοποιήσεις Κανόνων", expanded=False):
             for w in str_lit.session_state.warnings:
                 str_lit.write(f"- {w}")
 
