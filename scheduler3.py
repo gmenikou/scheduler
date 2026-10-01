@@ -12,7 +12,7 @@ DEFAULT_DOCTORS = ["Χριστίνα", "Αθηνά", "Μαρία", "Έλια", "
 
 DEFAULT_DOCTOR_COLORS = {
     "Έλενα": (255, 182, 193),
-    "Εύа": (152, 251, 152),
+    "Εύα": (152, 251, 152),
     "Μαρία": (176, 196, 222),
     "Αθηνά": (255, 250, 205),
     "Αλέξανδρος": (221, 160, 221),
@@ -829,10 +829,15 @@ with left_col:
     end_date = str_lit.date_input("Ημερομηνία Λήξης", value=datetime.date(2033, 2, 2))
 
     str_lit.markdown("### 👥 Διαχείριση Ομάδας Ιατρών")
+    valid_options = list(DEFAULT_DOCTOR_COLORS.keys()) + ["Νέος Γιατρός 1", "Νέος Γιατρός 2"]
+    safe_defaults = [doc for doc in str_lit.session_state.doctors if doc in valid_options]
+    if not safe_defaults:
+        safe_defaults = DEFAULT_DOCTORS
+
     current_doctors = str_lit.multiselect(
         "Επιλογή & Σειρά Ιατρών",
-        options=list(DEFAULT_DOCTOR_COLORS.keys()) + ["Νέος Γιατρός 1", "Νέος Γιατρός 2"],
-        default=str_lit.session_state.doctors
+        options=valid_options,
+        default=safe_defaults
     )
     if current_doctors:
         str_lit.session_state.doctors = current_doctors
