@@ -878,6 +878,7 @@ defaults = {
     "initial_week": saved_state["initial_week"] if saved_state else DEFAULT_DOCTORS[:7],
     "warnings": [],
     "start_date": datetime.date.today(),
+    "balance": None,  # <-- Προστέθηκε εδώ για να αποφεύγεται το KeyError
 }
 
 for key, default_val in defaults.items():
@@ -885,7 +886,7 @@ for key, default_val in defaults.items():
         str_lit.session_state[key] = default_val
 
 # Αν υπάρχει αποθηκευμένο schedule αλλά λείπει το balance, το υπολογίζουμε
-if str_lit.session_state.schedule and "balance" not in str_lit.session_state:
+if str_lit.session_state.schedule and (str_lit.session_state.balance is None or str_lit.session_state.balance.empty):
     start_d = min(str_lit.session_state.schedule.keys())
     end_d = max(str_lit.session_state.schedule.keys())
     str_lit.session_state.balance = compute_balance(
@@ -1082,4 +1083,4 @@ with right_col:
     if str_lit.session_state.schedule:
         display_calendar(str_lit.session_state.schedule, str_lit.session_state.holiday_names, active_doctors)
     else:
-        str_lit.info("Δεν υπάρχει διαθέσιμο πρόγραμμα προς προβολή ακόμη.")
+        str_lit.info("Δεν υπάρχει διαθέσιμο πρόγραμμα προς προβολή ακόμη. Συνδεθείτε ως Διαχειριστής με τον κωδικό `borland1!` για να υπολογίσετε το πρόγραμμα.")
