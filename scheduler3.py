@@ -12,7 +12,7 @@ DEFAULT_DOCTORS = ["Χριστίνα", "Αθηνά", "Μαρία", "Έλια", "
 
 DEFAULT_DOCTOR_COLORS = {
     "Έλενα": (255, 182, 193),
-    "Εύα": (152, 251, 152),
+    "Εύа": (152, 251, 152),
     "Μαρία": (176, 196, 222),
     "Αθηνά": (255, 250, 205),
     "Αλέξανδρος": (221, 160, 221),
@@ -269,11 +269,10 @@ def generate_full_schedule(start_date, end_date, doctors_list, initial_week, man
             if start_date <= d <= end_date:
                 schedule[d] = initial_week[i]
 
-    # Έλεγχος και ενσωμάτωση χειροκίνητων αναθέσεων με προειδοποιήσεις
     for d, doc in manual_entries.items():
         if start_date <= d <= end_date and doc in doctors_list:
             if _has_nearby_shift(doc, d, schedule, min_gap=2):
-                warnings.append(f"⚠️️ [Χειροκίνητη Ανάθεση] {d.strftime('%d/%m/%Y')}: Ο/Η {doc} έχει κοντινή εφημερίδα (παραβίαση κενού ασφαλείας).")
+                warnings.append(f"⚠️ [Χειροκίνητη Ανάθεση] {d.strftime('%d/%m/%Y')}: Ο/Η {doc} έχει κοντινή εφημερίδα.")
             schedule[d] = doc
 
     major_blocks.sort(key=lambda b: b["dates"][0])
@@ -855,7 +854,7 @@ with left_col:
             initial_week_list.append(doc_sel)
     str_lit.session_state.initial_week = initial_week_list
 
-    # --- ΧΕΙΡΟΚΙΝΗΤΕΣ ΑΝΑΘΕΣΕΙΣ (ΕΝΣΩΜΑΤΩΜΕΝΟ) ---
+    # --- ΧΕΙΡΟΚΙΝΗΤΕΣ ΑΝΑΘΕΣΕΙΣ (ΑΥΤΟΜΑΤΗ ΕΝΗΜΕΡΩΣΗ) ---
     str_lit.markdown("### ✏️ Χειροκίνητη Ανάθεση Ημερομηνίας")
     with str_lit.expander("Προσθήκη / Επεξεργασία Χειροκίνητης Εφημερίας"):
         manual_date = str_lit.date_input("Επιλογή Ημερομηνίας", value=datetime.date(2026, 12, 25))
@@ -863,35 +862,32 @@ with left_col:
         
         col_m1, col_m2 = str_lit.columns(2)
         with col_m1:
-            if str_lit.button("➕ Προσθήκη / Κλείδωμα"):
+            if str_lit.button("➕ Κλείδωμα Ανάθεσης"):
                 str_lit.session_state.manual_assignments[manual_date] = manual_doc
-                str_lit.success(f"Κλειδώθηκε: {manual_date.strftime('%d/%m/%Y')} -> {manual_doc}")
         with col_m2:
-            if str_lit.button("🗑️ Καθαρισμός Ημερομηνίας"):
+            if str_lit.button("🗑️ Διαγραφή"):
                 if manual_date in str_lit.session_state.manual_assignments:
                     del str_lit.session_state.manual_assignments[manual_date]
-                    str_lit.info(f"Αφαιρέθηκε η χειροκίνητη ανάθεση για {manual_date.strftime('%d/%m/%Y')}")
 
         if str_lit.session_state.manual_assignments:
-            str_lit.markdown("**Τρέχουσες Χειροκίνητες Αναθέσεις:**")
+            str_lit.markdown("**Ενεργές Χειροκίνητες Αναθέσεις:**")
             for d, doc in sorted(str_lit.session_state.manual_assignments.items()):
                 str_lit.write(f"- {d.strftime('%d/%m/%Y')}: **{doc}**")
 
-    if str_lit.button("🚀 Δημιουργία Προγράμματος"):
-        str_lit.session_state.start_date = start_date
-        holiday_names = get_holidays_in_range(start_date, end_date)
-        str_lit.session_state.holiday_names = holiday_names
-        
-        schedule, holiday_names, warnings = generate_full_schedule(
-            start_date, end_date, active_doctors, str_lit.session_state.initial_week, str_lit.session_state.manual_assignments
-        )
-        str_lit.session_state.schedule = schedule
-        str_lit.session_state.warnings = warnings
-        str_lit.session_state.balance = compute_balance(schedule, start_date, end_date, holiday_names, active_doctors)
-        str_lit.success("Το πρόγραμμα δημιουργήθηκε επιτυχώς!")
-        
-        if warnings:
-            str_lit.warning("⚠️ Προειδοποιήσεις συστήματος (συμπεριλαμβανομένων πιθανών παραβιάσεων από χειροκίνητες αναθέσεις):")
+    # --- ΑΥΤΟΜΑΤΟΣ ΥΠΟΛΟΓΙΣΜΟΣ ΠΡΟΓΡΑΜΜΑΤΟΣ ΣΕ ΚΑΘΕ ΑΛΛΑΓΗ ---
+    str_lit.session_state.start_date = start_date
+    holiday_names = get_holidays_in_range(start_date, end_date)
+    str_lit.session_state.holiday_names = holiday_names
+    
+    schedule, holiday_names, warnings = generate_full_schedule(
+        start_date, end_date, active_doctors, str_lit.session_state.initial_week, str_lit.session_state.manual_assignments
+    )
+    str_lit.session_state.schedule = schedule
+    str_lit.session_state.warnings = warnings
+    str_lit.session_state.balance = compute_balance(schedule, start_date, end_date, holiday_names, active_doctors)
+
+    if warnings:
+        with str_lit.expander("⚠️ Προειδοποιήσεις Κανόνων", expanded=False):
             for w in warnings:
                 str_lit.write(f"- {w}")
 
@@ -959,4 +955,4 @@ with right_col:
     if str_lit.session_state.schedule:
         display_calendar(str_lit.session_state.schedule, str_lit.session_state.holiday_names, active_doctors)
     else:
-        str_lit.info("Πατήστε «Δημιουργία Προγράμματος» για να εμφανιστεί το ημερολόγιο.")
+        str_lit.info("Το πρόγραμμα υπολογίζεται αυτόματα...")
