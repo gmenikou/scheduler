@@ -210,6 +210,7 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
             ([datetime.date(y, 12, 31)], "Παραμονή Πρωτοχρονιάς (31/12)"),
             ([sun_e_next], "Κυριακή του Πάσχα"),
             ([mon_e_next], "Δευτέρα του Πάσχα"),
+            # Σωστά ζευγαρωμένα πακέτα (Δεκέμβριος έτους y μαζί με Πάσχα έτους y+1)
             ([s_sat_next, datetime.date(y, 12, 24)], "Μεγάλο Σάββατο + 24/12"),
             ([g_fri_next, datetime.date(y, 12, 26)], "Μεγάλη Παρασκευή + 26/12"),
         ]
@@ -217,11 +218,14 @@ def get_major_holiday_blocks_in_range(start_date, end_date):
         for dates, base_name in year_blocks:
             valid_dates = [d for d in dates if start_date <= d <= end_date]
             if valid_dates:
+                # Χρησιμοποιούμε σταθερά ως cycle_id το έτος του Δεκεμβρίου (ή της πρώτης ημερομηνίας)
+                # ώστε τα ζευγαρωμένα πακέτα να ανήκουν ενιαία στον σωστό σχολικό κύκλο (Σεπ - Αύγ).
+                anchor_date = datetime.date(y, 12, 1) if y < datetime.date(y + 1, 1, 1).year else valid_dates[0]
                 blocks.append({
-                    "name": f"{base_name} ({y}-{y+1})",
+                    "name": f"{base_name} ({y}-{y+1})" if "+" in base_name else f"{base_name} ({valid_dates[0].year})",
                     "base_name": base_name,
                     "dates": valid_dates,
-                    "cycle_id": y,
+                    "cycle_id": y,  # Σταθερό id κύκλου ανά σεζόν Δεκεμβρίου-Πάσχα
                     "order": PACKAGE_ROTATION_ORDER.get(base_name, 99)
                 })
     return blocks
@@ -317,14 +321,18 @@ def generate_full_schedule(start_date, end_date, doctors_list, initial_week, man
             doc_idx = (base_idx + offset) % num_docs
             doc = doctors_list[doc_idx]
             
-            # Έλεγχος σχολικού κύκλου (Sept - Aug)
-            current_cycle = get_school_year(block["dates"][0])
+            # Αυστηρός έλεγχος σχολικού κύκλου (Sept - Aug) για να μην παίρνει >1 πακέτο ανά κύκλο
             has_holiday_in_this_cycle = False
             for d_existing, d_doc in assigned_major_dates.items():
                 if d_doc == doc:
-                    if get_school_year(d_existing) == current_cycle:
-                        has_holiday_in_this_cycle = True
-                        break
+                    # Ελέγχουμε αν η υπάρχουσα ημερομηνία ανήκει στον ίδιο κύκλο cycle_y
+                    ex_cycle = get_school_year(d_existing)
+                    if ex_cycle == cycle_y or abs(ex_cycle - cycle_y) <= 1:
+                        # Έλεγχος αν πέφτουν στην ίδια αλυσίδα σεζόν (Σεπ - Αύγ)
+                        # Ορίζουμε το σχολικό έτος έναρξης ως σημείο αναφοράς
+                        if get_school_year(d_existing) == get_school_year(block["dates"][0]):
+                            has_holiday_in_this_cycle = True
+                            break
 
             if has_holiday_in_this_cycle:
                 continue
@@ -446,27 +454,11 @@ def generate_full_schedule(start_date, end_date, doctors_list, initial_week, man
 # ----------------------------
 def compute_major_holidays_by_doctor(schedule, start_date, end_date, doctors_list):
     doctor_rows = {doc: [] for doc in doctors_list}
+    major_blocks = get_major_holiday_blocks_in_range(start_date, end_date)
     
-    for y in range(start_date.year, end_date.year + 1):
-        easter = orthodox_easter(y)
-        g_fri = easter - datetime.timedelta(days=2)
-        s_sat = easter - datetime.timedelta(days=1)
-        sun_e = easter
-        mon_e = easter + datetime.timedelta(days=1)
-        
-        individual_hols = [
-            (datetime.date(y, 1, 1), "Πρωτοχρονιά (1/1)"),
-            (datetime.date(y, 12, 25), "Χριστούγεννα (25/12)"),
-            (datetime.date(y, 12, 31), "Παραμονή Πρωτοχρονιάς (31/12)"),
-            (sun_e, "Κυριακή του Πάσχα"),
-            (mon_e, "Δευτέρα του Πάσχα"),
-            (s_sat, "Μεγάλο Σάββατο"),
-            (datetime.date(y, 12, 24), "Παραμονή Χριστουγέννων"),
-            (g_fri, "Μεγάλη Παρασκευή"),
-            (datetime.date(y, 12, 26), "Δεύτερη μέρα Χριστουγέννων"),
-        ]
-        
-        for d, name in individual_hols:
+    for block in major_blocks:
+        package_name = block["base_name"]
+        for d in block["dates"]:
             if start_date <= d <= end_date:
                 doc = schedule.get(d, "-")
                 if doc in doctor_rows:
@@ -475,7 +467,7 @@ def compute_major_holidays_by_doctor(schedule, start_date, end_date, doctors_lis
                         "date_obj": d,
                         "Ακτινολόγος": doc,
                         "Ημερομηνία & Ημέρα": f"{d.strftime('%d/%m/%Y')} ({weekday_str})",
-                        "Μεγάλη Εορτή / Πακέτο": name
+                        "Μεγάλη Εορτή / Πακέτο": package_name
                     })
                 
     all_data = []
@@ -573,27 +565,11 @@ def create_balance_pdf(df, start_date, end_date):
 
 def create_major_holidays_pdf_by_doctor(schedule, start_date, end_date, doctors_list):
     doctor_rows = {doc: [] for doc in doctors_list}
+    major_blocks = get_major_holiday_blocks_in_range(start_date, end_date)
     
-    for y in range(start_date.year, end_date.year + 1):
-        easter = orthodox_easter(y)
-        g_fri = easter - datetime.timedelta(days=2)
-        s_sat = easter - datetime.timedelta(days=1)
-        sun_e = easter
-        mon_e = easter + datetime.timedelta(days=1)
-        
-        individual_hols = [
-            (datetime.date(y, 1, 1), "Πρωτοχρονιά (1/1)"),
-            (datetime.date(y, 12, 25), "Χριστούγεννα (25/12)"),
-            (datetime.date(y, 12, 31), "Παραμονή Πρωτοχρονιάς (31/12)"),
-            (sun_e, "Κυριακή του Πάσχα"),
-            (mon_e, "Δευτέρα του Πάσχα"),
-            (s_sat, "Μεγάλο Σάββατο"),
-            (datetime.date(y, 12, 24), "Παραμονή Χριστουγέννων"),
-            (g_fri, "Μεγάλη Παρασκευή"),
-            (datetime.date(y, 12, 26), "Δεύτερη μέρα Χριστουγέννων"),
-        ]
-        
-        for d, name in individual_hols:
+    for block in major_blocks:
+        package_name = block["base_name"]
+        for d in block["dates"]:
             if start_date <= d <= end_date:
                 doc = schedule.get(d, "-")
                 if doc in doctor_rows:
@@ -601,7 +577,7 @@ def create_major_holidays_pdf_by_doctor(schedule, start_date, end_date, doctors_
                     doctor_rows[doc].append({
                         "date_obj": d,
                         "Ημερομηνία & Ημέρα": f"{d.strftime('%d/%m/%Y')} ({weekday_str})",
-                        "Μεγάλη Εορτή / Πακέτο": name
+                        "Μεγάλη Εορτή / Πακέτο": package_name
                     })
 
     pdf = FPDF(orientation="P", unit="mm", format="A4")
@@ -640,25 +616,13 @@ def create_major_holidays_pdf_by_doctor(schedule, start_date, end_date, doctors_
 
 
 def create_yearly_major_holidays_pdf(schedule, year, start_date, end_date):
-    easter = orthodox_easter(year)
-    g_fri = easter - datetime.timedelta(days=2)
-    s_sat = easter - datetime.timedelta(days=1)
-    sun_e = easter
-    mon_e = easter + datetime.timedelta(days=1)
+    major_blocks = get_major_holiday_blocks_in_range(start_date, end_date)
+    valid_hols = []
+    for block in major_blocks:
+        for d in block["dates"]:
+            if d.year == year and start_date <= d <= end_date:
+                valid_hols.append((d, block["base_name"]))
     
-    individual_hols = [
-        (datetime.date(year, 1, 1), "Πρωτοχρονιά (1/1)"),
-        (datetime.date(year, 12, 25), "Χριστούγεννα (25/12)"),
-        (datetime.date(year, 12, 31), "Παραμονή Πρωτοχρονιάς (31/12)"),
-        (sun_e, "Κυριακή του Πάσχα"),
-        (mon_e, "Δευτέρα του Πάσχα"),
-        (s_sat, "Μεγάλο Σάββατο"),
-        (datetime.date(year, 12, 24), "Παραμονή Χριστουγέννων"),
-        (g_fri, "Μεγάλη Παρασκευή"),
-        (datetime.date(year, 12, 26), "Δεύτερη μέρα Χριστουγέννων"),
-    ]
-    
-    valid_hols = [(d, name) for d, name in individual_hols if start_date <= d <= end_date]
     sorted_hols = sorted(valid_hols, key=lambda x: x[0])
 
     pdf = FPDF(orientation="P", unit="mm", format="A4")
