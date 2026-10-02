@@ -133,7 +133,7 @@ def _shifts_in_week(doctor, date, schedule, exclude_date=None):
 
 
 def _shifts_in_weekend_block(doctor, date, schedule, exclude_date=None):
-    """Ελέγχει αν ο γιατρός έχει ήδη εφημερία την Παρασκευή, Σάββατο ή Κυριακή της ίδιας εβδομάδας"""
+    """Αυστηρός έλεγχος: Ελέγχει αν ο γιατρός έχει ήδη εφημερία την Παρασκευή, Σάββατο ή Κυριακή της ίδιας εβδομάδας"""
     if date.weekday() not in (4, 5, 6):
         return 0
     
@@ -302,7 +302,7 @@ def get_major_holiday_blocks_in_range(start_date, end_date, num_docs=7):
 
 def is_valid_assignment(doctor, date, schedule, holiday_dates, num_docs, exclude_date=None,
                         min_gap=3, max_special=1, avoid_consecutive_weekends=True):
-    # 🛑 Αποτροπή >1 εφημερίας στο τριήμερο Παρασκευή-Σάββατο-Κυριακή της ίδιας εβδομάδας
+    # 🛑 Απόλυτος αποκλεισμός δεύτερης εφημερίας στο τριήμερο Παρασκευή-Σάββατο-Κυριακή
     if _shifts_in_weekend_block(doctor, date, schedule, exclude_date=exclude_date) > 0:
         return False
 
@@ -364,10 +364,13 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
             if start_date <= d <= end_date:
                 schedule[d] = initial_week[i]
 
-    # Προτεραιότητα στις χειροκίνητες αλλαγές του χρήστη
+    # 1. Καταχώριση χειροκίνητων αλλαγών με αυστηρό έλεγχο τριημέρου
     for d, doc in manual_entries.items():
         if start_date <= d <= end_date and doc in doctors_list:
-            schedule[d] = doc
+            if _shifts_in_weekend_block(doc, d, schedule, exclude_date=d) == 0:
+                schedule[d] = doc
+            else:
+                warnings.append(f"Η χειροκίνητη ανάθεση {d.strftime('%d/%m/%Y')} στον/ην {doc} παραβιάζει το τριήμερο Παρ-Σαβ-Κυρ και απορρίφθηκε.")
 
     major_blocks.sort(key=lambda b: b["dates"][0])
     assigned_major_dates = {d: doc for d, doc in schedule.items()}
@@ -418,6 +421,7 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
             if base_name in doctor_done_packages[doc]:
                 continue
 
+            # Έλεγχος τριημέρου για όλες τις ημερομηνίες του block
             valid_block = True
             for b_date in block["dates"]:
                 if _shifts_in_weekend_block(doc, b_date, schedule, exclude_date=b_date) > 0:
@@ -466,8 +470,9 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
             
         for d in block["dates"]:
             if start_date <= d <= end_date and d not in schedule:
-                schedule[d] = best_doc
-                assigned_major_dates[d] = best_doc
+                if _shifts_in_weekend_block(best_doc, d, schedule, exclude_date=d) == 0:
+                    schedule[d] = best_doc
+                    assigned_major_dates[d] = best_doc
         doctors_with_package_in_cycle[cycle_y].add(best_doc)
         doctor_done_packages[best_doc].add(base_name)
 
