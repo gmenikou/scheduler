@@ -1044,7 +1044,7 @@ with left_col:
             
             f_col1, f_col2 = str_lit.columns(2)
             submit_add = f_col1.form_submit_button("➕ Προσθήκη / Κλείδωμα")
-            submit_del = f_col2.form_submit_button("🗑️ Αφαίρεση Ημερομηνίας")
+            submit_del = f_col2.form_submit_button("🗑️️ Αφαίρεση Ημερομηνίας")
 
             if submit_add:
                 str_lit.session_state.manual_assignments[f_date] = f_doc
@@ -1194,7 +1194,7 @@ with left_col:
         str_lit.markdown("---")
         str_lit.markdown("### 🎄🐣 Μεγάλες Εορτές ανά Ιατρό")
         major_doctor_df = compute_major_holidays_by_doctor(
-            str_lit.session_date.schedule, str_lit.session_state.start_date, end_d, active_doctors)
+            str_lit.session_state.schedule, str_lit.session_state.start_date, end_d, active_doctors)
         str_lit.dataframe(major_doctor_df, use_container_width=True, height=220)
 
         str_lit.markdown("---")
