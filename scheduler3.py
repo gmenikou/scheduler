@@ -236,7 +236,7 @@ def _had_heavy_combination_previous_month(doctor, current_date, schedule, holida
                 h1, h2 = d1 in holiday_dates, d2 in holiday_dates
                 if (w1 in (4,5,6) or w2 in (4,5,6) or h1 or h2):
                     return True
-    return false
+    return False
 
 
 def orthodox_easter(year):
