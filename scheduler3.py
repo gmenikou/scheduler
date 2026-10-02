@@ -202,13 +202,13 @@ def _count_target_combinations_in_month(doctor, target_date, schedule, holiday_d
                 h1, h2 = d1 in holiday_dates, d2 in holiday_dates
                 
                 is_target_comb = False
-                if (w1 == 4 and w2 == 5) or (w2 == 4 and w1 == 5):
+                if (w1 == 4 and w2 == 5) or (w2 == 4 and w1 == 5): # Παρασκευή + Σάββατο
                     is_target_comb = True
-                elif (w1 == 4 and w2 == 6) or (w2 == 4 and w1 == 6):
+                elif (w1 == 4 and w2 == 6) or (w2 == 4 and w1 == 6): # Παρασκευή + Κυριακή
                     is_target_comb = True
-                elif (w1 == 5 and w2 == 6) or (w2 == 5 and w1 == 6):
+                elif (w1 == 5 and w2 == 6) or (w2 == 5 and w1 == 6): # Σάββατο + Κυριακή
                     is_target_comb = True
-                elif (h1 and w2 in (5, 6)) or (h2 and w1 in (5, 6)):
+                elif (h1 and w2 in (4, 5, 6)) or (h2 and w1 in (4, 5, 6)): # Αργία + Π/Σ/Κ
                     is_target_comb = True
                 
                 if is_target_comb:
@@ -217,7 +217,7 @@ def _count_target_combinations_in_month(doctor, target_date, schedule, holiday_d
     return comb_count
 
 
-def _had_both_sat_sun_previous_month(doctor, current_date, schedule, holiday_dates):
+def _had_heavy_combination_previous_month(doctor, current_date, schedule, holiday_dates):
     if current_date.month == 1:
         prev_month = 12
         prev_year = current_date.year - 1
@@ -225,15 +225,18 @@ def _had_both_sat_sun_previous_month(doctor, current_date, schedule, holiday_dat
         prev_month = current_date.month - 1
         prev_year = current_date.year
         
-    had_sat = False
-    had_sun = False
-    for d, doc in schedule.items():
-        if doc == doctor and d.year == prev_year and d.month == prev_month:
-            if d.weekday() == 5:
-                had_sat = True
-            elif d.weekday() == 6:
-                had_sun = True
-    return had_sat and had_sun
+    prev_shifts = sorted([d for d, doc in schedule.items() if doc == doctor and d.year == prev_year and d.month == prev_month])
+    
+    for i in range(len(prev_shifts)):
+        for j in range(i + 1, len(prev_shifts)):
+            d1 = prev_shifts[i]
+            d2 = prev_shifts[j]
+            if (d2 - d1).days <= 2:
+                w1, w2 = d1.weekday(), d2.weekday()
+                h1, h2 = d1 in holiday_dates, d2 in holiday_dates
+                if (w1 in (4,5,6) or w2 in (4,5,6) or h1 or h2):
+                    return True
+    return false
 
 
 def orthodox_easter(year):
@@ -354,8 +357,14 @@ def is_valid_assignment(doctor, date, schedule, holiday_dates, num_docs, exclude
     if not _within_dynamic_month_cap(doctor, date, schedule, num_docs, exclude_date=exclude_date):
         return False
 
+    # ΑΥΣΤΗΡΟΣ ΕΛΕΓΧΟΣ: Το πολύ 1 επικίνδυνος συνδυασμός (Π+Σ, Σ+Κ, Π+Κ, Αργία+Π/Σ/Κ) ανά μήνα
     if _count_target_combinations_in_month(doctor, date, schedule, holiday_dates, exclude_date=exclude_date) > 1:
         return False
+
+    # ΑΠΑΓΟΡΕΥΣΗ ΣΕ ΣΥΝΕΧΟΜΕΝΟΥΣ ΜΗΝΕΣ: Αν είχε βαρύ συνδυασμό τον προηγούμενο μήνα, αποκλείεται
+    if _had_heavy_combination_previous_month(doctor, date, schedule, holiday_dates):
+        # Επιτρέπουμε εξαίρεση μόνο αν δεν υπάρχει καμία άλλη επιλογή γιατρού
+        pass
 
     return True
 
@@ -398,7 +407,6 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
     major_blocks.sort(key=lambda b: b["dates"][0])
     assigned_major_dates = {d: doc for d, doc in schedule.items()}
 
-    # ΑΥΣΤΗΡΟΣ ΕΛΕΓΧΟΣ: Μητρώο ιστορικού πακέτων ανά γιατρό
     doctor_done_packages_history = defaultdict(set)
 
     for block in major_blocks:
@@ -422,22 +430,18 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
         if already_assigned:
             continue
 
-        # Βρίσκουμε ποιοι γιατροί ΔΕΝ έχουν πάρει καθόλου αυτό το πακέτο μέχρι τώρα στον τρέχοντα κύκλο
         eligible_doctors = [doc for doc in doctors_list if base_name not in doctor_done_packages_history[doc]]
         
-        # Αν όλοι οι γιατροί έχουν πάρει αυτό το πακέτο, μηδενίζουμε το ιστορικό του πακέτου για να ξεκινήσει νέος κύκλος
         if not eligible_doctors:
             for doc in doctors_list:
                 doctor_done_packages_history[doc].discard(base_name)
             eligible_doctors = list(doctors_list)
 
-        # Επιλέγουμε από τους eligible εκείνον με τις λιγότερες συνολικές μεγάλες εορτές μέχρι στιγμής
         best_doc = min(
             eligible_doctors,
             key=lambda doc: (len(doctor_done_packages_history[doc]), doc)
         )
 
-        # Έλεγχος αποφυγής κοντινών ημερομηνιών εφόσον είναι δυνατόν
         for doc in sorted(eligible_doctors, key=lambda x: len(doctor_done_packages_history[x])):
             has_conflict = False
             for d_existing, d_doc in assigned_major_dates.items():
@@ -487,9 +491,13 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
                         doc, d, schedule, holiday_dates, num_docs, exclude_date=d,
                         min_gap=min_gap, max_special=max_special, 
                         avoid_consecutive_weekends=avoid_cons)]
-                    if valid:
-                        chosen = min(valid, key=lambda doc: (
-                            1 if _had_both_sat_sun_previous_month(doc, d, schedule, holiday_dates) else 0,
+                    
+                    # Αν υπάρχουν γιατροί που δεν είχαν βαρύ συνδυασμό τον προηγούμενο μήνα, τους προτιμούμε αυστηρά
+                    valid_strict = [doc for doc in valid if not _had_heavy_combination_previous_month(doc, d, schedule, holiday_dates)]
+                    pool_to_use = valid_strict if valid_strict else valid
+
+                    if pool_to_use:
+                        chosen = min(pool_to_use, key=lambda doc: (
                             _minor_total(doc, d) if is_minor_holiday else 0,
                             _global_weekday_total(doc, wd, schedule, exclude_date=d),
                             _special_count_in_month(doc, d, schedule, holiday_dates, exclude_date=d),
@@ -505,7 +513,7 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
             valid_fallback = [doc for doc in doctors_list if not _has_nearby_shift(doc, d, schedule, min_gap=1)]
             pool = valid_fallback if valid_fallback else doctors_list
             chosen = min(pool, key=lambda doc: (
-                1 if _had_both_sat_sun_previous_month(doc, d, schedule, holiday_dates) else 0,
+                1 if _had_heavy_combination_previous_month(doc, d, schedule, holiday_dates) else 0,
                 _minor_total(doc, d) if is_minor_holiday else 0,
                 _global_weekday_total(doc, wd, schedule, exclude_date=d),
                 not _within_dynamic_month_cap(doc, d, schedule, num_docs, exclude_date=d),
@@ -536,7 +544,7 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
                 return sum(1 for dt, dc in schedule.items() if dc == doc_name and dt.weekday() in (0, 1, 2, 3))
 
             chosen = min(valid, key=lambda doc: (
-                1 if _had_both_sat_sun_previous_month(doc, current_date, schedule, holiday_dates) else 0,
+                1 if _had_heavy_combination_previous_month(doc, current_date, schedule, holiday_dates) else 0,
                 _total_overall_shifts(doc),
                 _total_weekdays(doc),
                 _total_shifts_in_month(doc, current_date, schedule, exclude_date=current_date)
