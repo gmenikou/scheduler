@@ -132,6 +132,25 @@ def _shifts_in_week(doctor, date, schedule, exclude_date=None):
     )
 
 
+def _shifts_in_weekend_block(doctor, date, schedule, exclude_date=None):
+    """Ελέγχει αν ο γιατρός έχει ήδη εφημερία την Παρασκευή, Σάββατο ή Κυριακή της ίδιας εβδομάδας"""
+    if date.weekday() not in (4, 5, 6):  # Μόνο για Παρασκευή (4), Σάββατο (5), Κυριακή (6)
+        return 0
+    
+    wk_monday = _week_monday(date)
+    fri = wk_monday + datetime.timedelta(days=4)
+    sat = wk_monday + datetime.timedelta(days=5)
+    sun = wk_monday + datetime.timedelta(days=6)
+    
+    block_dates = {fri, sat, sun}
+    
+    count = 0
+    for d, doc in schedule.items():
+        if doc == doctor and d in block_dates and d != exclude_date:
+            count += 1
+    return count
+
+
 def _total_shifts_in_month(doctor, date, schedule, exclude_date=None):
     return sum(
         1 for d, doc in schedule.items()
@@ -183,7 +202,6 @@ def _within_dynamic_month_cap(doctor, date, schedule, num_docs, exclude_date=Non
     extra_allowance = 3 if num_docs <= 5 else 2
     base_limit = (days_in_month // num_docs) + extra_allowance
     
-    # 🛑 ΑΠΟΛΥΤΟ ΠΛΑΦΟΝ: Κανείς δεν μπορεί να ξεπεράσει τις 5 εφημερίες τον μήνα
     absolute_max = 5 
     effective_limit = min(base_limit, absolute_max)
     
@@ -284,6 +302,10 @@ def get_major_holiday_blocks_in_range(start_date, end_date, num_docs=7):
 
 def is_valid_assignment(doctor, date, schedule, holiday_dates, num_docs, exclude_date=None,
                         min_gap=3, max_special=1, avoid_consecutive_weekends=True):
+    # 🛑 Αποτροπή 2 εφημεριών στο τριήμερο Παρασκευή-Σάββατο-Κυριακή της ίδιας εβδομάδας
+    if _shifts_in_weekend_block(doctor, date, schedule, exclude_date=exclude_date) > 0:
+        return False
+
     if num_docs <= 5:
         effective_gap = 1
     elif num_docs == 6:
@@ -474,7 +496,6 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
                 break
 
         if chosen is None:
-            # 🛑 ΑΥΣΤΗΡΟ ΦΑΛΤΣΟ: Ακόμα και στο fallback, φιλτράρουμε αυστηρά όσους σέβονται το μηνιαίο πλαφόν (<=5)
             valid_fallback = [doc for doc in doctors_list if not _has_nearby_shift(doc, d, schedule, min_gap=1) and _within_dynamic_month_cap(doc, d, schedule, num_docs, exclude_date=d)]
             if not valid_fallback:
                 valid_fallback = [doc for doc in doctors_list if _within_dynamic_month_cap(doc, d, schedule, num_docs, exclude_date=d)]
@@ -518,7 +539,6 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
             break
 
         if chosen is None:
-            # 🛑 ΑΥΣΤΗΡΟ ΦΑΛΤΣΟ: Αποτροπή υπέρβασης 5 εφημεριών και στο τελικό στάδιο γεμίσματος
             valid_fallback = [doc for doc in doctors_list if not _has_nearby_shift(doc, current_date, schedule, min_gap=1) and _within_dynamic_month_cap(doc, current_date, schedule, num_docs, exclude_date=current_date)]
             if not valid_fallback:
                 valid_fallback = [doc for doc in doctors_list if _within_dynamic_month_cap(doc, current_date, schedule, num_docs, exclude_date=current_date)]
@@ -1044,7 +1064,7 @@ with left_col:
             
             f_col1, f_col2 = str_lit.columns(2)
             submit_add = f_col1.form_submit_button("➕ Προσθήκη / Κλείδωμα")
-            submit_del = f_col2.form_submit_button("🗑️️ Αφαίρεση Ημερομηνίας")
+            submit_del = f_col2.form_submit_button("🗑 Αφαίρεση Ημερομηνίας")
 
             if submit_add:
                 str_lit.session_state.manual_assignments[f_date] = f_doc
