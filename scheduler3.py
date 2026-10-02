@@ -179,10 +179,78 @@ def _month_stats(doctor, date, schedule, exclude_date=None):
 def _within_dynamic_month_cap(doctor, date, schedule, num_docs, exclude_date=None):
     total, _, _ = _month_stats(doctor, date, schedule, exclude_date)
     total += 1
-    _, days_in_month = calendar.monthrange(date.year, date.month)
-    extra_allowance = 3 if num_docs <= 5 else 2
-    base_limit = (days_in_month // num_docs) + extra_allowance
-    return total <= base_limit
+    # Αυστηρό ανώτατο όριο 5 εφημεριών ανά μήνα ανά ιατρό
+    return total <= 5
+
+
+def _count_target_combinations_in_month(doctor, target_date, schedule, holiday_dates, exclude_date=None):
+    """
+    Μετρά πόσους από τους απαγορευτικούς συνδυασμούς (Παρ+Σαβ, Παρ+Κυρ, Σαβ+Κυρ, Αργία+Σαβ, Αργία+Κυρ)
+    έχει ήδη ο ιατρός στον συγκεκριμένο μήνα. Εξετάζει και την προτεινόμενη ημερομηνία target_date.
+    """
+    # Συγκεντρώνουμε όλες τις εφημερίες του γιατρού στον μήνα (συμπεριλαμβανομένης της τρέχουσας)
+    month_shifts = set()
+    for d, doc in schedule.items():
+        if d != exclude_date and doc == doctor and d.year == target_date.year and d.month == target_date.month:
+            month_shifts.add(d)
+    if target_date != exclude_date:
+        month_shifts.add(target_date)
+
+    # Έλεγχος ανά ζεύγη ημερών εντός του μήνα
+    comb_count = 0
+    checked_pairs = set()
+    
+    shift_list = sorted(list(month_shifts))
+    for i in range(len(shift_list)):
+        for j in range(i + 1, len(shift_list)):
+            d1 = shift_list[i]
+            d2 = shift_list[j]
+            
+            # Ελέγχουμε αν είναι κοντά (π.χ. διαφορά μέχρι 2 μέρες ώστε να καλύπτει διημέρευση Παρ-Σαβ, Σαβ-Κυρ κλπ)
+            if (d2 - d1).days <= 2:
+                w1, w2 = d1.weekday(), d2.weekday()
+                h1, h2 = d1 in holiday_dates, d2 in holiday_dates
+                
+                is_target_comb = False
+                # Παρασκευή (4) + Σάββατο (5)
+                if (w1 == 4 and w2 == 5) or (w2 == 4 and w1 == 5):
+                    is_target_comb = True
+                # Παρασκευή (4) + Κυριακή (6)
+                elif (w1 == 4 and w2 == 6) or (w2 == 4 and w1 == 6):
+                    is_target_comb = True
+                # Σάββατο (5) + Κυριακή (6)
+                elif (w1 == 5 and w2 == 6) or (w2 == 5 and w1 == 6):
+                    is_target_comb = True
+                # Αργία + Σάββατο (5) ή Αργία + Κυριακή (6)
+                elif (h1 and w2 in (5, 6)) or (h2 and w1 in (5, 6)):
+                    is_target_comb = True
+                
+                if is_target_comb:
+                    comb_count += 1
+                    
+    return comb_count
+
+
+def _had_both_sat_sun_previous_month(doctor, current_date, schedule, holiday_dates):
+    """
+    Ελέγχει αν ο ιατρός είχε ΚΑΙ Σάββατο ΚΑΙ Κυριακή στον προηγούμενο μήνα.
+    """
+    if current_date.month == 1:
+        prev_month = 12
+        prev_year = current_date.year - 1
+    else:
+        prev_month = current_date.month - 1
+        prev_year = current_date.year
+        
+    had_sat = False
+    had_sun = False
+    for d, doc in schedule.items():
+        if doc == doctor and d.year == prev_year and d.month == prev_month:
+            if d.weekday() == 5:
+                had_sat = True
+            elif d.weekday() == 6:
+                had_sun = True
+    return had_sat and had_sun
 
 
 def orthodox_easter(year):
@@ -301,6 +369,10 @@ def is_valid_assignment(doctor, date, schedule, holiday_dates, num_docs, exclude
         return False
         
     if not _within_dynamic_month_cap(doctor, date, schedule, num_docs, exclude_date=exclude_date):
+        return False
+
+    # Νέος κανόνας: Κανένας δεν παίρνει περισσότερους από 1 συνδυασμούς (Παρ+Σαβ, Παρ+Κυρ, Σαβ+Κυρ, Αργία+Σαβ, Αργία+Κυρ) ανά μήνα
+    if _count_target_combinations_in_month(doctor, date, schedule, holiday_dates, exclude_date=exclude_date) > 1:
         return False
 
     return True
@@ -456,7 +528,9 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
                         min_gap=min_gap, max_special=max_special, 
                         avoid_consecutive_weekends=avoid_cons)]
                     if valid:
+                        # Εφαρμογή προτεραιότητας εναλλαγής (όσοι είχαν και Σάββατο και Κυριακή τον προηγούμενο μήνα αποφεύγονται)
                         chosen = min(valid, key=lambda doc: (
+                            1 if _had_both_sat_sun_previous_month(doc, d, schedule, holiday_dates) else 0,
                             _minor_total(doc, d) if is_minor_holiday else 0,
                             _global_weekday_total(doc, wd, schedule, exclude_date=d),
                             _special_count_in_month(doc, d, schedule, holiday_dates, exclude_date=d),
@@ -472,6 +546,7 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
             valid_fallback = [doc for doc in doctors_list if not _has_nearby_shift(doc, d, schedule, min_gap=1)]
             pool = valid_fallback if valid_fallback else doctors_list
             chosen = min(pool, key=lambda doc: (
+                1 if _had_both_sat_sun_previous_month(doc, d, schedule, holiday_dates) else 0,
                 _minor_total(doc, d) if is_minor_holiday else 0,
                 _global_weekday_total(doc, wd, schedule, exclude_date=d),
                 not _within_dynamic_month_cap(doc, d, schedule, num_docs, exclude_date=d),
@@ -502,6 +577,7 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
                 return sum(1 for dt, dc in schedule.items() if dc == doc_name and dt.weekday() in (0, 1, 2, 3))
 
             chosen = min(valid, key=lambda doc: (
+                1 if _had_both_sat_sun_previous_month(doc, current_date, schedule, holiday_dates) else 0,
                 _total_overall_shifts(doc),
                 _total_weekdays(doc),
                 _total_shifts_in_month(doc, current_date, schedule, exclude_date=current_date)
