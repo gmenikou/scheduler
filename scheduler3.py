@@ -398,7 +398,8 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
     major_blocks.sort(key=lambda b: b["dates"][0])
     assigned_major_dates = {d: doc for d, doc in schedule.items()}
 
-    doctor_done_packages = defaultdict(set)
+    # ΑΥΣΤΗΡΟΣ ΕΛΕΓΧΟΣ: Μητρώο ιστορικού πακέτων ανά γιατρό
+    doctor_done_packages_history = defaultdict(set)
 
     for block in major_blocks:
         block_doc = None
@@ -413,82 +414,51 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
                     schedule[d] = block_doc
                 if d in schedule:
                     assigned_major_dates[d] = schedule[d]
-            doctor_done_packages[block_doc].add(block["base_name"])
-
-    # Δομή για παρακολούθηση ποιος πήρε τι ανά κύκλο / συνολικά για τον περιορισμό "να τα πάρουν όλοι πριν ξαναπάρουν το ίδιο"
-    doctor_done_packages_history = defaultdict(set)
-    for doc, pkgs in doctor_done_packages.items():
-        doctor_done_packages_history[doc].update(pkgs)
-
-    doctors_with_package_in_cycle = defaultdict(set)
-    for block in major_blocks:
-        cycle_y = block["cycle_id"]
-        for d in block["dates"]:
-            if d in schedule:
-                doctors_with_package_in_cycle[cycle_y].add(schedule[d])
+            doctor_done_packages_history[block_doc].add(block["base_name"])
 
     for block in major_blocks:
-        cycle_y = block["cycle_id"]
         base_name = block["base_name"]
-        
         already_assigned = all(d in schedule for d in block["dates"])
         if already_assigned:
             continue
 
-        order_idx = block["order"]
-        base_idx = (order_idx + cycle_y) % num_docs
+        # Βρίσκουμε ποιοι γιατροί ΔΕΝ έχουν πάρει καθόλου αυτό το πακέτο μέχρι τώρα στον τρέχοντα κύκλο
+        eligible_doctors = [doc for doc in doctors_list if base_name not in doctor_done_packages_history[doc]]
         
-        best_doc = None
-        # Βήμα 1ο: Αναζήτηση γιατρού που ΔΕΝ έχει πάρει το πακέτο ούτε στον τρέχοντα κύκλο ούτε ξανά μέχρι να το πάρουν όλοι
-        for strict_check in [True, False]:
-            for offset in range(num_docs):
-                doc_idx = (base_idx + offset) % num_docs
-                doc = doctors_list[doc_idx]
-                
-                if doc in doctors_with_package_in_cycle[cycle_y]:
-                    continue
-                if strict_check and base_name in doctor_done_packages_history[doc]:
-                    continue
+        # Αν όλοι οι γιατροί έχουν πάρει αυτό το πακέτο, μηδενίζουμε το ιστορικό του πακέτου για να ξεκινήσει νέος κύκλος
+        if not eligible_doctors:
+            for doc in doctors_list:
+                doctor_done_packages_history[doc].discard(base_name)
+            eligible_doctors = list(doctors_list)
 
-                has_conflict = False
-                for d_existing, d_doc in assigned_major_dates.items():
-                    gap_limit = 1 if num_docs <= 5 else 3
-                    if d_doc == doc:
-                        for b_date in block["dates"]:
-                            if abs((b_date - d_existing).days) <= gap_limit:
-                                has_conflict = True
-                                break
-                    if has_conflict:
-                        break
-                
-                if not has_conflict:
-                    best_doc = doc
+        # Επιλέγουμε από τους eligible εκείνον με τις λιγότερες συνολικές μεγάλες εορτές μέχρι στιγμής
+        best_doc = min(
+            eligible_doctors,
+            key=lambda doc: (len(doctor_done_packages_history[doc]), doc)
+        )
+
+        # Έλεγχος αποφυγής κοντινών ημερομηνιών εφόσον είναι δυνατόν
+        for doc in sorted(eligible_doctors, key=lambda x: len(doctor_done_packages_history[x])):
+            has_conflict = False
+            for d_existing, d_doc in assigned_major_dates.items():
+                gap_limit = 1 if num_docs <= 5 else 3
+                if d_doc == doc:
+                    for b_date in block["dates"]:
+                        if abs((b_date - d_existing).days) <= gap_limit:
+                            has_conflict = True
+                            break
+                if has_conflict:
                     break
-            if best_doc is not None:
+            if not has_conflict:
+                best_doc = doc
                 break
-        
-        if best_doc is None:
-            for offset in range(num_docs):
-                doc_idx = (base_idx + offset) % num_docs
-                doc = doctors_list[doc_idx]
-                if doc not in doctors_with_package_in_cycle[cycle_y]:
-                    best_doc = doc
-                    break
-            if best_doc is None:
-                best_doc = doctors_list[base_idx]
-            
+
         for d in block["dates"]:
             if start_date <= d <= end_date and d not in schedule:
                 schedule[d] = best_doc
                 assigned_major_dates[d] = best_doc
-        doctors_with_package_in_cycle[cycle_y].add(best_doc)
+        
         doctor_done_packages_history[best_doc].add(base_name)
-
-        # Αν κάποιος γιατρός έχει ολοκληρώσει όλα τα διαθέσιμη πακέτα, κάνουμε reset το ιστορικό πακέτων του για να ξεκινήσει νέος κύκλος
-        all_possible_bases = {b["base_name"] for b in major_blocks}
-        if all_possible_bases.issubset(doctor_done_packages_history[best_doc]):
-            doctor_done_packages_history[best_doc].clear()
-            doctor_done_packages_history[best_doc].add(base_name)
 
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
     minor_dates = {d for d in holiday_dates if d not in {bd for block in major_blocks for bd in block["dates"]}}
@@ -997,7 +967,6 @@ str_lit.title("📅 Πρόγραμμα Εφημεριών Ακτινολόγων
 str_lit.markdown("<span style='font-size:14px; color:gray;'>© Γιώργος Μενοίκου, PhD</span>",
             unsafe_allow_html=True)
 
-# --- ΦΟΡΤΩΣΗ ΤΕΛΕΥΤΑΙΟΥ STATE ΑΠΟ ΤΟ ΑΡΧΕΙΟ ---
 saved_state = load_state_from_file()
 
 defaults = {
@@ -1023,7 +992,6 @@ if str_lit.session_state.schedule and (str_lit.session_state.balance is None or 
         str_lit.session_state.holiday_names, str_lit.session_state.doctors
     )
 
-# --- ΕΠΙΛΟΓΗ ΡΟΛΟΥ ΧΡΗΣΤΗ ΜΕ ΚΩΔΙΚΟ ---
 str_lit.sidebar.markdown("### 🔐 Έλεγχος Πρόσβασης")
 user_role = str_lit.sidebar.selectbox("Επιλέξτε Ρόλο Χρήστη", ["Γιατρός / Αναγνώστης (View-Only)", "Διαχειριστής (Moderator)"])
 
