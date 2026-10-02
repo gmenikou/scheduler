@@ -474,7 +474,11 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
                 break
 
         if chosen is None:
-            valid_fallback = [doc for doc in doctors_list if not _has_nearby_shift(doc, d, schedule, min_gap=1)]
+            # 🛑 ΑΥΣΤΗΡΟ ΦΑΛΤΣΟ: Ακόμα και στο fallback, φιλτράρουμε αυστηρά όσους σέβονται το μηνιαίο πλαφόν (<=5)
+            valid_fallback = [doc for doc in doctors_list if not _has_nearby_shift(doc, d, schedule, min_gap=1) and _within_dynamic_month_cap(doc, d, schedule, num_docs, exclude_date=d)]
+            if not valid_fallback:
+                valid_fallback = [doc for doc in doctors_list if _within_dynamic_month_cap(doc, d, schedule, num_docs, exclude_date=d)]
+            
             pool = valid_fallback if valid_fallback else doctors_list
             chosen = min(pool, key=lambda doc: (
                 _minor_total(doc, d) if is_minor_holiday else 0,
@@ -514,7 +518,11 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
             break
 
         if chosen is None:
-            valid_fallback = [doc for doc in doctors_list if not _has_nearby_shift(doc, current_date, schedule, min_gap=1)]
+            # 🛑 ΑΥΣΤΗΡΟ ΦΑΛΤΣΟ: Αποτροπή υπέρβασης 5 εφημεριών και στο τελικό στάδιο γεμίσματος
+            valid_fallback = [doc for doc in doctors_list if not _has_nearby_shift(doc, current_date, schedule, min_gap=1) and _within_dynamic_month_cap(doc, current_date, schedule, num_docs, exclude_date=current_date)]
+            if not valid_fallback:
+                valid_fallback = [doc for doc in doctors_list if _within_dynamic_month_cap(doc, current_date, schedule, num_docs, exclude_date=current_date)]
+
             pool = valid_fallback if valid_fallback else doctors_list
             chosen = min(pool, key=lambda doc: (
                 not _within_dynamic_month_cap(doc, current_date, schedule, num_docs, exclude_date=current_date),
@@ -1186,7 +1194,7 @@ with left_col:
         str_lit.markdown("---")
         str_lit.markdown("### 🎄🐣 Μεγάλες Εορτές ανά Ιατρό")
         major_doctor_df = compute_major_holidays_by_doctor(
-            str_lit.session_state.schedule, str_lit.session_state.start_date, end_d, active_doctors)
+            str_lit.session_date.schedule, str_lit.session_state.start_date, end_d, active_doctors)
         str_lit.dataframe(major_doctor_df, use_container_width=True, height=220)
 
         str_lit.markdown("---")
