@@ -364,6 +364,7 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
             if start_date <= d <= end_date:
                 schedule[d] = initial_week[i]
 
+    # Προτεραιότητα στις χειροκίνητες αλλαγές του χρήστη
     for d, doc in manual_entries.items():
         if start_date <= d <= end_date and doc in doctors_list:
             schedule[d] = doc
@@ -383,7 +384,6 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
         if block_doc:
             for d in block["dates"]:
                 if start_date <= d <= end_date and d not in schedule:
-                    # Έλεγχος ώστε να μην παραβιάζεται ο κανόνας του τριημέρου ούτε στα πακέτα
                     if _shifts_in_weekend_block(block_doc, d, schedule, exclude_date=d) == 0:
                         schedule[d] = block_doc
                 if d in schedule:
@@ -418,7 +418,6 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
             if base_name in doctor_done_packages[doc]:
                 continue
 
-            # Έλεγχος τριημέρου (Παρ-Σαβ-Κυρ) για όλες τις ημερομηνίες του block
             valid_block = True
             for b_date in block["dates"]:
                 if _shifts_in_weekend_block(doc, b_date, schedule, exclude_date=b_date) > 0:
@@ -447,7 +446,6 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
                 doc_idx = (base_idx + offset) % num_docs
                 doc = doctors_list[doc_idx]
                 if doc not in doctors_with_package_in_cycle[cycle_y] and base_name not in doctor_done_packages[doc]:
-                    # Ελέγχουμε έστω τριήμερο
                     can_take = True
                     for b_date in block["dates"]:
                         if _shifts_in_weekend_block(doc, b_date, schedule, exclude_date=b_date) > 0:
@@ -488,6 +486,8 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
     special_dates.sort(key=lambda d: (0 if d in minor_dates else 1 if d.weekday() in (5, 6) else 2, d))
 
     for d in special_dates:
+        if d in schedule:
+            continue
         chosen = None
         wd = d.weekday()
         is_minor_holiday = d in minor_dates
