@@ -133,7 +133,6 @@ def _shifts_in_week(doctor, date, schedule, exclude_date=None):
 
 
 def _shifts_in_weekend_block(doctor, date, schedule, exclude_date=None):
-    """Αυστηρός έλεγχος: Ελέγχει αν ο γιατρός έχει ήδη εφημερία την Παρασκευή, Σάββατο ή Κυριακή της ίδιας εβδομάδας"""
     if date.weekday() not in (4, 5, 6):
         return 0
     
@@ -201,11 +200,8 @@ def _within_dynamic_month_cap(doctor, date, schedule, num_docs, exclude_date=Non
     _, days_in_month = calendar.monthrange(date.year, date.month)
     extra_allowance = 3 if num_docs <= 5 else 2
     base_limit = (days_in_month // num_docs) + extra_allowance
-    
     absolute_max = 5 
-    effective_limit = min(base_limit, absolute_max)
-    
-    return total <= effective_limit
+    return total <= min(base_limit, absolute_max)
 
 
 def orthodox_easter(year):
@@ -262,7 +258,10 @@ def get_major_holiday_blocks_in_range(start_date, end_date, num_docs=7):
     if num_docs >= 9:
         base_packages.append("Πρωτομαγιά (1/5)")
 
-    for y in range(start_date.year - 1, end_date.year + 2):
+    years = range(start_date.year - 1, end_date.year + 2)
+    
+    # 100% αυστηρή αντιστοίχιση κύκλου: κάθε 7 έτη αποτελούν έναν πλήρη κύκλο εναλλαγής
+    for y_idx, y in enumerate(years):
         easter_next = orthodox_easter(y + 1)
         g_fri_next = easter_next - datetime.timedelta(days=2)
         s_sat_next = easter_next - datetime.timedelta(days=1)
@@ -281,20 +280,25 @@ def get_major_holiday_blocks_in_range(start_date, end_date, num_docs=7):
             "Πρωτομαγιά (1/5)": [datetime.date(y, 5, 1)]
         }
 
-        cycle_id = y // 7
-        package_rotation_offset = y % num_docs
+        # Ορίζουμε τον 7ετή κύκλο με βάση την απόλυτη διαίρεση ετών
+        cycle_id = (y - (start_date.year - 1)) // 7
+        if cycle_id < 0:
+            cycle_id = 0
 
-        for idx, base_name in enumerate(base_packages):
+        for p_idx, base_name in enumerate(base_packages):
             if base_name in year_packages_map:
                 dates = year_packages_map[base_name]
                 valid_dates = [d for d in dates if start_date <= d <= end_date]
                 if valid_dates:
+                    # Σειρά θέσης αυστηρά κυκλική ώστε να μην συμπίπτουν ποτέ στον ίδιο κύκλο
+                    order_idx = (p_idx + cycle_id * 3) % num_docs
+                    
                     blocks.append({
                         "name": f"{base_name} ({y})",
                         "base_name": base_name,
                         "dates": valid_dates,
                         "cycle_id": cycle_id,
-                        "order": (idx + package_rotation_offset) % num_docs
+                        "order": order_idx
                     })
     return blocks
 
@@ -304,13 +308,7 @@ def is_valid_assignment(doctor, date, schedule, holiday_dates, num_docs, exclude
     if _shifts_in_weekend_block(doctor, date, schedule, exclude_date=exclude_date) > 0:
         return False
 
-    if num_docs <= 5:
-        effective_gap = 1
-    elif num_docs == 6:
-        effective_gap = 2
-    else:
-        effective_gap = max(1, min(min_gap, 3))
-    
+    effective_gap = 1 if num_docs <= 5 else (2 if num_docs == 6 else max(1, min(min_gap, 3)))
     if _has_nearby_shift(doctor, date, schedule, min_gap=effective_gap):
         return False
         
@@ -362,7 +360,6 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
             if start_date <= d <= end_date:
                 schedule[d] = initial_week[i]
 
-    # 1. Καταχώριση χειροκίνητων αλλαγών με αυστηρό έλεγχο τριημέρου
     for d, doc in manual_entries.items():
         if start_date <= d <= end_date and doc in doctors_list:
             if _shifts_in_weekend_block(doc, d, schedule, exclude_date=d) == 0:
@@ -404,7 +401,6 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
         order_idx = block["order"]
         assigned_doctor = None
 
-        # 1. Αναζήτηση βάσει της σειράς περιστροφής στον 7ετή κύκλο (χωρίς διπλή ανάθεση πακέτου στον κύκλο)
         for offset in range(num_docs):
             doc_idx = (order_idx + offset) % num_docs
             doc = doctors_list[doc_idx]
@@ -425,7 +421,6 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
             assigned_doctor = doc
             break
 
-        # 2. Fallback αν υπάρχει σύγκρουση στο τριήμερο
         if assigned_doctor is None:
             for offset in range(num_docs):
                 doc_idx = (order_idx + offset) % num_docs
@@ -503,8 +498,7 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
             if not valid_fallback:
                 valid_fallback = doctors_list
             
-            pool = valid_fallback
-            chosen = min(pool, key=lambda doc: (
+            chosen = min(valid_fallback, key=lambda doc: (
                 _shifts_in_weekend_block(doc, d, schedule, exclude_date=d),
                 _minor_total(doc, d) if is_minor_holiday else 0,
                 _global_weekday_total(doc, wd, schedule, exclude_date=d),
@@ -532,12 +526,9 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
                 real_count = sum(1 for dt, dc in schedule.items() if dc == doc_name)
                 return base_v + real_count
 
-            def _total_weekdays(doc_name):
-                return sum(1 for dt, dc in schedule.items() if dc == doc_name and dt.weekday() in (0, 1, 2, 3))
-
             chosen = min(valid, key=lambda doc: (
                 _total_overall_shifts(doc),
-                _total_weekdays(doc),
+                _global_weekday_total(doc, current_date.weekday(), schedule, exclude_date=current_date),
                 _total_shifts_in_month(doc, current_date, schedule, exclude_date=current_date)
             ))
             break
@@ -551,8 +542,7 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
             if not valid_fallback:
                 valid_fallback = doctors_list
 
-            pool = valid_fallback
-            chosen = min(pool, key=lambda doc: (
+            chosen = min(valid_fallback, key=lambda doc: (
                 _shifts_in_weekend_block(doc, current_date, schedule, exclude_date=current_date),
                 not _within_dynamic_month_cap(doc, current_date, schedule, num_docs, exclude_date=current_date),
                 _total_shifts_in_month(doc, current_date, schedule, exclude_date=current_date)))
