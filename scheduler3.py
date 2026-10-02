@@ -132,24 +132,6 @@ def _shifts_in_week(doctor, date, schedule, exclude_date=None):
     )
 
 
-def _shifts_in_weekend_block(doctor, date, schedule, exclude_date=None):
-    if date.weekday() not in (4, 5, 6):
-        return 0
-    
-    wk_monday = _week_monday(date)
-    fri = wk_monday + datetime.timedelta(days=4)
-    sat = wk_monday + datetime.timedelta(days=5)
-    sun = wk_monday + datetime.timedelta(days=6)
-    
-    block_dates = {fri, sat, sun}
-    
-    count = 0
-    for d, doc in schedule.items():
-        if doc == doctor and d in block_dates and d != exclude_date:
-            count += 1
-    return count
-
-
 def _total_shifts_in_month(doctor, date, schedule, exclude_date=None):
     return sum(
         1 for d, doc in schedule.items()
@@ -200,23 +182,7 @@ def _within_dynamic_month_cap(doctor, date, schedule, num_docs, exclude_date=Non
     _, days_in_month = calendar.monthrange(date.year, date.month)
     extra_allowance = 3 if num_docs <= 5 else 2
     base_limit = (days_in_month // num_docs) + extra_allowance
-    absolute_max = 5 
-    return total <= min(base_limit, absolute_max)
-
-
-def _had_special_shift_last_month(doctor, date, schedule, holiday_dates):
-    if date.month == 1:
-        prev_month = 12
-        prev_year = date.year - 1
-    else:
-        prev_month = date.month - 1
-        prev_year = date.year
-
-    for d, doc in schedule.items():
-        if doc == doctor and d.year == prev_year and d.month == prev_month:
-            if d.weekday() in (5, 6) or d in holiday_dates:
-                return True
-    return False
+    return total <= base_limit
 
 
 def orthodox_easter(year):
@@ -258,73 +224,68 @@ def get_holidays_in_range(start_date, end_date):
 
 def get_major_holiday_blocks_in_range(start_date, end_date, num_docs=7):
     blocks = []
-    base_packages = [
-        "Πρωτοχρονιά (1/1)",
-        "Χριστούγεννα (25/12)",
-        "Παραμονή Πρωτοχρονιάς (31/12)",
-        "Κυριακή του Πάσχα",
-        "Δευτέρα του Πάσχα",
-        "Μεγάλο Σάββατο + 24/12",
-        "Μεγάλη Παρασκευή + 26/12",
-    ]
+    BASE_PACKAGE_ROTATION_ORDER = {
+        "Πρωτοχρονιά (1/1)": 0,
+        "Χριστούγεννα (25/12)": 1,
+        "Παραμονή Πρωτοχρονιάς (31/12)": 2,
+        "Κυριακή του Πάσχα": 3,
+        "Δευτέρα του Πάσχα": 4,
+        "Μεγάλο Σάββατο + 24/12": 5,
+        "Μεγάλη Παρασκευή + 26/12": 6,
+    }
     
     if num_docs >= 8:
-        base_packages.append("Θεοφάνεια (6/1)")
+        BASE_PACKAGE_ROTATION_ORDER["Θεοφάνεια (6/1)"] = 7
     if num_docs >= 9:
-        base_packages.append("Πρωτομαγιά (1/5)")
+        BASE_PACKAGE_ROTATION_ORDER["Πρωτομαγιά (1/5)"] = 8
 
-    years = range(start_date.year - 1, end_date.year + 2)
-    
-    global_pkg_index = 0
-    for y_idx, y in enumerate(years):
+    for y in range(start_date.year - 1, end_date.year + 2):
         easter_next = orthodox_easter(y + 1)
         g_fri_next = easter_next - datetime.timedelta(days=2)
         s_sat_next = easter_next - datetime.timedelta(days=1)
         sun_e_next = easter_next
         mon_e_next = easter_next + datetime.timedelta(days=1)
 
-        year_packages_map = {
-            "Πρωτοχρονιά (1/1)": [datetime.date(y + 1, 1, 1)],
-            "Χριστούγεννα (25/12)": [datetime.date(y, 12, 25)],
-            "Παραμονή Πρωτοχρονιάς (31/12)": [datetime.date(y, 12, 31)],
-            "Κυριακή του Πάσχα": [sun_e_next],
-            "Δευτέρα του Πάσχα": [mon_e_next],
-            "Μεγάλο Σάββατο + 24/12": [s_sat_next, datetime.date(y, 12, 24)],
-            "Μεγάλη Παρασκευή + 26/12": [g_fri_next, datetime.date(y, 12, 26)],
-            "Θεοφάνεια (6/1)": [datetime.date(y, 1, 6)],
-            "Πρωτομαγιά (1/5)": [datetime.date(y, 5, 1)]
-        }
+        year_blocks = [
+            ([datetime.date(y + 1, 1, 1)], "Πρωτοχρονιά (1/1)"),
+            ([datetime.date(y, 12, 25)], "Χριστούγεννα (25/12)"),
+            ([datetime.date(y, 12, 31)], "Παραμονή Πρωτοχρονιάς (31/12)"),
+            ([sun_e_next], "Κυριακή του Πάσχα"),
+            ([mon_e_next], "Δευτέρα του Πάσχα"),
+            ([s_sat_next, datetime.date(y, 12, 24)], "Μεγάλο Σάββατο + 24/12"),
+            ([g_fri_next, datetime.date(y, 12, 26)], "Μεγάλη Παρασκευή + 26/12"),
+        ]
 
-        for p_idx, base_name in enumerate(base_packages):
-            if base_name in year_packages_map:
-                dates = year_packages_map[base_name]
-                valid_dates = [d for d in dates if start_date <= d <= end_date]
-                if valid_dates:
-                    cycle_id = global_pkg_index // num_docs
-                    order_idx = (p_idx + y_idx * 2) % num_docs
-                    
-                    blocks.append({
-                        "name": f"{base_name} ({y})",
-                        "base_name": base_name,
-                        "dates": valid_dates,
-                        "cycle_id": cycle_id,
-                        "order": order_idx
-                    })
-                    global_pkg_index += 1
+        if num_docs <= 5 and len(year_blocks) > num_docs:
+            year_blocks = year_blocks[:num_docs]
+
+        if num_docs >= 8:
+            year_blocks.append(([datetime.date(y, 1, 6)], "Θεοφάνεια (6/1)"))
+        if num_docs >= 9:
+            year_blocks.append(([datetime.date(y, 5, 1)], "Πρωτομαγιά (1/5)"))
+
+        for dates, base_name in year_blocks:
+            valid_dates = [d for d in dates if start_date <= d <= end_date]
+            if valid_dates:
+                blocks.append({
+                    "name": f"{base_name} ({y}-{y+1})" if "+" in base_name else f"{base_name} ({valid_dates[0].year})",
+                    "base_name": base_name,
+                    "dates": valid_dates,
+                    "cycle_id": y,
+                    "order": BASE_PACKAGE_ROTATION_ORDER.get(base_name, 99)
+                })
     return blocks
 
 
 def is_valid_assignment(doctor, date, schedule, holiday_dates, num_docs, exclude_date=None,
                         min_gap=3, max_special=1, avoid_consecutive_weekends=True):
-    # 1. Αυστηρός κανόνας τριημέρου Παρ-Σαβ-Κυρ (<=1 shift)
-    if _shifts_in_weekend_block(doctor, date, schedule, exclude_date=exclude_date) > 0:
-        return False
-
-    # 2. Απόλυτος αποκλεισμός συνεχόμενων Σαββατοκύριακων
-    if date.weekday() in (5, 6) and _has_weekend_in_adjacent_week(doctor, date, schedule):
-        return False
-
-    effective_gap = 1 if num_docs <= 5 else (2 if num_docs == 6 else max(1, min(min_gap, 3)))
+    if num_docs <= 5:
+        effective_gap = 1
+    elif num_docs == 6:
+        effective_gap = 2
+    else:
+        effective_gap = max(1, min(min_gap, 3))
+    
     if _has_nearby_shift(doctor, date, schedule, min_gap=effective_gap):
         return False
         
@@ -332,17 +293,15 @@ def is_valid_assignment(doctor, date, schedule, holiday_dates, num_docs, exclude
     if _shifts_in_week(doctor, date, schedule, exclude_date=exclude_date) >= max_shifts_per_week:
         return False
         
-    max_spec_allowed = 1 if num_docs > 5 else max_special
+    max_spec_allowed = 2 if num_docs <= 5 else max_special
     if _special_count_in_month(doctor, date, schedule, holiday_dates, exclude_date=exclude_date) >= max_spec_allowed:
+        return False
+        
+    if avoid_consecutive_weekends and num_docs > 5 and _has_weekend_in_adjacent_week(doctor, date, schedule):
         return False
         
     if not _within_dynamic_month_cap(doctor, date, schedule, num_docs, exclude_date=exclude_date):
         return False
-
-    # 3. Αποφυγή ειδικών ημερών σε διαδοχικούς μήνες
-    if date.weekday() in (5, 6) or date in holiday_dates:
-        if _had_special_shift_last_month(doctor, date, schedule, holiday_dates):
-            return False
 
     return True
 
@@ -355,7 +314,7 @@ def _global_weekday_total(doctor, wd, schedule, exclude_date=None):
 
 
 # ----------------------------
-# SCHEDULING LOGIC WITH EQUITY & THWARTED FALLBACKS
+# SCHEDULING LOGIC
 # ----------------------------
 def generate_full_schedule(start_date, end_date, doctors_list, initial_week, manual_entries=None):
     return generate_full_schedule_with_balance(start_date, end_date, doctors_list, initial_week, manual_entries, initial_balance=None)
@@ -380,16 +339,12 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
 
     for d, doc in manual_entries.items():
         if start_date <= d <= end_date and doc in doctors_list:
-            if _shifts_in_weekend_block(doc, d, schedule, exclude_date=d) == 0:
-                schedule[d] = doc
-            else:
-                warnings.append(f"Η χειροκίνητη ανάθεση {d.strftime('%d/%m/%Y')} στον/ην {doc} παραβιάζει το τριήμερο Παρ-Σαβ-Κυρ και απορρίφθηκε.")
+            schedule[d] = doc
 
     major_blocks.sort(key=lambda b: b["dates"][0])
     assigned_major_dates = {d: doc for d, doc in schedule.items()}
 
     doctor_done_packages = defaultdict(set)
-    doctors_with_package_in_cycle = defaultdict(set)
 
     for block in major_blocks:
         block_doc = None
@@ -401,12 +356,17 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
         if block_doc:
             for d in block["dates"]:
                 if start_date <= d <= end_date and d not in schedule:
-                    if _shifts_in_weekend_block(block_doc, d, schedule, exclude_date=d) == 0:
-                        schedule[d] = block_doc
+                    schedule[d] = block_doc
                 if d in schedule:
                     assigned_major_dates[d] = schedule[d]
             doctor_done_packages[block_doc].add(block["base_name"])
-            doctors_with_package_in_cycle[block["cycle_id"]].add(block_doc)
+
+    doctors_with_package_in_cycle = defaultdict(set)
+    for block in major_blocks:
+        cycle_y = block["cycle_id"]
+        for d in block["dates"]:
+            if d in schedule:
+                doctors_with_package_in_cycle[cycle_y].add(schedule[d])
 
     for block in major_blocks:
         cycle_y = block["cycle_id"]
@@ -417,55 +377,56 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
             continue
 
         order_idx = block["order"]
-        assigned_doctor = None
-
+        base_idx = (order_idx + cycle_y) % num_docs
+        
+        best_doc = None
         for offset in range(num_docs):
-            doc_idx = (order_idx + offset) % num_docs
+            doc_idx = (base_idx + offset) % num_docs
             doc = doctors_list[doc_idx]
             
+            if doc in doctors_with_package_in_cycle[cycle_y]:
+                continue
             if base_name in doctor_done_packages[doc]:
                 continue
 
-            valid_block = True
-            for b_date in block["dates"]:
-                if _shifts_in_weekend_block(doc, b_date, schedule, exclude_date=b_date) > 0 or _has_weekend_in_adjacent_week(doc, b_date, schedule):
-                    valid_block = False
+            has_conflict = False
+            for d_existing, d_doc in assigned_major_dates.items():
+                gap_limit = 1 if num_docs <= 5 else 3
+                if d_doc == doc:
+                    for b_date in block["dates"]:
+                        if abs((b_date - d_existing).days) <= gap_limit:
+                            has_conflict = True
+                            break
+                if has_conflict:
                     break
-            if not valid_block:
-                continue
-
-            assigned_doctor = doc
-            break
-
-        if assigned_doctor is None:
-            valid_candidates = [
-                doc for doc in doctors_list 
-                if base_name not in doctor_done_packages[doc] 
-                and not _has_weekend_in_adjacent_week(doc, block["dates"][0], schedule)
-                and all(_shifts_in_weekend_block(doc, bd, schedule, exclude_date=bd) == 0 for bd in block["dates"])
-            ]
-            if not valid_candidates:
-                valid_candidates = [doc for doc in doctors_list if base_name not in doctor_done_packages[doc]]
             
-            if not valid_candidates:
-                valid_candidates = doctors_list
-                
-            assigned_doctor = min(valid_candidates, key=lambda d: (len(doctor_done_packages[d]), _total_shifts_in_month(d, block["dates"][0], schedule)))
-
+            if not has_conflict:
+                best_doc = doc
+                break
+        
+        if best_doc is None:
+            for offset in range(num_docs):
+                doc_idx = (base_idx + offset) % num_docs
+                doc = doctors_list[doc_idx]
+                if doc not in doctors_with_package_in_cycle[cycle_y] and base_name not in doctor_done_packages[doc]:
+                    best_doc = doc
+                    break
+            if best_doc is None:
+                for offset in range(num_docs):
+                    doc_idx = (base_idx + offset) % num_docs
+                    doc = doctors_list[doc_idx]
+                    if doc not in doctors_with_package_in_cycle[cycle_y]:
+                        best_doc = doc
+                        break
+            if best_doc is None:
+                best_doc = doctors_list[base_idx]
+            
         for d in block["dates"]:
             if start_date <= d <= end_date and d not in schedule:
-                if _shifts_in_weekend_block(assigned_doctor, d, schedule, exclude_date=d) == 0:
-                    schedule[d] = assigned_doctor
-                    assigned_major_dates[d] = assigned_doctor
-                    
-        doctors_with_package_in_cycle[cycle_y].add(assigned_doctor)
-        doctor_done_packages[assigned_doctor].add(base_name)
-
-    all_base_packages = set(bp for bp in ["Πρωτοχρονιά (1/1)", "Χριστούγεννα (25/12)", "Παραμονή Πρωτοχρονιάς (31/12)", "Κυριακή του Πάσχα", "Δευτέρα του Πάσχα", "Μεγάλο Σάββατο + 24/12", "Μεγάλη Παρασκευή + 26/12"])
-    for doc in doctors_list:
-        missing_pkgs = all_base_packages - doctor_done_packages[doc]
-        if missing_pkgs and len(major_blocks) >= len(doctors_list) and (end_date - start_date).days >= 365 * 6:
-            warnings.append(f"Ειδοποίηση: Ο/Η {doc} δεν έλαβε τα εξής πακέτα στον κύκλο: {', '.join(missing_pkgs)}")
+                schedule[d] = best_doc
+                assigned_major_dates[d] = best_doc
+        doctors_with_package_in_cycle[cycle_y].add(best_doc)
+        doctor_done_packages[best_doc].add(base_name)
 
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
     minor_dates = {d for d in holiday_dates if d not in {bd for block in major_blocks for bd in block["dates"]}}
@@ -482,8 +443,6 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
     special_dates.sort(key=lambda d: (0 if d in minor_dates else 1 if d.weekday() in (5, 6) else 2, d))
 
     for d in special_dates:
-        if d in schedule:
-            continue
         chosen = None
         wd = d.weekday()
         is_minor_holiday = d in minor_dates
@@ -498,7 +457,6 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
                         avoid_consecutive_weekends=avoid_cons)]
                     if valid:
                         chosen = min(valid, key=lambda doc: (
-                            _had_special_shift_last_month(doc, d, schedule, holiday_dates),
                             _minor_total(doc, d) if is_minor_holiday else 0,
                             _global_weekday_total(doc, wd, schedule, exclude_date=d),
                             _special_count_in_month(doc, d, schedule, holiday_dates, exclude_date=d),
@@ -511,40 +469,15 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
                 break
 
         if chosen is None:
-            # Θωρακισμένο Fallback: Απαγόρευση συνεχόμενων Σαββατοκύριακων ακόμα και στα fallback
-            valid_fallback = [
-                doc for doc in doctors_list 
-                if _shifts_in_weekend_block(doc, d, schedule, exclude_date=d) == 0 
-                and not _has_weekend_in_adjacent_week(doc, d, schedule)
-                and not _had_special_shift_last_month(doc, d, schedule, holiday_dates)
-                and _special_count_in_month(doc, d, schedule, holiday_dates, exclude_date=d) < 2
-                and _within_dynamic_month_cap(doc, d, schedule, num_docs, exclude_date=d)
-            ]
-            
-            if not valid_fallback:
-                valid_fallback = [
-                    doc for doc in doctors_list 
-                    if _shifts_in_weekend_block(doc, d, schedule, exclude_date=d) == 0 
-                    and not _has_weekend_in_adjacent_week(doc, d, schedule)
-                    and _within_dynamic_month_cap(doc, d, schedule, num_docs, exclude_date=d)
-                ]
-            
-            if not valid_fallback:
-                valid_fallback = [doc for doc in doctors_list if _shifts_in_weekend_block(doc, d, schedule, exclude_date=d) == 0]
-            
-            if not valid_fallback:
-                valid_fallback = doctors_list
-            
-            chosen = min(valid_fallback, key=lambda doc: (
-                _had_special_shift_last_month(doc, d, schedule, holiday_dates),
-                _shifts_in_weekend_block(doc, d, schedule, exclude_date=d),
-                _special_count_in_month(doc, d, schedule, holiday_dates, exclude_date=d),
+            valid_fallback = [doc for doc in doctors_list if not _has_nearby_shift(doc, d, schedule, min_gap=1)]
+            pool = valid_fallback if valid_fallback else doctors_list
+            chosen = min(pool, key=lambda doc: (
                 _minor_total(doc, d) if is_minor_holiday else 0,
                 _global_weekday_total(doc, wd, schedule, exclude_date=d),
                 not _within_dynamic_month_cap(doc, d, schedule, num_docs, exclude_date=d),
                 _total_shifts_in_month(doc, d, schedule, exclude_date=d)
             ))
-            warnings.append(f"{d.strftime('%d/%m/%Y')}: περιορισμός fallback, ανατέθηκε στον/ην {chosen}")
+            warnings.append(f"{d.strftime('%d/%m/%Y')}: καμία πλήρως έγκυρη επιλογή, ανατέθηκε {chosen}")
         schedule[d] = chosen
 
     for current_date in all_days:
@@ -565,36 +498,20 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
                 real_count = sum(1 for dt, dc in schedule.items() if dc == doc_name)
                 return base_v + real_count
 
+            def _total_weekdays(doc_name):
+                return sum(1 for dt, dc in schedule.items() if dc == doc_name and dt.weekday() in (0, 1, 2, 3))
+
             chosen = min(valid, key=lambda doc: (
                 _total_overall_shifts(doc),
-                _global_weekday_total(doc, current_date.weekday(), schedule, exclude_date=current_date),
+                _total_weekdays(doc),
                 _total_shifts_in_month(doc, current_date, schedule, exclude_date=current_date)
             ))
             break
 
         if chosen is None:
-            valid_fallback = [
-                doc for doc in doctors_list 
-                if _shifts_in_weekend_block(doc, current_date, schedule, exclude_date=current_date) == 0 
-                and not _has_weekend_in_adjacent_week(doc, current_date, schedule)
-                and not _has_nearby_shift(doc, current_date, schedule, min_gap=1) 
-                and _within_dynamic_month_cap(doc, current_date, schedule, num_docs, exclude_date=current_date)
-            ]
-            if not valid_fallback:
-                valid_fallback = [
-                    doc for doc in doctors_list 
-                    if _shifts_in_weekend_block(doc, current_date, schedule, exclude_date=current_date) == 0 
-                    and not _has_weekend_in_adjacent_week(doc, current_date, schedule)
-                    and _within_dynamic_month_cap(doc, current_date, schedule, num_docs, exclude_date=current_date)
-                ]
-            if not valid_fallback:
-                valid_fallback = [doc for doc in doctors_list if _shifts_in_weekend_block(doc, current_date, schedule, exclude_date=current_date) == 0]
-            if not valid_fallback:
-                valid_fallback = doctors_list
-
-            chosen = min(valid_fallback, key=lambda doc: (
-                _shifts_in_weekend_block(doc, current_date, schedule, exclude_date=current_date),
-                _has_weekend_in_adjacent_week(doc, current_date, schedule),
+            valid_fallback = [doc for doc in doctors_list if not _has_nearby_shift(doc, current_date, schedule, min_gap=1)]
+            pool = valid_fallback if valid_fallback else doctors_list
+            chosen = min(pool, key=lambda doc: (
                 not _within_dynamic_month_cap(doc, current_date, schedule, num_docs, exclude_date=current_date),
                 _total_shifts_in_month(doc, current_date, schedule, exclude_date=current_date)))
             warnings.append(f"{current_date.strftime('%d/%m/%Y')}: καμία πλήρως έγκυρη επιλογή, ανατέθηκε {chosen}")
@@ -926,6 +843,7 @@ def create_calendar_pdf(schedule, start_date, end_date, holiday_names, doctors_l
 
 
 def display_calendar(schedule, holiday_names, doctors_list):
+    manual_assignments = str_lit.session_state.get("manual_assignments", {})
     last_month = None
     for date in sorted(schedule.keys()):
         month_key = (date.year, date.month)
@@ -1014,6 +932,7 @@ str_lit.title("📅 Πρόγραμμα Εφημεριών Ακτινολόγων
 str_lit.markdown("<span style='font-size:14px; color:gray;'>© Γιώργος Μενοίκου, PhD</span>",
             unsafe_allow_html=True)
 
+# --- ΦΟΡΤΩΣΗ ΤΕΛΕΥΤΑΙΟΥ STATE ΑΠΟ ΤΟ ΑΡΧΕΙΟ ---
 saved_state = load_state_from_file()
 
 defaults = {
@@ -1039,6 +958,7 @@ if str_lit.session_state.schedule and (str_lit.session_state.balance is None or 
         str_lit.session_state.holiday_names, str_lit.session_state.doctors
     )
 
+# --- ΕΠΙΛΟΓΗ ΡΟΛΟΥ ΧΡΗΣΤΗ ΜΕ ΚΩΔΙΚΟ ---
 str_lit.sidebar.markdown("### 🔐 Έλεγχος Πρόσβασης")
 user_role = str_lit.sidebar.selectbox("Επιλέξτε Ρόλο Χρήστη", ["Γιατρός / Αναγνώστης (View-Only)", "Διαχειριστής (Moderator)"])
 
@@ -1114,7 +1034,7 @@ with left_col:
             
             f_col1, f_col2 = str_lit.columns(2)
             submit_add = f_col1.form_submit_button("➕ Προσθήκη / Κλείδωμα")
-            submit_del = f_col2.form_submit_button("🗑 Αφαίρεση Ημερομηνίας")
+            submit_del = f_col2.form_submit_button("🗑️ Αφαίρεση Ημερομηνίας")
 
             if submit_add:
                 str_lit.session_state.manual_assignments[f_date] = f_doc
@@ -1154,7 +1074,7 @@ with left_col:
                     schedule, holiday_names, str_lit.session_state.balance, 
                     str_lit.session_state.manual_assignments, active_doctors, str_lit.session_state.initial_week
                 )
-                str_lit.success("Το πρόγραμμα υπολογίστηκε εξ αρχής με αυστηρή θωράκιση αποφυγής συνεχόμενων Σ/Κ!")
+                str_lit.success("Το πρόγραμμα υπολογίστηκε εξ αρχής!")
 
         with calc_col2:
             change_date = str_lit.date_input("Ημερομηνία Αλλαγής Προσωπικού:", value=datetime.date.today())
@@ -1186,7 +1106,7 @@ with left_col:
 
         active_doctors = str_lit.session_state.doctors
     else:
-        str_lit.subheader("👁 Λειτουργία Προβολής (Γιατρός)")
+        str_lit.subheader("👁️ Λειτουργία Προβολής (Γιατρός)")
         if user_role == "Διαχειριστής (Moderator)":
             str_lit.warning("Παρακαλώ εισάγετε τον σωστό κωδικό διαχειριστή στην πλαϊνή μπάρα για πρόσβαση στις ρυθμίσεις.")
         else:
@@ -1200,7 +1120,7 @@ with left_col:
             str_lit.warning("Δεν έχει αποθηκευτεί ακόμα πρόγραμμα από τον Διαχειριστή.")
 
     if str_lit.session_state.warnings:
-        with str_lit.expander("⚠ Προειδοποιήσεις Κανόνων & Ισοζυγίου", expanded=False):
+        with str_lit.expander("⚠ Προειδοποιήσεις Κανόνων", expanded=False):
             for w in str_lit.session_state.warnings:
                 str_lit.write(f"- {w}")
 
