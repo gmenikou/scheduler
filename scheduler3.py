@@ -179,16 +179,10 @@ def _month_stats(doctor, date, schedule, exclude_date=None):
 def _within_dynamic_month_cap(doctor, date, schedule, num_docs, exclude_date=None):
     total, _, _ = _month_stats(doctor, date, schedule, exclude_date)
     total += 1
-    # Αυστηρό ανώτατο όριο 5 εφημεριών ανά μήνα ανά ιατρό
     return total <= 5
 
 
 def _count_target_combinations_in_month(doctor, target_date, schedule, holiday_dates, exclude_date=None):
-    """
-    Μετρά πόσους από τους απαγορευτικούς συνδυασμούς (Παρ+Σαβ, Παρ+Κυρ, Σαβ+Κυρ, Αργία+Σαβ, Αργία+Κυρ)
-    έχει ήδη ο ιατρός στον συγκεκριμένο μήνα. Εξετάζει και την προτεινόμενη ημερομηνία target_date.
-    """
-    # Συγκεντρώνουμε όλες τις εφημερίες του γιατρού στον μήνα (συμπεριλαμβανομένης της τρέχουσας)
     month_shifts = set()
     for d, doc in schedule.items():
         if d != exclude_date and doc == doctor and d.year == target_date.year and d.month == target_date.month:
@@ -196,32 +190,24 @@ def _count_target_combinations_in_month(doctor, target_date, schedule, holiday_d
     if target_date != exclude_date:
         month_shifts.add(target_date)
 
-    # Έλεγχος ανά ζεύγη ημερών εντός του μήνα
     comb_count = 0
-    checked_pairs = set()
-    
     shift_list = sorted(list(month_shifts))
     for i in range(len(shift_list)):
         for j in range(i + 1, len(shift_list)):
             d1 = shift_list[i]
             d2 = shift_list[j]
             
-            # Ελέγχουμε αν είναι κοντά (π.χ. διαφορά μέχρι 2 μέρες ώστε να καλύπτει διημέρευση Παρ-Σαβ, Σαβ-Κυρ κλπ)
             if (d2 - d1).days <= 2:
                 w1, w2 = d1.weekday(), d2.weekday()
                 h1, h2 = d1 in holiday_dates, d2 in holiday_dates
                 
                 is_target_comb = False
-                # Παρασκευή (4) + Σάββατο (5)
                 if (w1 == 4 and w2 == 5) or (w2 == 4 and w1 == 5):
                     is_target_comb = True
-                # Παρασκευή (4) + Κυριακή (6)
                 elif (w1 == 4 and w2 == 6) or (w2 == 4 and w1 == 6):
                     is_target_comb = True
-                # Σάββατο (5) + Κυριακή (6)
                 elif (w1 == 5 and w2 == 6) or (w2 == 5 and w1 == 6):
                     is_target_comb = True
-                # Αργία + Σάββατο (5) ή Αργία + Κυριακή (6)
                 elif (h1 and w2 in (5, 6)) or (h2 and w1 in (5, 6)):
                     is_target_comb = True
                 
@@ -232,9 +218,6 @@ def _count_target_combinations_in_month(doctor, target_date, schedule, holiday_d
 
 
 def _had_both_sat_sun_previous_month(doctor, current_date, schedule, holiday_dates):
-    """
-    Ελέγχει αν ο ιατρός είχε ΚΑΙ Σάββατο ΚΑΙ Κυριακή στον προηγούμενο μήνα.
-    """
     if current_date.month == 1:
         prev_month = 12
         prev_year = current_date.year - 1
@@ -371,7 +354,6 @@ def is_valid_assignment(doctor, date, schedule, holiday_dates, num_docs, exclude
     if not _within_dynamic_month_cap(doctor, date, schedule, num_docs, exclude_date=exclude_date):
         return False
 
-    # Νέος κανόνας: Κανένας δεν παίρνει περισσότερους από 1 συνδυασμούς (Παρ+Σαβ, Παρ+Κυρ, Σαβ+Κυρ, Αργία+Σαβ, Αργία+Κυρ) ανά μήνα
     if _count_target_combinations_in_month(doctor, date, schedule, holiday_dates, exclude_date=exclude_date) > 1:
         return False
 
@@ -433,6 +415,11 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
                     assigned_major_dates[d] = schedule[d]
             doctor_done_packages[block_doc].add(block["base_name"])
 
+    # Δομή για παρακολούθηση ποιος πήρε τι ανά κύκλο / συνολικά για τον περιορισμό "να τα πάρουν όλοι πριν ξαναπάρουν το ίδιο"
+    doctor_done_packages_history = defaultdict(set)
+    for doc, pkgs in doctor_done_packages.items():
+        doctor_done_packages_history[doc].update(pkgs)
+
     doctors_with_package_in_cycle = defaultdict(set)
     for block in major_blocks:
         cycle_y = block["cycle_id"]
@@ -452,44 +439,41 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
         base_idx = (order_idx + cycle_y) % num_docs
         
         best_doc = None
-        for offset in range(num_docs):
-            doc_idx = (base_idx + offset) % num_docs
-            doc = doctors_list[doc_idx]
-            
-            if doc in doctors_with_package_in_cycle[cycle_y]:
-                continue
-            if base_name in doctor_done_packages[doc]:
-                continue
+        # Βήμα 1ο: Αναζήτηση γιατρού που ΔΕΝ έχει πάρει το πακέτο ούτε στον τρέχοντα κύκλο ούτε ξανά μέχρι να το πάρουν όλοι
+        for strict_check in [True, False]:
+            for offset in range(num_docs):
+                doc_idx = (base_idx + offset) % num_docs
+                doc = doctors_list[doc_idx]
+                
+                if doc in doctors_with_package_in_cycle[cycle_y]:
+                    continue
+                if strict_check and base_name in doctor_done_packages_history[doc]:
+                    continue
 
-            has_conflict = False
-            for d_existing, d_doc in assigned_major_dates.items():
-                gap_limit = 1 if num_docs <= 5 else 3
-                if d_doc == doc:
-                    for b_date in block["dates"]:
-                        if abs((b_date - d_existing).days) <= gap_limit:
-                            has_conflict = True
-                            break
-                if has_conflict:
+                has_conflict = False
+                for d_existing, d_doc in assigned_major_dates.items():
+                    gap_limit = 1 if num_docs <= 5 else 3
+                    if d_doc == doc:
+                        for b_date in block["dates"]:
+                            if abs((b_date - d_existing).days) <= gap_limit:
+                                has_conflict = True
+                                break
+                    if has_conflict:
+                        break
+                
+                if not has_conflict:
+                    best_doc = doc
                     break
-            
-            if not has_conflict:
-                best_doc = doc
+            if best_doc is not None:
                 break
         
         if best_doc is None:
             for offset in range(num_docs):
                 doc_idx = (base_idx + offset) % num_docs
                 doc = doctors_list[doc_idx]
-                if doc not in doctors_with_package_in_cycle[cycle_y] and base_name not in doctor_done_packages[doc]:
+                if doc not in doctors_with_package_in_cycle[cycle_y]:
                     best_doc = doc
                     break
-            if best_doc is None:
-                for offset in range(num_docs):
-                    doc_idx = (base_idx + offset) % num_docs
-                    doc = doctors_list[doc_idx]
-                    if doc not in doctors_with_package_in_cycle[cycle_y]:
-                        best_doc = doc
-                        break
             if best_doc is None:
                 best_doc = doctors_list[base_idx]
             
@@ -498,7 +482,13 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
                 schedule[d] = best_doc
                 assigned_major_dates[d] = best_doc
         doctors_with_package_in_cycle[cycle_y].add(best_doc)
-        doctor_done_packages[best_doc].add(base_name)
+        doctor_done_packages_history[best_doc].add(base_name)
+
+        # Αν κάποιος γιατρός έχει ολοκληρώσει όλα τα διαθέσιμη πακέτα, κάνουμε reset το ιστορικό πακέτων του για να ξεκινήσει νέος κύκλος
+        all_possible_bases = {b["base_name"] for b in major_blocks}
+        if all_possible_bases.issubset(doctor_done_packages_history[best_doc]):
+            doctor_done_packages_history[best_doc].clear()
+            doctor_done_packages_history[best_doc].add(base_name)
 
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
     minor_dates = {d for d in holiday_dates if d not in {bd for block in major_blocks for bd in block["dates"]}}
@@ -528,7 +518,6 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
                         min_gap=min_gap, max_special=max_special, 
                         avoid_consecutive_weekends=avoid_cons)]
                     if valid:
-                        # Εφαρμογή προτεραιότητας εναλλαγής (όσοι είχαν και Σάββατο και Κυριακή τον προηγούμενο μήνα αποφεύγονται)
                         chosen = min(valid, key=lambda doc: (
                             1 if _had_both_sat_sun_previous_month(doc, d, schedule, holiday_dates) else 0,
                             _minor_total(doc, d) if is_minor_holiday else 0,
