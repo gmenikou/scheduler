@@ -421,7 +421,6 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
             if base_name in doctor_done_packages[doc]:
                 continue
 
-            # Έλεγχος τριημέρου για όλες τις ημερομηνίες του block
             valid_block = True
             for b_date in block["dates"]:
                 if _shifts_in_weekend_block(doc, b_date, schedule, exclude_date=b_date) > 0:
@@ -519,14 +518,18 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
                 break
 
         if chosen is None:
+            # 🛑 ΑΥΣΤΗΡΑ FALLBACKΣ ΠΟΥ ΔΙΑΤΗΡΟΥΝ ΠΑΝΤΑ ΤΟΝ ΚΑΝΟΝΑ ΤΡΙΗΜΕΡΟΥ == 0
             valid_fallback = [doc for doc in doctors_list if _shifts_in_weekend_block(doc, d, schedule, exclude_date=d) == 0 and not _has_nearby_shift(doc, d, schedule, min_gap=1) and _within_dynamic_month_cap(doc, d, schedule, num_docs, exclude_date=d)]
             if not valid_fallback:
                 valid_fallback = [doc for doc in doctors_list if _shifts_in_weekend_block(doc, d, schedule, exclude_date=d) == 0 and _within_dynamic_month_cap(doc, d, schedule, num_docs, exclude_date=d)]
             if not valid_fallback:
-                valid_fallback = [doc for doc in doctors_list if _within_dynamic_month_cap(doc, d, schedule, num_docs, exclude_date=d)]
+                valid_fallback = [doc for doc in doctors_list if _shifts_in_weekend_block(doc, d, schedule, exclude_date=d) == 0]
+            if not valid_fallback:
+                valid_fallback = doctors_list
             
-            pool = valid_fallback if valid_fallback else doctors_list
+            pool = valid_fallback
             chosen = min(pool, key=lambda doc: (
+                _shifts_in_weekend_block(doc, d, schedule, exclude_date=d),
                 _minor_total(doc, d) if is_minor_holiday else 0,
                 _global_weekday_total(doc, wd, schedule, exclude_date=d),
                 not _within_dynamic_month_cap(doc, d, schedule, num_docs, exclude_date=d),
@@ -564,12 +567,17 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
             break
 
         if chosen is None:
-            valid_fallback = [doc for doc in doctors_list if not _has_nearby_shift(doc, current_date, schedule, min_gap=1) and _within_dynamic_month_cap(doc, current_date, schedule, num_docs, exclude_date=current_date)]
+            valid_fallback = [doc for doc in doctors_list if _shifts_in_weekend_block(doc, current_date, schedule, exclude_date=current_date) == 0 and not _has_nearby_shift(doc, current_date, schedule, min_gap=1) and _within_dynamic_month_cap(doc, current_date, schedule, num_docs, exclude_date=current_date)]
             if not valid_fallback:
-                valid_fallback = [doc for doc in doctors_list if _within_dynamic_month_cap(doc, current_date, schedule, num_docs, exclude_date=current_date)]
+                valid_fallback = [doc for doc in doctors_list if _shifts_in_weekend_block(doc, current_date, schedule, exclude_date=current_date) == 0 and _within_dynamic_month_cap(doc, current_date, schedule, num_docs, exclude_date=current_date)]
+            if not valid_fallback:
+                valid_fallback = [doc for doc in doctors_list if _shifts_in_weekend_block(doc, current_date, schedule, exclude_date=current_date) == 0]
+            if not valid_fallback:
+                valid_fallback = doctors_list
 
-            pool = valid_fallback if valid_fallback else doctors_list
+            pool = valid_fallback
             chosen = min(pool, key=lambda doc: (
+                _shifts_in_weekend_block(doc, current_date, schedule, exclude_date=current_date),
                 not _within_dynamic_month_cap(doc, current_date, schedule, num_docs, exclude_date=current_date),
                 _total_shifts_in_month(doc, current_date, schedule, exclude_date=current_date)))
             warnings.append(f"{current_date.strftime('%d/%m/%Y')}: καμία πλήρως έγκυρη επιλογή, ανατέθηκε {chosen}")
