@@ -260,8 +260,9 @@ def get_major_holiday_blocks_in_range(start_date, end_date, num_docs=7):
 
     years = range(start_date.year - 1, end_date.year + 2)
     
-    # 100% αυστηρή αντιστοίχιση κύκλου: κάθε 7 έτη αποτελούν έναν πλήρη κύκλο εναλλαγής
-    for y_idx, y in enumerate(years):
+    # 100% αυστηρή κυκλική κατανομή ανά έτος και πακέτο με σταθερό global index
+    global_pkg_index = 0
+    for y in years:
         easter_next = orthodox_easter(y + 1)
         g_fri_next = easter_next - datetime.timedelta(days=2)
         s_sat_next = easter_next - datetime.timedelta(days=1)
@@ -280,18 +281,13 @@ def get_major_holiday_blocks_in_range(start_date, end_date, num_docs=7):
             "Πρωτομαγιά (1/5)": [datetime.date(y, 5, 1)]
         }
 
-        # Ορίζουμε τον 7ετή κύκλο με βάση την απόλυτη διαίρεση ετών
-        cycle_id = (y - (start_date.year - 1)) // 7
-        if cycle_id < 0:
-            cycle_id = 0
-
-        for p_idx, base_name in enumerate(base_packages):
+        for base_name in base_packages:
             if base_name in year_packages_map:
                 dates = year_packages_map[base_name]
                 valid_dates = [d for d in dates if start_date <= d <= end_date]
                 if valid_dates:
-                    # Σειρά θέσης αυστηρά κυκλική ώστε να μην συμπίπτουν ποτέ στον ίδιο κύκλο
-                    order_idx = (p_idx + cycle_id * 3) % num_docs
+                    cycle_id = global_pkg_index // num_docs
+                    order_idx = global_pkg_index % num_docs
                     
                     blocks.append({
                         "name": f"{base_name} ({y})",
@@ -300,6 +296,7 @@ def get_major_holiday_blocks_in_range(start_date, end_date, num_docs=7):
                         "cycle_id": cycle_id,
                         "order": order_idx
                     })
+                    global_pkg_index += 1
     return blocks
 
 
