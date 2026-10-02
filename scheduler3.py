@@ -134,7 +134,7 @@ def _shifts_in_week(doctor, date, schedule, exclude_date=None):
 
 def _shifts_in_weekend_block(doctor, date, schedule, exclude_date=None):
     """Ελέγχει αν ο γιατρός έχει ήδη εφημερία την Παρασκευή, Σάββατο ή Κυριακή της ίδιας εβδομάδας"""
-    if date.weekday() not in (4, 5, 6):  # Μόνο για Παρασκευή (4), Σάββατο (5), Κυριακή (6)
+    if date.weekday() not in (4, 5, 6):
         return 0
     
     wk_monday = _week_monday(date)
@@ -302,7 +302,7 @@ def get_major_holiday_blocks_in_range(start_date, end_date, num_docs=7):
 
 def is_valid_assignment(doctor, date, schedule, holiday_dates, num_docs, exclude_date=None,
                         min_gap=3, max_special=1, avoid_consecutive_weekends=True):
-    # 🛑 Αποτροπή 2 εφημεριών στο τριήμερο Παρασκευή-Σάββατο-Κυριακή της ίδιας εβδομάδας
+    # 🛑 Αποτροπή >1 εφημερίας στο τριήμερο Παρασκευή-Σάββατο-Κυριακή της ίδιας εβδομάδας
     if _shifts_in_weekend_block(doctor, date, schedule, exclude_date=exclude_date) > 0:
         return False
 
@@ -383,7 +383,9 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
         if block_doc:
             for d in block["dates"]:
                 if start_date <= d <= end_date and d not in schedule:
-                    schedule[d] = block_doc
+                    # Έλεγχος ώστε να μην παραβιάζεται ο κανόνας του τριημέρου ούτε στα πακέτα
+                    if _shifts_in_weekend_block(block_doc, d, schedule, exclude_date=d) == 0:
+                        schedule[d] = block_doc
                 if d in schedule:
                     assigned_major_dates[d] = schedule[d]
             doctor_done_packages[block_doc].add(block["base_name"])
@@ -416,6 +418,15 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
             if base_name in doctor_done_packages[doc]:
                 continue
 
+            # Έλεγχος τριημέρου (Παρ-Σαβ-Κυρ) για όλες τις ημερομηνίες του block
+            valid_block = True
+            for b_date in block["dates"]:
+                if _shifts_in_weekend_block(doc, b_date, schedule, exclude_date=b_date) > 0:
+                    valid_block = False
+                    break
+            if not valid_block:
+                continue
+
             has_conflict = False
             for d_existing, d_doc in assigned_major_dates.items():
                 gap_limit = 1 if num_docs <= 5 else 3
@@ -436,8 +447,15 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
                 doc_idx = (base_idx + offset) % num_docs
                 doc = doctors_list[doc_idx]
                 if doc not in doctors_with_package_in_cycle[cycle_y] and base_name not in doctor_done_packages[doc]:
-                    best_doc = doc
-                    break
+                    # Ελέγχουμε έστω τριήμερο
+                    can_take = True
+                    for b_date in block["dates"]:
+                        if _shifts_in_weekend_block(doc, b_date, schedule, exclude_date=b_date) > 0:
+                            can_take = False
+                            break
+                    if can_take:
+                        best_doc = doc
+                        break
             if best_doc is None:
                 for offset in range(num_docs):
                     doc_idx = (base_idx + offset) % num_docs
@@ -496,7 +514,9 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
                 break
 
         if chosen is None:
-            valid_fallback = [doc for doc in doctors_list if not _has_nearby_shift(doc, d, schedule, min_gap=1) and _within_dynamic_month_cap(doc, d, schedule, num_docs, exclude_date=d)]
+            valid_fallback = [doc for doc in doctors_list if _shifts_in_weekend_block(doc, d, schedule, exclude_date=d) == 0 and not _has_nearby_shift(doc, d, schedule, min_gap=1) and _within_dynamic_month_cap(doc, d, schedule, num_docs, exclude_date=d)]
+            if not valid_fallback:
+                valid_fallback = [doc for doc in doctors_list if _shifts_in_weekend_block(doc, d, schedule, exclude_date=d) == 0 and _within_dynamic_month_cap(doc, d, schedule, num_docs, exclude_date=d)]
             if not valid_fallback:
                 valid_fallback = [doc for doc in doctors_list if _within_dynamic_month_cap(doc, d, schedule, num_docs, exclude_date=d)]
             
