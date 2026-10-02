@@ -860,7 +860,6 @@ def display_calendar(schedule, holiday_names, doctors_list):
                     if day.month == date.month:
                         doc = schedule.get(day, "")
                         is_holiday = day in holiday_names
-                        icon = " ✏️" if day in manual_assignments else ""
                         holiday_tag = (f"<br><span style='font-size:10px'>🎉 {holiday_names[day]}</span>"
                                        if is_holiday else "")
                         rgb = get_doctor_color(doc, doctors_list)
@@ -869,7 +868,7 @@ def display_calendar(schedule, holiday_names, doctors_list):
                         cols[i].markdown(
                             f"<div style='background-color:{color}; {border} padding:6px; "
                             f"border-radius:4px; text-align:center'>"
-                            f"<b>{day.day}</b><br>{doc}{icon}{holiday_tag}</div>",
+                            f"<b>{day.day}</b><br>{doc}{holiday_tag}</div>",
                             unsafe_allow_html=True,
                         )
                     else:
@@ -994,7 +993,6 @@ with left_col:
 
         str_lit.markdown("### 👥 Διαχείριση Ομάδας Ιατρών")
         
-        # Προσθήκη δυνατότητας χειροκίνητης πληκτρολόγησης νέου γιατρού
         new_doc_input = str_lit.text_input("Προσθήκη νέου γιατρού (πληκτρολόγησε όνομα):")
         if str_lit.button("➕ Προσθήκη στη λίστα"):
             if new_doc_input and new_doc_input not in str_lit.session_state.doctors:
