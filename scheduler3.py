@@ -182,7 +182,12 @@ def _within_dynamic_month_cap(doctor, date, schedule, num_docs, exclude_date=Non
     _, days_in_month = calendar.monthrange(date.year, date.month)
     extra_allowance = 3 if num_docs <= 5 else 2
     base_limit = (days_in_month // num_docs) + extra_allowance
-    return total <= base_limit
+    
+    # 🛑 ΑΠΟΛΥΤΟ ΠΛΑΦΟΝ: Κανείς δεν μπορεί να ξεπεράσει τις 5 εφημερίες τον μήνα
+    absolute_max = 5 
+    effective_limit = min(base_limit, absolute_max)
+    
+    return total <= effective_limit
 
 
 def orthodox_easter(year):
@@ -843,7 +848,6 @@ def create_calendar_pdf(schedule, start_date, end_date, holiday_names, doctors_l
 
 
 def display_calendar(schedule, holiday_names, doctors_list):
-    manual_assignments = str_lit.session_state.get("manual_assignments", {})
     last_month = None
     for date in sorted(schedule.keys()):
         month_key = (date.year, date.month)
@@ -932,7 +936,6 @@ str_lit.title("📅 Πρόγραμμα Εφημεριών Ακτινολόγων
 str_lit.markdown("<span style='font-size:14px; color:gray;'>© Γιώργος Μενοίκου, PhD</span>",
             unsafe_allow_html=True)
 
-# --- ΦΟΡΤΩΣΗ ΤΕΛΕΥΤΑΙΟΥ STATE ΑΠΟ ΤΟ ΑΡΧΕΙΟ ---
 saved_state = load_state_from_file()
 
 defaults = {
@@ -958,7 +961,6 @@ if str_lit.session_state.schedule and (str_lit.session_state.balance is None or 
         str_lit.session_state.holiday_names, str_lit.session_state.doctors
     )
 
-# --- ΕΠΙΛΟΓΗ ΡΟΛΟΥ ΧΡΗΣΤΗ ΜΕ ΚΩΔΙΚΟ ---
 str_lit.sidebar.markdown("### 🔐 Έλεγχος Πρόσβασης")
 user_role = str_lit.sidebar.selectbox("Επιλέξτε Ρόλο Χρήστη", ["Γιατρός / Αναγνώστης (View-Only)", "Διαχειριστής (Moderator)"])
 
