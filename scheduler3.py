@@ -443,9 +443,9 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
                 ))
                 break
 
-        # Αν δεν βρεθεί κατάλληλος γιατρός, μένει ΚΕΝΟ (αντί για παραβίαση)
+        # Διόρθωση εδώ: Χρήση warnings.append αντί για warnings.warn
         if chosen is None:
-            warnings.warn(f"{d.strftime('%d/%m/%Y')}: Καμία έγκυρη επιλογή βάσει κανόνων. Έμεινε κενό για χειροκίνητη ανάθεση.")
+            warnings.append(f"{d.strftime('%d/%m/%Y')}: Καμία έγκυρη επιλογή βάσει κανόνων. Έμεινε κενό για χειροκίνητη ανάθεση.")
             schedule[d] = None
         else:
             schedule[d] = chosen
@@ -475,9 +475,9 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
                 _month_stats(doc, current_date, schedule, exclude_date=current_date)[0]
             ))
 
-        # Αν δεν βρεθεί γιατρός, μένει ΚΕΝΟ
+        # Διόρθωση εδώ: Χρήση warnings.append αντί για warnings.warn
         if chosen is None:
-            warnings.warn(f"{current_date.strftime('%d/%m/%Y')}: Καμία έγκυρη επιλογή καθημερινής. Έμεινε κενό.")
+            warnings.append(f"{current_date.strftime('%d/%m/%Y')}: Καμία έγκυρη επιλογή καθημερινής. Έμεινε κενό.")
             schedule[current_date] = None
         else:
             schedule[current_date] = chosen
@@ -1151,7 +1151,7 @@ with left_col:
 
         str_lit.markdown("---")
         str_lit.markdown("### 🏛 Μικρές Αργίες Χρονολογικά")
-        reg_df = compute_regular_holidays_chronological(str_lit.session_store.schedule if hasattr(str_lit, 'session_store') else str_lit.session_state.schedule, regular_hols)
+        reg_df = compute_regular_holidays_chronological(str_lit.session_state.schedule, regular_hols)
         str_lit.dataframe(reg_df, use_container_width=True, height=200)
 
 with right_col:
