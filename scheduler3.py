@@ -1,11 +1,12 @@
+import base64
 import calendar
 from collections import defaultdict
 import datetime
 import json
 import os
-import base64
-import requests
 from fpdf import FPDF
+import pandas as pd
+import requests
 import streamlit as str_lit
 
 # ----------------------------
@@ -192,3 +193,180 @@ def load_state_from_file():
     return {
         "schedule": schedule,
         "holiday_names": holiday_names,
+        "manual_assignments": manual_assignments,
+        "empty_tooltips": empty_tooltips,
+        "doctors": data.get("doctors", DEFAULT_DOCTORS),
+        "initial_week": data.get("initial_week", DEFAULT_DOCTORS[:7]),
+    }
+  except Exception as e:
+    print("Sfalma fortosis state:", e)
+    return None
+
+
+# ----------------------------
+# HELPER FUNCTIONS
+# ----------------------------
+def get_doctor_color(doc_name, doctors_list):
+  if not doc_name:
+    return (240, 240, 240)
+  if doc_name in DEFAULT_DOCTOR_COLORS:
+    return DEFAULT_DOCTOR_COLORS[doc_name]
+  try:
+    idx = doctors_list.index(doc_name) % len(EXTRA_COLORS)
+    return EXTRA_COLORS[idx]
+  except ValueError:
+    return (220, 220, 220)
+
+
+def _week_monday(date):
+  return date - datetime.timedelta(days=date.weekday())
+
+
+def _has_nearby_shift(doctor, date, schedule, min_gap=3):
+  for d, doc in schedule.items():
+    if doc == doctor and d != date and abs((d - date).days) <= min_gap:
+      return True
+  return False
+
+
+def _has_fri_sun_same_weekend(doctor, date, schedule, exclude_date=None):
+  if date.weekday() not in (4, 6):
+    return False
+  target_wk = _week_monday(date)
+
+  all_shifts = [
+      (d, doc)
+      for d, doc in schedule.items()
+      if d != exclude_date and doc is not None
+  ]
+  if exclude_date and exclude_date.weekday() in (4, 6):
+    all_shifts.append((exclude_date, doctor))
+
+  for d, doc in all_shifts:
+    if doc == doctor and _week_monday(d) == target_wk:
+      if (date.weekday() == 4 and d.weekday() == 6) or (
+          date.weekday() == 6 and d.weekday() == 4
+      ):
+        return True
+  return False
+
+
+def _has_weekend_in_adjacent_week(doctor, date, schedule, exclude_date=None):
+  if date.weekday() not in (4, 5, 6):
+    return False
+  target_wk = _week_monday(date)
+
+  all_shifts = [
+      (d, doc)
+      for d, doc in schedule.items()
+      if d != exclude_date and doc is not None
+  ]
+  if exclude_date and exclude_date.weekday() in (4, 5, 6):
+    all_shifts.append((exclude_date, doctor))
+
+  for d, doc in all_shifts:
+    if doc == doctor and d.weekday() in (4, 5, 6) and d != date:
+      other_wk = _week_monday(d)
+      if abs((target_wk - other_wk).days) == 7:
+        return True
+  return False
+
+
+def _shifts_in_week(doctor, date, schedule, exclude_date=None):
+  wk = _week_monday(date)
+  return sum(
+      1
+      for d, doc in schedule.items()
+      if doc == doctor
+      and d != exclude_date
+      and _week_monday(d) == wk
+      and doc is not None
+  )
+
+
+def _month_stats(doctor, date, schedule, exclude_date=None):
+  total = 0
+  weekend_fri_sat_sun_count = 0
+  weekdays_in_month = []
+
+  month_shifts = [
+      d
+      for d, doc in schedule.items()
+      if doc == doctor
+      and d.year == date.year
+      and d.month == date.month
+      and d != exclude_date
+      and doc is not None
+  ]
+  if (
+      exclude_date
+      and exclude_date.year == date.year
+      and exclude_date.month == date.month
+  ):
+    month_shifts.append(exclude_date)
+
+  for d in month_shifts:
+    total += 1
+    weekdays_in_month.append(d.weekday())
+    if d.weekday() in (4, 5, 6):
+      weekend_fri_sat_sun_count += 1
+
+  return total, weekend_fri_sat_sun_count, weekdays_in_month
+
+
+def _within_dynamic_month_cap(
+    doctor, date, schedule, num_docs, holiday_dates, exclude_date=None
+):
+  total, weekend_count, weekdays_in_month = _month_stats(
+      doctor, date, schedule, exclude_date
+  )
+
+  if weekend_count > 2:
+    return False
+
+  if (
+      weekdays_in_month.count(4) > 1
+      or weekdays_in_month.count(5) > 1
+      or weekdays_in_month.count(6) > 1
+  ):
+    return False
+
+  has_sat = 5 in weekdays_in_month
+  has_sun = 6 in weekdays_in_month
+  if has_sat and has_sun:
+    weekdays_count = sum(1 for w in weekdays_in_month if w in (0, 1, 2, 3))
+    if total > 5:
+      return False
+    if total == 5 and weekdays_count < 3:
+      return False
+
+  return total <= 5
+
+
+def orthodox_easter(year):
+  a = year % 4
+  b = year % 7
+  c = year % 19
+  d = (19 * c + 15) % 30
+  e = (2 * a + 4 * b - d + 34) % 7
+  month = (d + e + 114) // 31
+  day = ((d + e + 114) % 31) + 1
+  julian_easter = datetime.date(year, month, day)
+  return julian_easter + datetime.timedelta(days=13)
+
+
+def get_cyprus_holidays(year):
+  holidays = {}
+  for month, day, name in FIXED_HOLIDAYS:
+    holidays[datetime.date(year, month, day)] = name
+
+  easter = orthodox_easter(year)
+  movable = {
+      easter - datetime.timedelta(days=48): "Καθαρά Δευτέρα",
+      easter - datetime.timedelta(days=2): "Μεγάλη Παρασκευή",
+      easter - datetime.timedelta(days=1): "Μεγάλο Σάββατο",
+      easter: "Κυριακή του Πάσχα",
+      easter + datetime.timedelta(days=1): "Δευτέρα του Πάσχα",
+      easter + datetime.timedelta(days=50): "Δευτέρα Αγίου Πνεύματος",
+  }
+  holidays.update(movable)
