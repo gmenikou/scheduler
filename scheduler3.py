@@ -188,7 +188,6 @@ def _within_dynamic_month_cap(doctor, date, schedule, num_docs, holiday_dates, e
     has_sat = (5 in weekdays_in_month)
     has_sun = (6 in weekdays_in_month)
     if has_sat and has_sun:
-        # Επιτρέπεται έως 5 εφημερίες αν οι άλλες 3 είναι καθημερινές (Δευτέρα-Πέμπτη)
         weekdays_count = sum(1 for w in weekdays_in_month if w in (0, 1, 2, 3))
         if total > 5:
             return False
@@ -433,7 +432,6 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
     ]
     special_dates.sort(key=lambda d: (0 if d in minor_dates else 1 if d.weekday() in (4, 5, 6) else 2, d))
 
-    # ΑΥΣΤΗΡΟΣ Έλεγχος για Ειδικές Ημέρες / Σαββατοκύριακα / Αργίες (με προτεραιότητα σε όσους έχουν χαμηλότερο φόρτο Σαββατοκύριακων)
     for d in special_dates:
         chosen = None
         wd = d.weekday()
@@ -445,10 +443,6 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
             min_gap=min_gap_val, avoid_consecutive_weekends=True)]
         
         if valid:
-            # Εφαρμογή ιεραρχίας προτεραιότητας: 
-            # 1. Προτεραιότητα σε όσους έχουν < 2 weekend shifts στον μήνα (δηλαδή δεν είναι φορτωμένοι με πολλαπλά Σ/Κ)
-            # 2. Ισοζύγιο μικρών αργιών
-            # 3. Παγκόσμιο weekday total
             chosen = min(valid, key=lambda doc: (
                 1 if _month_stats(doc, d, schedule, exclude_date=d)[1] >= 2 else 0,
                 _minor_total(doc, d) if is_minor_holiday else 0,
@@ -483,7 +477,6 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
         else:
             schedule[d] = chosen
 
-    # ΑΥΣΤΗΡΟΣ Έλεγχος για Καθημερινές
     for current_date in all_days:
         if current_date in schedule:
             continue
@@ -1066,15 +1059,49 @@ with left_col:
             
             f_col1, f_col2 = str_lit.columns(2)
             submit_add = f_col1.form_submit_button("➕ Προσθήκη / Κλείδωμα")
-            submit_del = f_col2.form_submit_button("🗑️️ Αφαίρεση Ημερομηνίας")
+            submit_del = f_col2.form_submit_button("🗑 Αφαίρεση Ημερομηνίας")
 
             if submit_add:
                 str_lit.session_state.manual_assignments[f_date] = f_doc
-                str_lit.success(f"Προστέθηκε: {f_date.strftime('%d/%m/%Y')} -> {f_doc}")
+                
+                # Άμεση ενημέρωση μόνο της συγκεκριμένης ημέρας χωρίς επαναυπολογισμό όλου του προγράμματος
+                if str_lit.session_state.schedule is not None:
+                    str_lit.session_state.schedule[f_date] = f_doc
+                    
+                    # Ενημέρωση μόνο του ισοζυγίου (balance) και αποθήκευση state
+                    end_d = max(str_lit.session_state.schedule.keys()) if str_lit.session_state.schedule else f_date
+                    str_lit.session_state.balance = compute_balance(
+                        str_lit.session_state.schedule, str_lit.session_state.start_date, end_d, 
+                        str_lit.session_state.holiday_names, active_doctors
+                    )
+                    save_state_to_file(
+                        str_lit.session_state.schedule, str_lit.session_state.holiday_names, 
+                        str_lit.session_state.balance, str_lit.session_state.manual_assignments, 
+                        active_doctors, str_lit.session_state.initial_week, 
+                        str_lit.session_state.empty_tooltips
+                    )
+                
+                str_lit.success(f"Προστέθηκε & κλειδώθηκε: {f_date.strftime('%d/%m/%Y')} -> {f_doc}")
+                str_lit.rerun()
+
             elif submit_del:
                 if f_date in str_lit.session_state.manual_assignments:
                     del str_lit.session_state.manual_assignments[f_date]
-                    str_lit.info(f"Αφαιρέθηκε η ημερομηνία {f_date.strftime('%d/%m/%Y')}")
+                    
+                    # Αν αφαιρεθεί η χειροκίνητη ανάθεση, μπορούμε προαιρετικά να ξαναϋπολογίσουμε τη μέρα ή απλά να την αφήσουμε. 
+                    # Εδώ κάνουμε απλή ενημέρωση του state.
+                    if str_lit.session_state.schedule and f_date in str_lit.session_state.schedule:
+                        # Τρέχουμε έναν πλήρη υπολογισμό αν θέλουμε να καλυφθεί το κενό, ή απλά κρατάμε τη μέρα.
+                        pass
+                        
+                    save_state_to_file(
+                        str_lit.session_state.schedule, str_lit.session_state.holiday_names, 
+                        str_lit.session_state.balance, str_lit.session_state.manual_assignments, 
+                        active_doctors, str_lit.session_state.initial_week, 
+                        str_lit.session_state.empty_tooltips
+                    )
+                str_lit.info(f"Αφαιρέθηκε η ημερομηνία {f_date.strftime('%d/%m/%Y')} από τις manual αλλαγές.")
+                str_lit.rerun()
 
         if str_lit.session_state.manual_assignments:
             str_lit.markdown("**📋 Εκκρεμείς Χειροκίνητες Αλλαγές:**")
