@@ -113,11 +113,11 @@ def _has_nearby_shift(doctor, date, schedule, min_gap=3):
 
 
 def _has_weekend_in_adjacent_week(doctor, date, schedule):
-    if date.weekday() not in (5, 6):
+    if date.weekday() not in (4, 5, 6):
         return False
     target_wk = _week_monday(date)
     for d, doc in schedule.items():
-        if doc == doctor and d.weekday() in (5, 6):
+        if doc == doctor and d.weekday() in (4, 5, 6):
             other_wk = _week_monday(d)
             if abs((target_wk - other_wk).days) == 7:
                 return True
@@ -141,6 +141,8 @@ def _total_shifts_in_month(doctor, date, schedule, exclude_date=None):
 
 
 def _special_bucket(date, holiday_dates):
+    if date.weekday() == 4:
+        return "fri"
     if date.weekday() == 5:
         return "sat"
     if date.weekday() == 6:
@@ -164,31 +166,36 @@ def _special_count_in_month(doctor, date, schedule, holiday_dates, exclude_date=
 
 def _month_stats(doctor, date, schedule, exclude_date=None):
     total = 0
+    has_fri = False
     has_sat = False
     has_sun = False
     
     for d, doc in schedule.items():
         if doc == doctor and d.year == date.year and d.month == date.month and d != exclude_date:
             total += 1
-            if d.weekday() == 5:
+            if d.weekday() == 4:
+                has_fri = True
+            elif d.weekday() == 5:
                 has_sat = True
             elif d.weekday() == 6:
                 has_sun = True
                 
-    return total, has_sat, has_sun
+    return total, has_fri, has_sat, has_sun
 
 
 def _within_dynamic_month_cap(doctor, date, schedule, num_docs, holiday_dates, exclude_date=None):
-    total, has_sat, has_sun = _month_stats(doctor, date, schedule, exclude_date)
+    total, has_fri, has_sat, has_sun = _month_stats(doctor, date, schedule, exclude_date)
     
     if exclude_date and exclude_date.year == date.year and exclude_date.month == date.month and exclude_date not in schedule:
         total += 1
-        if exclude_date.weekday() == 5:
+        if exclude_date.weekday() == 4:
+            has_fri = True
+        elif exclude_date.weekday() == 5:
             has_sat = True
         elif exclude_date.weekday() == 6:
             has_sun = True
 
-    if has_sat and has_sun:
+    if has_fri and has_sat and has_sun:
         return total <= 4
 
     return total <= 5
@@ -321,6 +328,7 @@ def is_valid_assignment(doctor, date, schedule, holiday_dates, num_docs, exclude
     has_sat = any(d.weekday() == 5 for d in month_shifts)
     has_sun = any(d.weekday() == 6 for d in month_shifts)
     
+    # ΝΕΟΣ ΚΑΝΟΝΑΣ: Αποφυγή να έχει κάποιος Παρασκευή, Σάββατο ΚΑΙ Κυριακή στον ίδιο μήνα
     if has_fri and has_sat and has_sun:
         return False
 
@@ -395,7 +403,6 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
             if d in schedule:
                 doctors_with_package_in_cycle[cycle_y].add(schedule[d])
 
-    # ΔΙΟΡΘΩΜΕΝΗ ΚΑΤΑΝΟΜΗ ΜΕΓΑΛΩΝ ΕΟΡΤΩΝ ΓΙΑ ΑΠΟΛΥΤΗ ΔΙΚΑΙΟΣΥΝΗ
     for block in major_blocks:
         cycle_y = block["cycle_id"]
         base_name = block["base_name"]
@@ -404,16 +411,12 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
         if already_assigned:
             continue
 
-        # 1. Βρίσκουμε ποιοι γιατροί ΔΕΝ έχουν πάρει ΚΑΝΕΝΑ πακέτο σε αυτόν τον κύκλο 
-        # ΚΑΙ δεν έχουν ξαναπάρει το ίδιο πακέτο στο παρελθόν.
         eligible_doctors = [
             doc for doc in doctors_list 
             if doc not in doctors_with_package_in_cycle[cycle_y] 
             and base_name not in doctor_done_packages[doc]
         ]
         
-        # 2. Αν όλοι έχουν πάρει από ένα πακέτο στον κύκλο, επιτρέπουμε επαναφορά 
-        # αλλά αποκλείουμε όσους έχουν ήδη πάρει το συγκεκριμένο base_name.
         if not eligible_doctors:
             eligible_doctors = [
                 doc for doc in doctors_list 
@@ -425,7 +428,6 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
         best_doc = None
         min_packages_count = float('inf')
 
-        # 3. Από τους επιλέξιμους, διαλέγουμε αυτον με τα λιγότερα συνολικά πακέτα ιστορικά
         for doc in eligible_doctors:
             pkg_count = len(doctor_done_packages[doc])
             if pkg_count < min_packages_count:
@@ -455,7 +457,7 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
         d for d in all_days
         if d not in schedule and (d.weekday() in (4, 5, 6) or d in holiday_dates)
     ]
-    special_dates.sort(key=lambda d: (0 if d in minor_dates else 1 if d.weekday() in (5, 6) else 2, d))
+    special_dates.sort(key=lambda d: (0 if d in minor_dates else 1 if d.weekday() in (4, 5, 6) else 2, d))
 
     for d in special_dates:
         chosen = None
@@ -946,7 +948,6 @@ str_lit.title("📅 Πρόγραμμα Εφημεριών Ακτινολόγων
 str_lit.markdown("<span style='font-size:14px; color:gray;'>© Γιώργος Μενοίκου, PhD</span>",
             unsafe_allow_html=True)
 
-# --- FORTOSI TELEYTAIOY STATE APO TO ARXEIO ---
 saved_state = load_state_from_file()
 
 defaults = {
@@ -972,7 +973,6 @@ if str_lit.session_state.schedule and (str_lit.session_state.balance is None or 
         str_lit.session_state.holiday_names, str_lit.session_state.doctors
     )
 
-# --- EPILOGI ROLOY XRISTI ME KODIKO ---
 str_lit.sidebar.markdown("### 🔐 Έλεγχος Πρόσβασης")
 user_role = str_lit.sidebar.selectbox("Επιλέξτε Ρόλο Χρήστη", ["Γιατρός / Αναγνώστης (View-Only)", "Διαχειριστής (Moderator)"])
 
