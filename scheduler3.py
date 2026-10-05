@@ -71,9 +71,9 @@ def save_state_to_file(schedule, holiday_names, balance, manual_assignments, doc
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         f.write(file_content_str)
         
-    # Automatically sync to GitHub repository using GITHUB_TOKEN and GITHUB_REPO secrets
+    # Safely sync to GitHub if secrets are configured
     try:
-        if "GITHUB_TOKEN" in str_lit.secrets and "GITHUB_REPO" in str_lit.secrets:
+        if hasattr(str_lit, "secrets") and "GITHUB_TOKEN" in str_lit.secrets and "GITHUB_REPO" in str_lit.secrets:
             token = str_lit.secrets["GITHUB_TOKEN"]
             repo = str_lit.secrets["GITHUB_REPO"]
             path = STATE_FILE
@@ -100,7 +100,7 @@ def save_state_to_file(schedule, holiday_names, balance, manual_assignments, doc
                 
             requests.put(url, headers=headers, json=payload)
     except Exception as e:
-        print("GitHub sync error:", e)
+        print("GitHub sync skipped or failed:", e)
 
 def load_state_from_file():
     if not os.path.exists(STATE_FILE):
@@ -212,4 +212,66 @@ def _month_stats(doctor, date, schedule, exclude_date=None):
 
 
 def _within_dynamic_month_cap(doctor, date, schedule, num_docs, holiday_dates, exclude_date=None):
-    total, weekend
+    total, weekend_count, weekdays_in_month = _month_stats(doctor, date, schedule, exclude_date)
+    
+    if weekend_count > 2:
+        return False
+        
+    if weekdays_in_month.count(4) > 1 or weekdays_in_month.count(5) > 1 or weekdays_in_month.count(6) > 1:
+        return False
+        
+    has_sat = (5 in weekdays_in_month)
+    has_sun = (6 in weekdays_in_month)
+    if has_sat and has_sun:
+        weekdays_count = sum(1 for w in weekdays_in_month if w in (0, 1, 2, 3))
+        if total > 5:
+            return False
+        if total == 5 and weekdays_count < 3:
+            return False
+            
+    return total <= 5
+
+
+def orthodox_easter(year):
+    a = year % 4
+    b = year % 7
+    c = year % 19
+    d = (19 * c + 15) % 30
+    e = (2 * a + 4 * b - d + 34) % 7
+    month = (d + e + 114) // 31
+    day = ((d + e + 114) % 31) + 1
+    julian_easter = datetime.date(year, month, day)
+    return julian_easter + datetime.timedelta(days=13)
+
+
+def get_cyprus_holidays(year):
+    holidays = {}
+    for month, day, name in FIXED_HOLIDAYS:
+        holidays[datetime.date(year, month, day)] = name
+
+    easter = orthodox_easter(year)
+    movable = {
+        easter - datetime.timedelta(days=48): "Καθαρά Δευτέρα",
+        easter - datetime.timedelta(days=2): "Μεγάλη Παρασκευή",
+        easter - datetime.timedelta(days=1): "Μεγάλο Σάββατο",
+        easter: "Κυριακή του Πάσχα",
+        easter + datetime.timedelta(days=1): "Δευτέρα του Πάσχα",
+        easter + datetime.timedelta(days=50): "Δευτέρα Αγίου Πνεύματος",
+    }
+    holidays.update(movable)
+    return holidays
+
+
+def get_holidays_in_range(start_date, end_date):
+    holidays = {}
+    for year in range(start_date.year, end_date.year + 1):
+        holidays.update(get_cyprus_holidays(year))
+    return {d: name for d, name in holidays.items() if start_date <= d <= end_date}
+
+
+def get_major_holiday_blocks_in_range(start_date, end_date, num_docs=7):
+    blocks = []
+    BASE_PACKAGE_ROTATION_ORDER = {
+        "Πρωτοχρονιά (1/1)": 0,
+        "Χριστούγεννα (25/12)": 1,
+        "Παραμονή Πρωτοχ
