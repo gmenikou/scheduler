@@ -112,12 +112,19 @@ def _has_nearby_shift(doctor, date, schedule, min_gap=3):
     return False
 
 
-def _has_weekend_in_adjacent_week(doctor, date, schedule):
+def _has_weekend_in_adjacent_week(doctor, date, schedule, exclude_date=None):
+    """Ελέγχει αν ο γιατρός έχει εφημερία Παρασκευή, Σάββατο ή Κυριακή στην αμέσως προηγούμενη ή επόμενη εβδομάδα."""
     if date.weekday() not in (4, 5, 6):
         return False
     target_wk = _week_monday(date)
-    for d, doc in schedule.items():
-        if doc == doctor and d.weekday() in (4, 5, 6):
+    
+    # Ελέγχουμε όλες τις υπάρχουσες καταχωρήσεις συν την τυχόν εξαιρούμενη
+    all_shifts = [(d, doc) for d, doc in schedule.items() if d != exclude_date]
+    if exclude_date and exclude_date.weekday() in (4, 5, 6):
+        all_shifts.append((exclude_date, doctor))
+        
+    for d, doc in all_shifts:
+        if doc == doctor and d.weekday() in (4, 5, 6) and d != date:
             other_wk = _week_monday(d)
             if abs((target_wk - other_wk).days) == 7:
                 return True
@@ -152,60 +159,29 @@ def _special_bucket(date, holiday_dates):
     return None
 
 
-def _special_count_in_month(doctor, date, schedule, holiday_dates, exclude_date=None):
-    bucket = _special_bucket(date, holiday_dates)
-    if bucket is None:
-        return 0
-    return sum(
-        1 for d, doc in schedule.items()
-        if doc == doctor and d != exclude_date
-        and d.year == date.year and d.month == date.month
-        and _special_bucket(d, holiday_dates) == bucket
-    )
-
-
 def _month_stats(doctor, date, schedule, exclude_date=None):
     total = 0
-    has_fri = False
-    has_sat = False
-    has_sun = False
+    weekend_fri_sat_sun_count = 0
     
-    for d, doc in schedule.items():
-        if doc == doctor and d.year == date.year and d.month == date.month and d != exclude_date:
-            total += 1
-            if d.weekday() == 4:
-                has_fri = True
-            elif d.weekday() == 5:
-                has_sat = True
-            elif d.weekday() == 6:
-                has_sun = True
-                
-    return total, has_fri, has_sat, has_sun
+    # Συλλογή όλων των ημερών του μήνα για τον γιατρό
+    month_shifts = [d for d, doc in schedule.items() if doc == doctor and d.year == date.year and d.month == date.month and d != exclude_date]
+    if exclude_date and exclude_date.year == date.year and exclude_date.month == date.month:
+        month_shifts.append(exclude_date)
+        
+    for d in month_shifts:
+        total += 1
+        if d.weekday() in (4, 5, 6):
+            weekend_fri_sat_sun_count += 1
+            
+    return total, weekend_fri_sat_sun_count
 
 
 def _within_dynamic_month_cap(doctor, date, schedule, num_docs, holiday_dates, exclude_date=None):
-    total, has_fri, has_sat, has_sun = _month_stats(doctor, date, schedule, exclude_date)
-    
-    if exclude_date and exclude_date.year == date.year and exclude_date.month == date.month and exclude_date not in schedule:
-        total += 1
-        if exclude_date.weekday() == 4:
-            has_fri = True
-        elif exclude_date.weekday() == 5:
-            has_sat = True
-        elif exclude_date.weekday() == 6:
-            has_sun = True
-
-    if has_sat and has_sun:
-        return total <= 4
-
-    if has_fri and has_sat and has_sun:
-        return total <= 4
-
+    total, weekend_count = _month_stats(doctor, date, schedule, exclude_date)
+    # Αυστηρός περιορισμός: Μέγιστο 2 συνολικά από Παρασκευή, Σάββατο, Κυριακή τον μήνα
+    if weekend_count > 2:
+        return False
     return total <= 5
-
-
-def _count_target_combinations_in_month(doctor, date, schedule, holiday_dates, exclude_date=None):
-    return 0
 
 
 def orthodox_easter(year):
@@ -301,7 +277,7 @@ def get_major_holiday_blocks_in_range(start_date, end_date, num_docs=7):
 
 
 def is_valid_assignment(doctor, date, schedule, holiday_dates, num_docs, exclude_date=None,
-                        min_gap=3, max_special=1, avoid_consecutive_weekends=True):
+                        min_gap=3, avoid_consecutive_weekends=True):
     if num_docs <= 5:
         effective_gap = 1
     elif num_docs == 6:
@@ -316,28 +292,12 @@ def is_valid_assignment(doctor, date, schedule, holiday_dates, num_docs, exclude
     if _shifts_in_week(doctor, date, schedule, exclude_date=exclude_date) >= max_shifts_per_week:
         return False
         
-    # ΑΥΣΤΗΡΟΣ ΚΑΝΟΝΑΣ: Κανένας γιατρός δεν μπορεί να έχει πάνω από 1 φορά την ίδια ημέρα (π.χ. 2 Σάββατα ή 2 Κυριακές) στον μήνα
+    # ΑΥΣΤΗΡΟΣ ΚΑΝΟΝΑΣ: Έλεγχος αποφυγής συνεχόμενων εβδομάδων για Παρ/Σαβ/Κυρ
     if date.weekday() in (4, 5, 6):
-        if _special_count_in_month(doctor, date, schedule, holiday_dates, exclude_date=exclude_date) >= 1:
+        if avoid_consecutive_weekends and _has_weekend_in_adjacent_week(doctor, date, schedule, exclude_date=exclude_date):
             return False
 
-    month_shifts = [d for d, doc in schedule.items() if doc == doctor and d.year == date.year and d.month == date.month and d != exclude_date]
-    if exclude_date:
-        month_shifts.append(exclude_date)
-    
-    has_fri = any(d.weekday() == 4 for d in month_shifts)
-    has_sat = any(d.weekday() == 5 for d in month_shifts)
-    has_sun = any(d.weekday() == 6 for d in month_shifts)
-    
-    # ΑΥΣΤΗΡΟΣ ΚΑΝΟΝΑΣ: Μέγιστο 2 από Παρασκευή, Σάββατο, Κυριακή συνολικά στον ίδιο μήνα
-    weekend_fri_sat_sun_count = sum([has_fri, has_sat, has_sun])
-    if weekend_fri_sat_sun_count > 2:
-        return False
-
     if not _within_dynamic_month_cap(doctor, date, schedule, num_docs, holiday_dates, exclude_date=exclude_date):
-        return False
-
-    if avoid_consecutive_weekends and num_docs > 5 and _has_weekend_in_adjacent_week(doctor, date, schedule):
         return False
 
     return True
@@ -469,20 +429,15 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
         for avoid_cons in (True, False):
             gap_range = (1, 2) if num_docs <= 5 else (3, 2, 1)
             for min_gap in gap_range:
-                for max_special in (1, 2, 3):
-                    valid = [doc for doc in doctors_list if is_valid_assignment(
-                        doc, d, schedule, holiday_dates, num_docs, exclude_date=d,
-                        min_gap=min_gap, max_special=max_special, 
-                        avoid_consecutive_weekends=avoid_cons)]
-                    if valid:
-                        chosen = min(valid, key=lambda doc: (
-                            _minor_total(doc, d) if is_minor_holiday else 0,
-                            _global_weekday_total(doc, wd, schedule, exclude_date=d),
-                            _special_count_in_month(doc, d, schedule, holiday_dates, exclude_date=d),
-                            _total_shifts_in_month(doc, d, schedule, exclude_date=d)
-                        ))
-                        break
-                if chosen:
+                valid = [doc for doc in doctors_list if is_valid_assignment(
+                    doc, d, schedule, holiday_dates, num_docs, exclude_date=d,
+                    min_gap=min_gap, avoid_consecutive_weekends=avoid_cons)]
+                if valid:
+                    chosen = min(valid, key=lambda doc: (
+                        _minor_total(doc, d) if is_minor_holiday else 0,
+                        _global_weekday_total(doc, wd, schedule, exclude_date=d),
+                        _total_shifts_in_month(doc, d, schedule, exclude_date=d)
+                    ))
                     break
             if chosen:
                 break
