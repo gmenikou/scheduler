@@ -70,57 +70,104 @@ def save_state_to_file(schedule, holiday_names, balance, manual_assignments, doc
     file_content_str = json.dumps(data, ensure_ascii=False, indent=4)
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         f.write(file_content_str)
-        
+
+def _github_settings():
+    """Επιστρέφει (token, repo) από τα secrets ή (None, None) αν λείπουν."""
     try:
         if hasattr(str_lit, "secrets") and "GITHUB_TOKEN" in str_lit.secrets and "GITHUB_REPO" in str_lit.secrets:
-            token = str_lit.secrets["GITHUB_TOKEN"]
-            repo = str_lit.secrets["GITHUB_REPO"]
-            path = STATE_FILE
-            url = f"https://api.github.com/repos/{repo}/contents/{path}"
-            
-            headers = {
-                "Authorization": f"token {token}",
-                "Accept": "application/vnd.github.v3+json"
-            }
-            
-            sha = None
-            get_resp = requests.get(url, headers=headers)
-            if get_resp.status_code == 200:
-                sha = get_resp.json().get("sha")
-                
-            encoded_content = base64.b64encode(file_content_str.encode("utf-8")).decode("utf-8")
-            payload = {
-                "message": "Auto-update schedule state JSON [skip ci]",
-                "content": encoded_content,
-                "branch": "main"
-            }
-            if sha:
-                payload["sha"] = sha
-                
-            requests.put(url, headers=headers, json=payload)
+            return str_lit.secrets["GITHUB_TOKEN"], str_lit.secrets["GITHUB_REPO"]
+    except Exception:
+        pass
+    return None, None
+
+
+def save_state_to_github_with_status(schedule, holiday_names, manual_assignments, doctors, initial_week, empty_tooltips):
+    """Αποθηκεύει το current state στο τοπικό JSON και μετά στο GitHub. Επιστρέφει (ok, μήνυμα)."""
+    save_state_to_file(schedule, holiday_names, None, manual_assignments, doctors, initial_week, empty_tooltips)
+
+    token, repo = _github_settings()
+    if not token:
+        return False, "Αποθηκεύτηκε μόνο τοπικά: λείπουν τα GITHUB_TOKEN / GITHUB_REPO στα secrets."
+
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            file_content_str = f.read()
+
+        url = f"https://api.github.com/repos/{repo}/contents/{STATE_FILE}"
+        headers = {
+            "Authorization": f"token {token}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        sha = None
+        get_resp = requests.get(url, headers=headers, params={"ref": "main"}, timeout=15)
+        if get_resp.status_code == 200:
+            sha = get_resp.json().get("sha")
+
+        payload = {
+            "message": "Manual save of schedule state JSON [skip ci]",
+            "content": base64.b64encode(file_content_str.encode("utf-8")).decode("utf-8"),
+            "branch": "main"
+        }
+        if sha:
+            payload["sha"] = sha
+        put_resp = requests.put(url, headers=headers, json=payload, timeout=30)
+        if put_resp.status_code in (200, 201):
+            return True, "Η κατάσταση αποθηκεύτηκε στο GitHub."
+        return False, f"Αποτυχία αποθήκευσης στο GitHub (HTTP {put_resp.status_code})."
     except Exception as e:
-        print("GitHub sync skipped or failed:", e)
+        return False, f"Σφάλμα αποθήκευσης στο GitHub: {e}"
+
+
+def _fetch_state_from_github():
+    """Διαβάζει το JSON του repo. Επιστρέφει dict ή None αν δεν είναι διαθέσιμο."""
+    token, repo = _github_settings()
+    if not token:
+        return None
+    try:
+        url = f"https://api.github.com/repos/{repo}/contents/{STATE_FILE}"
+        headers = {
+            "Authorization": f"token {token}",
+            "Accept": "application/vnd.github.v3.raw"
+        }
+        resp = requests.get(url, headers=headers, params={"ref": "main"}, timeout=15)
+        if resp.status_code == 200:
+            return json.loads(resp.content.decode("utf-8"))
+    except Exception as e:
+        print("Αποτυχία φόρτωσης από GitHub:", e)
+    return None
+
+
+def _parse_state_data(data):
+    schedule = {datetime.datetime.strptime(d, "%Y-%m-%d").date(): doc for d, doc in data.get("schedule", {}).items()}
+    holiday_names = {datetime.datetime.strptime(d, "%Y-%m-%d").date(): name for d, name in data.get("holiday_names", {}).items()}
+    manual_assignments = {datetime.datetime.strptime(d, "%Y-%m-%d").date(): doc for d, doc in data.get("manual_assignments", {}).items()}
+    empty_tooltips = {datetime.datetime.strptime(d, "%Y-%m-%d").date(): t for d, t in data.get("empty_tooltips", {}).items()}
+
+    return {
+        "schedule": schedule,
+        "holiday_names": holiday_names,
+        "manual_assignments": manual_assignments,
+        "empty_tooltips": empty_tooltips,
+        "doctors": data.get("doctors", DEFAULT_DOCTORS),
+        "initial_week": data.get("initial_week", DEFAULT_DOCTORS[:7])
+    }
+
 
 def load_state_from_file():
+    # Προτεραιότητα: το JSON του GitHub repo. Αν δεν είναι διαθέσιμο, το τοπικό αρχείο.
+    github_data = _fetch_state_from_github()
+    if github_data is not None:
+        try:
+            return _parse_state_data(github_data)
+        except Exception as e:
+            print("Σφάλμα ανάγνωσης state από GitHub:", e)
+
     if not os.path.exists(STATE_FILE):
         return None
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-        
-        schedule = {datetime.datetime.strptime(d, "%Y-%m-%d").date(): doc for d, doc in data.get("schedule", {}).items()}
-        holiday_names = {datetime.datetime.strptime(d, "%Y-%m-%d").date(): name for d, name in data.get("holiday_names", {}).items()}
-        manual_assignments = {datetime.datetime.strptime(d, "%Y-%m-%d").date(): doc for d, doc in data.get("manual_assignments", {}).items()}
-        empty_tooltips = {datetime.datetime.strptime(d, "%Y-%m-%d").date(): t for d, t in data.get("empty_tooltips", {}).items()}
-        
-        return {
-            "schedule": schedule,
-            "holiday_names": holiday_names,
-            "manual_assignments": manual_assignments,
-            "empty_tooltips": empty_tooltips,
-            "doctors": data.get("doctors", DEFAULT_DOCTORS),
-            "initial_week": data.get("initial_week", DEFAULT_DOCTORS[:7])
-        }
+        return _parse_state_data(data)
     except Exception as e:
         print("Σφάλμα φόρτωσης state:", e)
         return None
@@ -992,7 +1039,7 @@ str_lit.title("📅 Πρόγραμμα Εφημεριών Ακτινολόγων
 str_lit.markdown("<span style='font-size:14px; color:gray;'>© Γιώργος Μενοίκου, PhD</span>",
             unsafe_allow_html=True)
 
-saved_state = load_state_from_file()
+saved_state = load_state_from_file() if "schedule" not in str_lit.session_state else None
 
 defaults = {
     "manual_assignments": saved_state["manual_assignments"] if saved_state and saved_state.get("manual_assignments") is not None else {},
@@ -1190,6 +1237,21 @@ with left_col:
                     str_lit.success("Η αλλαγή προσωπικού εφαρμόστηκε!")
                 else:
                     str_lit.warning("Δεν υπάρχει ενεργό πρόγραμμα.")
+
+        str_lit.markdown("---")
+        if str_lit.button("💾 Αποθήκευση"):
+            if str_lit.session_state.schedule is not None:
+                ok, msg = save_state_to_github_with_status(
+                    str_lit.session_state.schedule, str_lit.session_state.holiday_names,
+                    str_lit.session_state.manual_assignments, active_doctors,
+                    str_lit.session_state.initial_week, str_lit.session_state.empty_tooltips
+                )
+                if ok:
+                    str_lit.success(msg)
+                else:
+                    str_lit.error(msg)
+            else:
+                str_lit.warning("Δεν υπάρχει ενεργό πρόγραμμα για αποθήκευση.")
 
         active_doctors = str_lit.session_state.doctors
     else:
