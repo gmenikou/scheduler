@@ -195,6 +195,10 @@ def _within_dynamic_month_cap(doctor, date, schedule, num_docs, holiday_dates, e
         elif exclude_date.weekday() == 6:
             has_sun = True
 
+    # Εφαρμογή νέου κανόνα: Όποιος πάρει Σάββατο ΚΑΙ Κυριακή, μέγιστο 4 συνολικά στον μήνα
+    if has_sat and has_sun:
+        return total <= 4
+
     if has_fri and has_sat and has_sun:
         return total <= 4
 
@@ -328,8 +332,9 @@ def is_valid_assignment(doctor, date, schedule, holiday_dates, num_docs, exclude
     has_sat = any(d.weekday() == 5 for d in month_shifts)
     has_sun = any(d.weekday() == 6 for d in month_shifts)
     
-    # ΝΕΟΣ ΚΑΝΟΝΑΣ: Αποφυγή να έχει κάποιος Παρασκευή, Σάββατο ΚΑΙ Κυριακή στον ίδιο μήνα
-    if has_fri and has_sat and has_sun:
+    # Αυστηρός κανόνας: Μέγιστο 2 από Παρασκευή, Σάββατο, Κυριακή στον ίδιο μήνα (αποκλείονται οι 3)
+    weekend_fri_sat_sun_count = sum([has_fri, has_sat, has_sun])
+    if weekend_fri_sat_sun_count >= 3:
         return False
 
     if not _within_dynamic_month_cap(doctor, date, schedule, num_docs, holiday_dates, exclude_date=exclude_date):
@@ -948,6 +953,7 @@ str_lit.title("📅 Πρόγραμμα Εφημεριών Ακτινολόγων
 str_lit.markdown("<span style='font-size:14px; color:gray;'>© Γιώργος Μενοίκου, PhD</span>",
             unsafe_allow_html=True)
 
+# --- FORTOSI TELEYTAIOY STATE APO TO ARXEIO ---
 saved_state = load_state_from_file()
 
 defaults = {
@@ -973,6 +979,7 @@ if str_lit.session_state.schedule and (str_lit.session_state.balance is None or 
         str_lit.session_state.holiday_names, str_lit.session_state.doctors
     )
 
+# --- EPILOGI ROLOY XRISTI ME KODIKO ---
 str_lit.sidebar.markdown("### 🔐 Έλεγχος Πρόσβασης")
 user_role = str_lit.sidebar.selectbox("Επιλέξτε Ρόλο Χρήστη", ["Γιατρός / Αναγνώστης (View-Only)", "Διαχειριστής (Moderator)"])
 
