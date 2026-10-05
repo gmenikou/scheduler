@@ -151,17 +151,14 @@ def get_doctor_color(doc_name, doctors_list):
     except ValueError:
         return (220, 220, 220)
 
-
 def _week_monday(date):
     return date - datetime.timedelta(days=date.weekday())
-
 
 def _has_nearby_shift(doctor, date, schedule, min_gap=3):
     for d, doc in schedule.items():
         if doc == doctor and d != date and abs((d - date).days) <= min_gap:
             return True
     return False
-
 
 def _has_fri_sun_same_weekend(doctor, date, schedule, exclude_date=None):
     if date.weekday() not in (4, 6):
@@ -177,7 +174,6 @@ def _has_fri_sun_same_weekend(doctor, date, schedule, exclude_date=None):
             if (date.weekday() == 4 and d.weekday() == 6) or (date.weekday() == 6 and d.weekday() == 4):
                 return True
     return False
-
 
 def _has_weekend_in_adjacent_week(doctor, date, schedule, exclude_date=None):
     if date.weekday() not in (4, 5, 6):
@@ -195,14 +191,12 @@ def _has_weekend_in_adjacent_week(doctor, date, schedule, exclude_date=None):
                 return True
     return False
 
-
 def _shifts_in_week(doctor, date, schedule, exclude_date=None):
     wk = _week_monday(date)
     return sum(
         1 for d, doc in schedule.items()
         if doc == doctor and d != exclude_date and _week_monday(d) == wk and doc is not None
     )
-
 
 def _month_stats(doctor, date, schedule, exclude_date=None):
     total = 0
@@ -220,7 +214,6 @@ def _month_stats(doctor, date, schedule, exclude_date=None):
             weekend_fri_sat_sun_count += 1
             
     return total, weekend_fri_sat_sun_count, weekdays_in_month
-
 
 def _within_dynamic_month_cap(doctor, date, schedule, num_docs, holiday_dates, exclude_date=None):
     total, weekend_count, weekdays_in_month = _month_stats(doctor, date, schedule, exclude_date)
@@ -242,7 +235,6 @@ def _within_dynamic_month_cap(doctor, date, schedule, num_docs, holiday_dates, e
             
     return total <= 5
 
-
 def orthodox_easter(year):
     a = year % 4
     b = year % 7
@@ -253,7 +245,6 @@ def orthodox_easter(year):
     day = ((d + e + 114) % 31) + 1
     julian_easter = datetime.date(year, month, day)
     return julian_easter + datetime.timedelta(days=13)
-
 
 def get_cyprus_holidays(year):
     holidays = {}
@@ -272,13 +263,11 @@ def get_cyprus_holidays(year):
     holidays.update(movable)
     return holidays
 
-
 def get_holidays_in_range(start_date, end_date):
     holidays = {}
     for year in range(start_date.year, end_date.year + 1):
         holidays.update(get_cyprus_holidays(year))
     return {d: name for d, name in holidays.items() if start_date <= d <= end_date}
-
 
 def get_major_holiday_blocks_in_range(start_date, end_date, num_docs=7):
     blocks = []
@@ -334,7 +323,6 @@ def get_major_holiday_blocks_in_range(start_date, end_date, num_docs=7):
                 })
     return blocks
 
-
 def is_valid_assignment(doctor, date, schedule, holiday_dates, num_docs, exclude_date=None,
                         min_gap=3, avoid_consecutive_weekends=True):
     effective_gap = max(3, min_gap) if num_docs > 5 else max(2, min_gap)
@@ -358,13 +346,11 @@ def is_valid_assignment(doctor, date, schedule, holiday_dates, num_docs, exclude
 
     return True
 
-
 def _global_weekday_total(doctor, wd, schedule, exclude_date=None):
     return sum(
         1 for d, doc in schedule.items()
         if doc == doctor and d != exclude_date and d.weekday() == wd and doc is not None
     )
-
 
 # ----------------------------
 # SCHEDULING LOGIC
@@ -574,7 +560,6 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
     str_lit.session_state.empty_tooltips = empty_tooltips
     return schedule, holiday_names, warnings
 
-
 # ----------------------------
 # CHRONOLOGICAL SUMMARY FUNCTIONS
 # ----------------------------
@@ -609,7 +594,6 @@ def compute_major_holidays_by_doctor(schedule, start_date, end_date, doctors_lis
             
     return pd.DataFrame(all_data)
 
-
 def compute_regular_holidays_chronological(schedule, regular_holidays):
     sorted_hols = sorted(regular_holidays.keys())
     data = []
@@ -628,7 +612,6 @@ def compute_regular_holidays_chronological(schedule, regular_holidays):
     if not df.empty:
         df = df.sort_values("date_obj").drop(columns=["date_obj"]).reset_index(drop=True)
     return df
-
 
 def compute_balance(schedule, start_date, end_date, holiday_names, doctors_list):
     counts = {doc: {wd: 0 for wd in WEEKDAY_LABELS} for doc in doctors_list}
@@ -661,7 +644,6 @@ def compute_balance(schedule, start_date, end_date, holiday_names, doctors_list)
     df["Total"] = df["Weekdays"] + df["Fri"] + df["Sat"] + df["Sun"] + df["Argies"]
     return df[["Doctor", "Weekdays", "Fri", "Sat", "Sun", "Argies", "Total"]]
 
-
 # ----------------------------
 # PDF EXPORT HELPERS
 # ----------------------------
@@ -689,7 +671,6 @@ def create_balance_pdf(df, start_date, end_date):
             pdf.cell(w, 8, str(val), border=1, align="C")
         pdf.ln()
     return bytes(pdf.output())
-
 
 def create_major_holidays_pdf_by_doctor(schedule, start_date, end_date, doctors_list):
     doctor_rows = {doc: [] for doc in doctors_list}
@@ -748,7 +729,6 @@ def create_major_holidays_pdf_by_doctor(schedule, start_date, end_date, doctors_
         
     return bytes(pdf.output())
 
-
 def create_regular_holidays_pdf(df):
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.add_page()
@@ -774,13 +754,12 @@ def create_regular_holidays_pdf(df):
     else:
         for _, row in df.iterrows():
             pdf.cell(col_widths[0], 7, str(row["Ημερομηνία"]), border=1, align="C")
-            pdf.cell(col_widths[1], 7, str(row["Ημέρα"], border=1, align="C") if "Ημέρα" in row else pdf.cell(col_widths[1], 7, "", border=1), align="C")
+            pdf.cell(col_widths[1], 7, str(row["Ημέρα"]) if "Ημέρα" in row else "", border=1, align="C")
             pdf.cell(col_widths[2], 7, str(row["Μικρή Αργία"]), border=1, align="L")
             pdf.cell(col_widths[3], 7, str(row["Ακτινολόγος"]), border=1, align="C")
             pdf.ln()
             
     return bytes(pdf.output())
-
 
 # ----------------------------
 # STREAMLIT UI APP
@@ -797,7 +776,6 @@ def main():
     if "empty_tooltips" not in str_lit.session_state:
         str_lit.session_state.empty_tooltips = {}
         
-    # Αυτόματη φόρτωση κατάστασης αν υπάρχει
     if "schedule" not in str_lit.session_state:
         saved_data = load_state_from_file()
         if saved_data:
@@ -816,7 +794,6 @@ def main():
     with str_lit.sidebar:
         str_lit.header("Ρυθμίσεις & Δεδομένα")
         
-        # Κουμπί Αποθήκευσης σε Github
         if str_lit.button("Αποθήκευση σε Github"):
             if "schedule" in str_lit.session_state:
                 save_state_to_file(
@@ -865,14 +842,12 @@ def main():
                 str_lit.session_state.holiday_names = holiday_names
                 str_lit.session_state.warnings = warnings
                 
-                # Αυτόματη αποθήκευση τοπικά
                 save_state_to_file(
                     schedule, holiday_names, None, str_lit.session_state.manual_assignments,
                     str_lit.session_state.doctors, str_lit.session_state.initial_week, str_lit.session_state.empty_tooltips
                 )
                 str_lit.success("Το πρόγραμμα δημιουργήθηκε με επιτυχία!")
 
-    # Κύριο περιεχόμενο εφαρμογής
     if "schedule" in str_lit.session_state and str_lit.session_state.schedule:
         str_lit.subheader("Προβολή Προγράμματος & Ισοζυγίου")
         
@@ -880,13 +855,61 @@ def main():
         
         with tab1:
             str_lit.write("### Μηνιαίο Ημερολόγιο Εφημεριών")
-            # Εμφάνιση προγράμματος σε μορφή πίνακα/ημερολογίου
-            sched = str_lit.session_state.schedule
-            if sched:
-                df_sched = pd.DataFrame(list(sched.items()), columns=["Ημερομηνία", "Ακτινολόγος"])
-                df_sched["Ακτινολόγος"] = df_sched["Ακτινολόγος"].fillna("Κενό")
-                df_sched["Ημερομηνία"] = pd.to_datetime(df_sched["Ημερομηνία"]).dt.strftime('%d/%m/%Y')
-                str_lit.dataframe(df_sched, use_container_width=True)
+            schedule = str_lit.session_state.schedule
+            holiday_names = str_lit.session_state.get("holiday_names", {})
+            doctors_list = str_lit.session_state.doctors
+
+            # Υπολογισμός μηνών προς εμφάνιση
+            min_date = min(schedule.keys())
+            max_date = max(schedule.keys())
+            
+            curr_y, curr_m = min_date.year, min_date.month
+            while (curr_y, curr_m) <= (max_date.year, max_date.month):
+                month_name = GREEK_MONTHS[curr_m]
+                str_lit.markdown(f"#### {month_name} {curr_y}")
+                
+                cal = calendar.Calendar(firstweekday=0)
+                month_days = cal.monthdatescalendar(curr_y, curr_m)
+                
+                header_cols = str_lit.columns(7)
+                for i, day_name in enumerate(["Δευτέρα", "Τρίτη", "Τετάρτη", "Πέμπτη", "Παρασκευή", "Σάββατο", "Κυριακή"]):
+                    header_cols[i].markdown(f"<div style='text-align: center; font-weight: bold;'>{day_name}</div>", unsafe_allow_html=True)
+                
+                for week in month_days:
+                    cols = str_lit.columns(7)
+                    for i, d in enumerate(week):
+                        with cols[i]:
+                            if d.month == curr_m:
+                                doc = schedule.get(d)
+                                is_hol = d in holiday_names
+                                hol_name = holiday_names.get(d, "")
+                                
+                                bg_color = "#ffffff"
+                                if doc:
+                                    rgb = get_doctor_color(doc, doctors_list)
+                                    bg_color = f"rgb({rgb[0]}, {rgb[1]}, {rgb[2]})"
+                                elif is_hol:
+                                    bg_color = "#ffcccc"
+                                
+                                border_style = "2px solid #ff4b4b" if is_hol else "1px solid #e0e0e0"
+                                
+                                html_content = f"""
+                                <div style='background-color: {bg_color}; border: {border_style}; border-radius: 5px; padding: 6px; text-align: center; min-height: 75px; margin-bottom: 5px;'>
+                                    <div style='font-size: 13px; font-weight: bold; color: #333;'>{d.day}</div>
+                                    <div style='font-size: 12px; margin-top: 4px; color: #111;'><b>{doc if doc else '-'}</b></div>
+                                    <div style='font-size: 10px; color: #d9534f; margin-top: 2px;'>{hol_name}</div>
+                                </div>
+                                """
+                                str_lit.markdown(html_content, unsafe_allow_html=True)
+                            else:
+                                str_lit.markdown("<div style='min-height: 75px;'></div>", unsafe_allow_html=True)
+                
+                str_lit.markdown("---")
+                if curr_m == 12:
+                    curr_y += 1
+                    curr_m = 1
+                else:
+                    curr_m += 1
                 
         with tab2:
             str_lit.write("### Ισοζύγιο Εφημεριών ανά Ιατρό")
