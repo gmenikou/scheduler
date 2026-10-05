@@ -113,12 +113,10 @@ def _has_nearby_shift(doctor, date, schedule, min_gap=3):
 
 
 def _has_weekend_in_adjacent_week(doctor, date, schedule, exclude_date=None):
-    """Ελέγχει αν ο γιατρός έχει εφημερία Παρασκευή, Σάββατο ή Κυριακή στην αμέσως προηγούμενη ή επόμενη εβδομάδα."""
     if date.weekday() not in (4, 5, 6):
         return False
     target_wk = _week_monday(date)
     
-    # Ελέγχουμε όλες τις υπάρχουσες καταχωρήσεις συν την τυχόν εξαιρούμενη
     all_shifts = [(d, doc) for d, doc in schedule.items() if d != exclude_date]
     if exclude_date and exclude_date.weekday() in (4, 5, 6):
         all_shifts.append((exclude_date, doctor))
@@ -139,48 +137,42 @@ def _shifts_in_week(doctor, date, schedule, exclude_date=None):
     )
 
 
-def _total_shifts_in_month(doctor, date, schedule, exclude_date=None):
-    return sum(
-        1 for d, doc in schedule.items()
-        if d != exclude_date and doc == doctor
-        and d.year == date.year and d.month == date.month
-    )
-
-
-def _special_bucket(date, holiday_dates):
-    if date.weekday() == 4:
-        return "fri"
-    if date.weekday() == 5:
-        return "sat"
-    if date.weekday() == 6:
-        return "sun"
-    if date in holiday_dates:
-        return "hol"
-    return None
-
-
 def _month_stats(doctor, date, schedule, exclude_date=None):
     total = 0
     weekend_fri_sat_sun_count = 0
+    weekdays_in_month = []
     
-    # Συλλογή όλων των ημερών του μήνα για τον γιατρό
     month_shifts = [d for d, doc in schedule.items() if doc == doctor and d.year == date.year and d.month == date.month and d != exclude_date]
     if exclude_date and exclude_date.year == date.year and exclude_date.month == date.month:
         month_shifts.append(exclude_date)
         
     for d in month_shifts:
         total += 1
+        weekdays_in_month.append(d.weekday())
         if d.weekday() in (4, 5, 6):
             weekend_fri_sat_sun_count += 1
             
-    return total, weekend_fri_sat_sun_count
+    return total, weekend_fri_sat_sun_count, weekdays_in_month
 
 
 def _within_dynamic_month_cap(doctor, date, schedule, num_docs, holiday_dates, exclude_date=None):
-    total, weekend_count = _month_stats(doctor, date, schedule, exclude_date)
-    # Αυστηρός περιορισμός: Μέγιστο 2 συνολικά από Παρασκευή, Σάββατο, Κυριακή τον μήνα
+    total, weekend_count, weekdays_in_month = _month_stats(doctor, date, schedule, exclude_date)
+    
+    # 1. Αυστηρό όριο: Μέγιστο 2 συνολικά από Παρασκευή, Σάββατο, Κυριακή τον μήνα
     if weekend_count > 2:
         return False
+        
+    # 2. Αποφυγή ίδιων ημερών (όχι 2 Σάββατα, όχι 2 Παρασκευές, όχι 2 Κυριακές)
+    if weekdays_in_month.count(4) > 1 or weekdays_in_month.count(5) > 1 or weekdays_in_month.count(6) > 1:
+        return False
+        
+    # 3. Αν περιέχει Σάββατο και Κυριακή, το όριο εφημεριών δεν πρέπει να υπερβαίνει τις 4
+    has_sat = (5 in weekdays_in_month)
+    has_sun = (6 in weekdays_in_month)
+    if has_sat and has_sun:
+        if total > 4:
+            return False
+            
     return total <= 5
 
 
@@ -292,7 +284,6 @@ def is_valid_assignment(doctor, date, schedule, holiday_dates, num_docs, exclude
     if _shifts_in_week(doctor, date, schedule, exclude_date=exclude_date) >= max_shifts_per_week:
         return False
         
-    # ΑΥΣΤΗΡΟΣ ΚΑΝΟΝΑΣ: Έλεγχος αποφυγής συνεχόμενων εβδομάδων για Παρ/Σαβ/Κυρ
     if date.weekday() in (4, 5, 6):
         if avoid_consecutive_weekends and _has_weekend_in_adjacent_week(doctor, date, schedule, exclude_date=exclude_date):
             return False
@@ -436,7 +427,7 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
                     chosen = min(valid, key=lambda doc: (
                         _minor_total(doc, d) if is_minor_holiday else 0,
                         _global_weekday_total(doc, wd, schedule, exclude_date=d),
-                        _total_shifts_in_month(doc, d, schedule, exclude_date=d)
+                        _month_stats(doc, d, schedule, exclude_date=d)[0]
                     ))
                     break
             if chosen:
@@ -449,7 +440,7 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
                 _minor_total(doc, d) if is_minor_holiday else 0,
                 _global_weekday_total(doc, wd, schedule, exclude_date=d),
                 not _within_dynamic_month_cap(doc, d, schedule, num_docs, holiday_dates, exclude_date=d),
-                _total_shifts_in_month(doc, d, schedule, exclude_date=d)
+                _month_stats(doc, d, schedule, exclude_date=d)[0]
             ))
             warnings.append(f"{d.strftime('%d/%m/%Y')}: kamia pliros egkyri epilogi, anatetike {chosen}")
         schedule[d] = chosen
@@ -478,7 +469,7 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
             chosen = min(valid, key=lambda doc: (
                 _total_overall_shifts(doc),
                 _total_weekdays(doc),
-                _total_shifts_in_month(doc, current_date, schedule, exclude_date=current_date)
+                _month_stats(doc, current_date, schedule, exclude_date=current_date)[0]
             ))
             break
 
@@ -487,7 +478,7 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
             pool = valid_fallback if valid_fallback else doctors_list
             chosen = min(pool, key=lambda doc: (
                 not _within_dynamic_month_cap(doc, current_date, schedule, num_docs, holiday_dates, exclude_date=current_date),
-                _total_shifts_in_month(doc, current_date, schedule, exclude_date=current_date)))
+                _month_stats(doc, current_date, schedule, exclude_date=current_date)[0]))
             warnings.append(f"{current_date.strftime('%d/%m/%Y')}: kamia pliros egkyri epilogi, anatetike {chosen}")
         schedule[current_date] = chosen
 
@@ -905,7 +896,6 @@ str_lit.title("📅 Πρόγραμμα Εφημεριών Ακτινολόγων
 str_lit.markdown("<span style='font-size:14px; color:gray;'>© Γιώργος Μενοίκου, PhD</span>",
             unsafe_allow_html=True)
 
-# --- FORTOSI TELEYTAIOY STATE APO TO ARXEIO ---
 saved_state = load_state_from_file()
 
 defaults = {
@@ -931,7 +921,6 @@ if str_lit.session_state.schedule and (str_lit.session_state.balance is None or 
         str_lit.session_state.holiday_names, str_lit.session_state.doctors
     )
 
-# --- EPILOGI ROLOY XRISTI ME KODIKO ---
 str_lit.sidebar.markdown("### 🔐 Έλεγχος Πρόσβασης")
 user_role = str_lit.sidebar.selectbox("Επιλέξτε Ρόλο Χρήστη", ["Γιατρός / Αναγνώστης (View-Only)", "Διαχειριστής (Moderator)"])
 
