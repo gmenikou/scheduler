@@ -55,11 +55,12 @@ STATE_FILE = "last_schedule_state.json"
 # ----------------------------
 # STATE PERSISTENCE FUNCTIONS
 # ----------------------------
-def save_state_to_file(schedule, holiday_names, balance, manual_assignments, doctors, initial_week):
+def save_state_to_file(schedule, holiday_names, balance, manual_assignments, doctors, initial_week, empty_tooltips):
     data = {
         "schedule": {d.strftime("%Y-%m-%d"): doc for d, doc in schedule.items() if doc is not None} if schedule else {},
         "holiday_names": {d.strftime("%Y-%m-%d"): name for d, name in holiday_names.items()} if holiday_names else {},
         "manual_assignments": {d.strftime("%Y-%m-%d"): doc for d, doc in manual_assignments.items()} if manual_assignments else {},
+        "empty_tooltips": {d.strftime("%Y-%m-%d"): t for d, t in empty_tooltips.items()} if empty_tooltips else {},
         "doctors": doctors,
         "initial_week": initial_week
     }
@@ -76,11 +77,13 @@ def load_state_from_file():
         schedule = {datetime.datetime.strptime(d, "%Y-%m-%d").date(): doc for d, doc in data.get("schedule", {}).items()}
         holiday_names = {datetime.datetime.strptime(d, "%Y-%m-%d").date(): name for d, name in data.get("holiday_names", {}).items()}
         manual_assignments = {datetime.datetime.strptime(d, "%Y-%m-%d").date(): doc for d, doc in data.get("manual_assignments", {}).items()}
+        empty_tooltips = {datetime.datetime.strptime(d, "%Y-%m-%d").date(): t for d, t in data.get("empty_tooltips", {}).items()}
         
         return {
             "schedule": schedule,
             "holiday_names": holiday_names,
             "manual_assignments": manual_assignments,
+            "empty_tooltips": empty_tooltips,
             "doctors": data.get("doctors", DEFAULT_DOCTORS),
             "initial_week": data.get("initial_week", DEFAULT_DOCTORS[:7])
         }
@@ -324,6 +327,7 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
     manual_entries = manual_entries or {}
     schedule = {}
     warnings = []
+    empty_tooltips = {}
 
     total_days = (end_date - start_date).days + 1
     holiday_names = get_holidays_in_range(start_date, end_date)
@@ -425,7 +429,7 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
     ]
     special_dates.sort(key=lambda d: (0 if d in minor_dates else 1 if d.weekday() in (4, 5, 6) else 2, d))
 
-    # ΑΥΣΤΗΡΟΣ Έλεγχος για Ειδικές Ημέρες / Σαββατοκύριακα / Αργίες (Χωρίς καμία υποχώρηση στους κανόνες)
+    # ΑΥΣΤΗΡΟΣ Έλεγχος για Ειδικές Ημέρες / Σαββατοκύριακα / Αργίες
     for d in special_dates:
         chosen = None
         wd = d.weekday()
@@ -444,12 +448,33 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
             ))
 
         if chosen is None:
-            warnings.append(f"{d.strftime('%d/%m/%Y')}: Καμία έγκυρη επιλογή (τήρηση αυστηρών κανόνων). Έμεινε κενό.")
+            reasons = []
+            for doc in doctors_list:
+                doc_reasons = []
+                if _has_nearby_shift(doc, d, schedule, min_gap=min_gap_val):
+                    doc_reasons.append("Ελάχιστη απόσταση ημερών")
+                if _has_fri_sun_same_weekend(doc, d, schedule, exclude_date=d):
+                    doc_reasons.append("Παρασκευή-Κυριακή ίδιου Σ/Κ")
+                if _shifts_in_week(doc, d, schedule, exclude_date=d) >= (3 if num_docs <= 5 else 2):
+                    doc_reasons.append("Όριο εφημεριών εβδομάδας")
+                if d.weekday() in (4, 5, 6) and _has_weekend_in_adjacent_week(doc, d, schedule, exclude_date=d):
+                    doc_reasons.append("Συνεχόμενα Σαββατοκύριακα")
+                if not _within_dynamic_month_cap(doc, d, schedule, num_docs, holiday_dates, exclude_date=d):
+                    doc_reasons.append("Μηνιαίο όριο / cap")
+                
+                if doc_reasons:
+                    reasons.append(f"{doc}: {', '.join(doc_reasons)}")
+                else:
+                    reasons.append(f"{doc}: Γενικός περιορισμός")
+            
+            tooltip_text = " | ".join(reasons)
+            warnings.append(f"{d.strftime('%d/%m/%Y')}: Καμία έγκυρη επιλογή. Έμεινε κενό.")
+            empty_tooltips[d] = tooltip_text
             schedule[d] = None
         else:
             schedule[d] = chosen
 
-    # ΑΥΣΤΗΡΟΣ Έλεγχος για Καθημερινές (Χωρίς καμία υποχώρηση στους κανόνες)
+    # ΑΥΣΤΗΡΟΣ Έλεγχος για Καθημερινές
     for current_date in all_days:
         if current_date in schedule:
             continue
@@ -476,11 +501,29 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
             ))
 
         if chosen is None:
+            reasons = []
+            for doc in doctors_list:
+                doc_reasons = []
+                if _has_nearby_shift(doc, current_date, schedule, min_gap=min_gap_val):
+                    doc_reasons.append("Ελάχιστη απόσταση ημερών")
+                if _shifts_in_week(doc, current_date, schedule, exclude_date=current_date) >= (3 if num_docs <= 5 else 2):
+                    doc_reasons.append("Όριο εφημεριών εβδομάδας")
+                if not _within_dynamic_month_cap(doc, current_date, schedule, num_docs, holiday_dates, exclude_date=current_date):
+                    doc_reasons.append("Μηνιαίο όριο / cap")
+                
+                if doc_reasons:
+                    reasons.append(f"{doc}: {', '.join(doc_reasons)}")
+                else:
+                    reasons.append(f"{doc}: Γενικός περιορισμός")
+            
+            tooltip_text = " | ".join(reasons)
             warnings.append(f"{current_date.strftime('%d/%m/%Y')}: Καμία έγκυρη επιλογή καθημερινής. Έμεινε κενό.")
+            empty_tooltips[current_date] = tooltip_text
             schedule[current_date] = None
         else:
             schedule[current_date] = chosen
 
+    str_lit.session_state.empty_tooltips = empty_tooltips
     return schedule, holiday_names, warnings
 
 
@@ -812,6 +855,8 @@ def create_calendar_pdf(schedule, start_date, end_date, holiday_names, doctors_l
 
 def display_calendar(schedule, holiday_names, doctors_list):
     last_month = None
+    empty_tooltips = getattr(str_lit.session_state, "empty_tooltips", {})
+    
     for date in sorted(schedule.keys()):
         month_key = (date.year, date.month)
         if month_key != last_month:
@@ -829,12 +874,23 @@ def display_calendar(schedule, holiday_names, doctors_list):
                         is_holiday = day in holiday_names
                         holiday_tag = (f"<br><span style='font-size:10px'>🎉 {holiday_names[day]}</span>"
                                        if is_holiday else "")
-                        rgb = get_doctor_color(doc, doctors_list)
-                        color = '#%02x%02x%02x' % rgb
-                        border = "border:2px solid #d9534f;" if is_holiday else ""
-                        doc_display = doc if doc else "<span style='color:gray; font-style:italic;'>Κενό</span>"
+                        
+                        if doc:
+                            rgb = get_doctor_color(doc, doctors_list)
+                            color = '#%02x%02x%02x' % rgb
+                            doc_display = doc
+                            tooltip_attr = ""
+                        else:
+                            color = '#f8f9fa'
+                            doc_display = "<span style='color:gray; font-style:italic;'>Κενό</span>"
+                            t_text = empty_tooltips.get(day, "Ελεύθερη μέρα ή μη υπολογισμένοι περιορισμοί")
+                            t_text_safe = t_text.replace('"', '&quot;')
+                            tooltip_attr = f"title='{t_text_safe}' style='cursor: help;'"
+
+                        border = "border:2px solid #d9534f;" if is_holiday else "border:1px dashed #ccc;"
+                        
                         cols[i].markdown(
-                            f"<div style='background-color:{color}; {border} padding:6px; "
+                            f"<div {tooltip_attr} style='background-color:{color}; {border} padding:6px; "
                             f"border-radius:4px; text-align:center'>"
                             f"<b>{day.day}</b><br>{doc_display}{holiday_tag}</div>",
                             unsafe_allow_html=True,
@@ -906,6 +962,7 @@ defaults = {
     "manual_assignments": saved_state["manual_assignments"] if saved_state else {},
     "schedule": saved_state["schedule"] if saved_state else None,
     "holiday_names": saved_state["holiday_names"] if saved_state else {},
+    "empty_tooltips": saved_state["empty_tooltips"] if saved_state else {},
     "doctors": saved_state["doctors"] if saved_state else DEFAULT_DOCTORS,
     "initial_week": saved_state["initial_week"] if saved_state else DEFAULT_DOCTORS[:7],
     "warnings": [],
@@ -1038,7 +1095,8 @@ with left_col:
                 
                 save_state_to_file(
                     schedule, holiday_names, str_lit.session_state.balance, 
-                    str_lit.session_state.manual_assignments, active_doctors, str_lit.session_state.initial_week
+                    str_lit.session_state.manual_assignments, active_doctors, 
+                    str_lit.session_state.initial_week, str_lit.session_state.empty_tooltips
                 )
                 str_lit.success("To programma ypologistike ex arxis!")
 
@@ -1064,7 +1122,8 @@ with left_col:
                     save_state_to_file(
                         updated_schedule, str_lit.session_state.holiday_names, 
                         balance_df, str_lit.session_state.manual_assignments, 
-                        active_doctors, str_lit.session_state.initial_week
+                        active_doctors, str_lit.session_state.initial_week, 
+                        str_lit.session_state.empty_tooltips
                     )
                     str_lit.success("I allagi prosopikoy efarmostike!")
                 else:
