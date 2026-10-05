@@ -78,8 +78,8 @@ FIXED_HOLIDAYS = [
 STATE_FILE = "last_schedule_state.json"
 
 # --- ΡΥΘΜΙΣΕΙΣ GITHUB SYNC ---
-REPO_OWNER = "TO_GITHUB_USERNAME_ΣΟΥ"
-REPO_NAME = "TO_REPO_NAME_ΣΟΥ"
+REPO_OWNER = "gmenikou"
+REPO_NAME = "scheduler"
 FILE_PATH = "schedule_data.json"
 
 
