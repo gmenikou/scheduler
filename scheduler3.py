@@ -76,11 +76,119 @@ FIXED_HOLIDAYS = [
 
 STATE_FILE = "last_schedule_state.json"
 
-# --- ΡΥΘΜΙΣΕΙΣ GITHUB SYNC (Για το Make.com & Telegram Reminders) ---
-REPO_OWNER = "TO_GITHUB_USERNAME_ΣΟΥ"  # <-- Βάλε το username σου στο GitHub
-REPO_NAME = "TO_REPO_NAME_ΣΟΥ"  # <-- Βάλε το όνομα του repository σου
+# --- ΡΥΘΜΙΣΕΙΣ GITHUB SYNC ---
+REPO_OWNER = "TO_GITHUB_USERNAME_ΣΟΥ"
+REPO_NAME = "TO_REPO_NAME_ΣΟΥ"
 FILE_PATH = "schedule_data.json"
 
 
 def save_json_to_github(data_dict):
-  """Ανεβάζει αυτόματα το ενημερωμένο αρχείο JSON στο GitHub για να το διαβάζει το Make.com
+  # Ανεβάζει αυτόματα το ενημερωμένο αρχείο JSON στο GitHub
+  token = str_lit.secrets.get("GITHUB_TOKEN")
+  if not token:
+    return
+
+  url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{FILE_PATH}"
+  headers = {
+      "Authorization": f"Bearer {token}",
+      "Accept": "application/vnd.github+json",
+  }
+
+  response = requests.get(url, headers=headers)
+  sha = response.json().get("sha") if response.status_code == 200 else None
+
+  json_content = json.dumps(data_dict, ensure_ascii=False, indent=4)
+  content_encoded = base64.b64encode(json_content.encode("utf-8")).decode(
+      "utf-8"
+  )
+
+  payload = {
+      "message": "Auto-update schedule and telegram IDs from Streamlit",
+      "content": content_encoded,
+      "branch": "main",
+  }
+  if sha:
+    payload["sha"] = sha
+
+  requests.put(url, headers=headers, json=payload)
+
+
+# ----------------------------
+# STATE PERSISTENCE FUNCTIONS
+# ----------------------------
+def save_state_to_file(
+    schedule,
+    holiday_names,
+    balance,
+    manual_assignments,
+    doctors,
+    initial_week,
+    empty_tooltips,
+):
+  data = {
+      "schedule": (
+          {
+              d.strftime("%Y-%m-%d"): doc
+              for d, doc in schedule.items()
+              if doc is not None
+          }
+          if schedule
+          else {}
+      ),
+      "holiday_names": (
+          {d.strftime("%Y-%m-%d"): name for d, name in holiday_names.items()}
+          if holiday_names
+          else {}
+      ),
+      "manual_assignments": (
+          {
+              d.strftime("%Y-%m-%d"): doc
+              for d, doc in manual_assignments.items()
+          }
+          if manual_assignments
+          else {}
+      ),
+      "empty_tooltips": (
+          {d.strftime("%Y-%m-%d"): t for d, t in empty_tooltips.items()}
+          if empty_tooltips
+          else {}
+      ),
+      "doctors": doctors,
+      "initial_week": initial_week,
+  }
+  with open(STATE_FILE, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False, indent=4)
+
+  try:
+    save_json_to_github(data)
+  except Exception as e:
+    print("GitHub sync error:", e)
+
+
+def load_state_from_file():
+  if not os.path.exists(STATE_FILE):
+    return None
+  try:
+    with open(STATE_FILE, "r", encoding="utf-8") as f:
+      data = json.load(f)
+
+    schedule = {
+        datetime.datetime.strptime(d, "%Y-%m-%d").date(): doc
+        for d, doc in data.get("schedule", {}).items()
+    }
+    holiday_names = {
+        datetime.datetime.strptime(d, "%Y-%m-%d").date(): name
+        for d, name in data.get("holiday_names", {}).items()
+    }
+    manual_assignments = {
+        datetime.datetime.strptime(d, "%Y-%m-%d").date(): doc
+        for d, doc in data.get("manual_assignments", {}).items()
+    }
+    empty_tooltips = {
+        datetime.datetime.strptime(d, "%Y-%m-%d").date(): t
+        for d, t in data.get("empty_tooltips", {}).items()
+    }
+
+    return {
+        "schedule": schedule,
+        "holiday_names": holiday_names,
