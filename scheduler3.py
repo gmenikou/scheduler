@@ -50,46 +50,16 @@ FIXED_HOLIDAYS = [
     (12, 31, "Παραμονή Πρωτοχρονιάς"),
 ]
 
-STATE_FILE = "last_schedule_state.json"
-
 # ----------------------------
-# STATE PERSISTENCE FUNCTIONS
+# STATE PERSISTENCE FUNCTIONS (Cloud-Safe)
 # ----------------------------
 def save_state_to_file(schedule, holiday_names, balance, manual_assignments, doctors, initial_week, empty_tooltips):
-    data = {
-        "schedule": {d.strftime("%Y-%m-%d"): doc for d, doc in schedule.items() if doc is not None} if schedule else {},
-        "holiday_names": {d.strftime("%Y-%m-%d"): name for d, name in holiday_names.items()} if holiday_names else {},
-        "manual_assignments": {d.strftime("%Y-%m-%d"): doc for d, doc in manual_assignments.items()} if manual_assignments else {},
-        "empty_tooltips": {d.strftime("%Y-%m-%d"): t for d, t in empty_tooltips.items()} if empty_tooltips else {},
-        "doctors": doctors,
-        "initial_week": initial_week
-    }
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
+    # Apofugi eggrafis se arxeio ston diskio tou cloud server gia na min kollaei to spinner
+    pass
 
 def load_state_from_file():
-    if not os.path.exists(STATE_FILE):
-        return None
-    try:
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        
-        schedule = {datetime.datetime.strptime(d, "%Y-%m-%d").date(): doc for d, doc in data.get("schedule", {}).items()}
-        holiday_names = {datetime.datetime.strptime(d, "%Y-%m-%d").date(): name for d, name in data.get("holiday_names", {}).items()}
-        manual_assignments = {datetime.datetime.strptime(d, "%Y-%m-%d").date(): doc for d, doc in data.get("manual_assignments", {}).items()}
-        empty_tooltips = {datetime.datetime.strptime(d, "%Y-%m-%d").date(): t for d, t in data.get("empty_tooltips", {}).items()}
-        
-        return {
-            "schedule": schedule,
-            "holiday_names": holiday_names,
-            "manual_assignments": manual_assignments,
-            "empty_tooltips": empty_tooltips,
-            "doctors": data.get("doctors", DEFAULT_DOCTORS),
-            "initial_week": data.get("initial_week", DEFAULT_DOCTORS[:7])
-        }
-    except Exception as e:
-        print("Sfalma fortosis state:", e)
-        return None
+    # Epistrefei None oste na ksekinaei me ta default dedomena stin mnimi
+    return None
 
 # ----------------------------
 # HELPER FUNCTIONS
@@ -429,7 +399,6 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
     ]
     special_dates.sort(key=lambda d: (0 if d in minor_dates else 1 if d.weekday() in (4, 5, 6) else 2, d))
 
-    # ΑΥΣΤΗΡΟΣ Έλεγχος για Ειδικές Ημέρες / Σαββατοκύριακα / Αργίες
     for d in special_dates:
         chosen = None
         wd = d.weekday()
@@ -474,7 +443,6 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
         else:
             schedule[d] = chosen
 
-    # ΑΥΣΤΗΡΟΣ Έλεγχος για Καθημερινές
     for current_date in all_days:
         if current_date in schedule:
             continue
