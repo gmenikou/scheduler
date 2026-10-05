@@ -1133,6 +1133,22 @@ with left_col:
         str_lit.session_state.initial_week = initial_week_list
 
         str_lit.markdown("### ✏️ Χειροκίνητες Αναθέσεις")
+        str_lit.markdown(
+            """
+            <style>
+            .st-key-save_state_btn button {
+                background-color: #28a745 !important;
+                border-color: #28a745 !important;
+            }
+            .st-key-save_state_btn button,
+            .st-key-save_state_btn button p {
+                color: #000000 !important;
+                font-weight: 700 !important;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
         with str_lit.form(key="manual_form"):
             str_lit.markdown("Επιλέξτε ημερομηνία και γιατρό για προσθήκη στη λίστα αλλαγών:")
             f_date = str_lit.date_input("Ημερομηνία Ανάθεσης", value=default_start)
@@ -1141,6 +1157,7 @@ with left_col:
             f_col1, f_col2 = str_lit.columns(2)
             submit_add = f_col1.form_submit_button("➕ Προσθήκη / Κλείδωμα")
             submit_del = f_col2.form_submit_button("🗑 Αφαίρεση Ημερομηνίας")
+            submit_save = f_col1.form_submit_button("💾 Αποθήκευση", key="save_state_btn")
 
             if submit_add:
                 str_lit.session_state.manual_assignments[f_date] = f_doc
@@ -1175,6 +1192,20 @@ with left_col:
                     )
                 str_lit.info(f"Αφαιρέθηκε η ημερομηνία {f_date.strftime('%d/%m/%Y')} από τις manual αλλαγές.")
                 str_lit.rerun()
+
+            elif submit_save:
+                if str_lit.session_state.schedule is not None:
+                    ok, msg = save_state_to_github_with_status(
+                        str_lit.session_state.schedule, str_lit.session_state.holiday_names,
+                        str_lit.session_state.manual_assignments, active_doctors,
+                        str_lit.session_state.initial_week, str_lit.session_state.empty_tooltips
+                    )
+                    if ok:
+                        str_lit.success(msg)
+                    else:
+                        str_lit.error(msg)
+                else:
+                    str_lit.warning("Δεν υπάρχει ενεργό πρόγραμμα για αποθήκευση.")
 
         if str_lit.session_state.manual_assignments:
             str_lit.markdown("**📋 Εκκρεμείς Χειροκίνητες Αλλαγές:**")
@@ -1237,21 +1268,6 @@ with left_col:
                     str_lit.success("Η αλλαγή προσωπικού εφαρμόστηκε!")
                 else:
                     str_lit.warning("Δεν υπάρχει ενεργό πρόγραμμα.")
-
-        str_lit.markdown("---")
-        if str_lit.button("💾 Αποθήκευση"):
-            if str_lit.session_state.schedule is not None:
-                ok, msg = save_state_to_github_with_status(
-                    str_lit.session_state.schedule, str_lit.session_state.holiday_names,
-                    str_lit.session_state.manual_assignments, active_doctors,
-                    str_lit.session_state.initial_week, str_lit.session_state.empty_tooltips
-                )
-                if ok:
-                    str_lit.success(msg)
-                else:
-                    str_lit.error(msg)
-            else:
-                str_lit.warning("Δεν υπάρχει ενεργό πρόγραμμα για αποθήκευση.")
 
         active_doctors = str_lit.session_state.doctors
     else:
