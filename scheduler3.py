@@ -425,31 +425,31 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
     ]
     special_dates.sort(key=lambda d: (0 if d in minor_dates else 1 if d.weekday() in (4, 5, 6) else 2, d))
 
+    # ΑΥΣΤΗΡΟΣ Έλεγχος για Ειδικές Ημέρες / Σαββατοκύριακα / Αργίες (Χωρίς καμία υποχώρηση στους κανόνες)
     for d in special_dates:
         chosen = None
         wd = d.weekday()
         is_minor_holiday = d in minor_dates
         
-        for avoid_cons in (True, False):
-            min_gap_val = 3 if num_docs > 5 else 2
-            valid = [doc for doc in doctors_list if is_valid_assignment(
-                doc, d, schedule, holiday_dates, num_docs, exclude_date=d,
-                min_gap=min_gap_val, avoid_consecutive_weekends=avoid_cons)]
-            if valid:
-                chosen = min(valid, key=lambda doc: (
-                    _minor_total(doc, d) if is_minor_holiday else 0,
-                    _global_weekday_total(doc, wd, schedule, exclude_date=d),
-                    _month_stats(doc, d, schedule, exclude_date=d)[0]
-                ))
-                break
+        min_gap_val = 3 if num_docs > 5 else 2
+        valid = [doc for doc in doctors_list if is_valid_assignment(
+            doc, d, schedule, holiday_dates, num_docs, exclude_date=d,
+            min_gap=min_gap_val, avoid_consecutive_weekends=True)]
+        
+        if valid:
+            chosen = min(valid, key=lambda doc: (
+                _minor_total(doc, d) if is_minor_holiday else 0,
+                _global_weekday_total(doc, wd, schedule, exclude_date=d),
+                _month_stats(doc, d, schedule, exclude_date=d)[0]
+            ))
 
-        # Διόρθωση εδώ: Χρήση warnings.append αντί για warnings.warn
         if chosen is None:
-            warnings.append(f"{d.strftime('%d/%m/%Y')}: Καμία έγκυρη επιλογή βάσει κανόνων. Έμεινε κενό για χειροκίνητη ανάθεση.")
+            warnings.append(f"{d.strftime('%d/%m/%Y')}: Καμία έγκυρη επιλογή (τήρηση αυστηρών κανόνων). Έμεινε κενό.")
             schedule[d] = None
         else:
             schedule[d] = chosen
 
+    # ΑΥΣΤΗΡΟΣ Έλεγχος για Καθημερινές (Χωρίς καμία υποχώρηση στους κανόνες)
     for current_date in all_days:
         if current_date in schedule:
             continue
@@ -458,7 +458,7 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
         min_gap_val = 3 if num_docs > 5 else 2
         valid = [doc for doc in doctors_list if is_valid_assignment(
             doc, current_date, schedule, holiday_dates, num_docs, exclude_date=current_date,
-            min_gap=min_gap_val, avoid_consecutive_weekends=False)]
+            min_gap=min_gap_val, avoid_consecutive_weekends=True)]
         
         if valid:
             def _total_overall_shifts(doc_name):
@@ -475,7 +475,6 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
                 _month_stats(doc, current_date, schedule, exclude_date=current_date)[0]
             ))
 
-        # Διόρθωση εδώ: Χρήση warnings.append αντί για warnings.warn
         if chosen is None:
             warnings.append(f"{current_date.strftime('%d/%m/%Y')}: Καμία έγκυρη επιλογή καθημερινής. Έμεινε κενό.")
             schedule[current_date] = None
