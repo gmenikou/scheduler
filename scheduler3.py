@@ -195,7 +195,6 @@ def _within_dynamic_month_cap(doctor, date, schedule, num_docs, holiday_dates, e
         elif exclude_date.weekday() == 6:
             has_sun = True
 
-    # Εφαρμογή νέου κανόνα: Όποιος πάρει Σάββατο ΚΑΙ Κυριακή, μέγιστο 4 συνολικά στον μήνα
     if has_sat and has_sun:
         return total <= 4
 
@@ -317,13 +316,11 @@ def is_valid_assignment(doctor, date, schedule, holiday_dates, num_docs, exclude
     if _shifts_in_week(doctor, date, schedule, exclude_date=exclude_date) >= max_shifts_per_week:
         return False
         
-    max_spec_allowed = 2 if num_docs <= 5 else max_special
-    if _special_count_in_month(doctor, date, schedule, holiday_dates, exclude_date=exclude_date) >= max_spec_allowed:
-        return False
-        
-    if avoid_consecutive_weekends and num_docs > 5 and _has_weekend_in_adjacent_week(doctor, date, schedule):
-        return False
-        
+    # ΑΥΣΤΗΡΟΣ ΚΑΝΟΝΑΣ: Κανένας γιατρός δεν μπορεί να έχει πάνω από 1 φορά την ίδια ημέρα (π.χ. 2 Σάββατα ή 2 Κυριακές) στον μήνα
+    if date.weekday() in (4, 5, 6):
+        if _special_count_in_month(doctor, date, schedule, holiday_dates, exclude_date=exclude_date) >= 1:
+            return False
+
     month_shifts = [d for d, doc in schedule.items() if doc == doctor and d.year == date.year and d.month == date.month and d != exclude_date]
     if exclude_date:
         month_shifts.append(exclude_date)
@@ -332,15 +329,15 @@ def is_valid_assignment(doctor, date, schedule, holiday_dates, num_docs, exclude
     has_sat = any(d.weekday() == 5 for d in month_shifts)
     has_sun = any(d.weekday() == 6 for d in month_shifts)
     
-    # Αυστηρός κανόνας: Μέγιστο 2 από Παρασκευή, Σάββατο, Κυριακή στον ίδιο μήνα (αποκλείονται οι 3)
+    # ΑΥΣΤΗΡΟΣ ΚΑΝΟΝΑΣ: Μέγιστο 2 από Παρασκευή, Σάββατο, Κυριακή συνολικά στον ίδιο μήνα
     weekend_fri_sat_sun_count = sum([has_fri, has_sat, has_sun])
-    if weekend_fri_sat_sun_count >= 3:
+    if weekend_fri_sat_sun_count > 2:
         return False
 
     if not _within_dynamic_month_cap(doctor, date, schedule, num_docs, holiday_dates, exclude_date=exclude_date):
         return False
 
-    if _count_target_combinations_in_month(doctor, date, schedule, holiday_dates, exclude_date=exclude_date) > 1:
+    if avoid_consecutive_weekends and num_docs > 5 and _has_weekend_in_adjacent_week(doctor, date, schedule):
         return False
 
     return True
