@@ -1097,21 +1097,22 @@ with left_col:
 
             if submit_add:
                 str_lit.session_state.manual_assignments[f_date] = f_doc
+                if str_lit.session_state.schedule is None:
+                    str_lit.session_state.schedule = {}
+                str_lit.session_state.schedule[f_date] = f_doc
                 
-                if str_lit.session_state.schedule is not None:
-                    str_lit.session_state.schedule[f_date] = f_doc
-                    
-                    end_d = max(str_lit.session_state.schedule.keys()) if str_lit.session_state.schedule else f_date
-                    str_lit.session_state.balance = compute_balance(
-                        str_lit.session_state.schedule, str_lit.session_state.start_date, end_d, 
-                        str_lit.session_state.holiday_names, active_doctors
-                    )
-                    save_state_to_file(
-                        str_lit.session_state.schedule, str_lit.session_state.holiday_names, 
-                        str_lit.session_state.balance, str_lit.session_state.manual_assignments, 
-                        active_doctors, str_lit.session_state.initial_week, 
-                        str_lit.session_state.empty_tooltips
-                    )
+                end_d = max(str_lit.session_state.schedule.keys()) if str_lit.session_state.schedule else f_date
+                str_lit.session_state.balance = compute_balance(
+                    str_lit.session_state.schedule, str_lit.session_state.start_date, end_d, 
+                    str_lit.session_state.holiday_names, active_doctors
+                )
+                
+                save_state_to_file(
+                    str_lit.session_state.schedule, str_lit.session_state.holiday_names, 
+                    str_lit.session_state.balance, str_lit.session_state.manual_assignments, 
+                    active_doctors, str_lit.session_state.initial_week, 
+                    str_lit.session_state.empty_tooltips
+                )
                 
                 str_lit.success(f"Προστέθηκε & κλειδώθηκε: {f_date.strftime('%d/%m/%Y')} -> {f_doc}")
                 str_lit.rerun()
@@ -1119,13 +1120,22 @@ with left_col:
             elif submit_del:
                 if f_date in str_lit.session_state.manual_assignments:
                     del str_lit.session_state.manual_assignments[f_date]
-                        
-                    save_state_to_file(
-                        str_lit.session_state.schedule, str_lit.session_state.holiday_names, 
-                        str_lit.session_state.balance, str_lit.session_state.manual_assignments, 
-                        active_doctors, str_lit.session_state.initial_week, 
-                        str_lit.session_state.empty_tooltips
-                    )
+                
+                if str_lit.session_state.schedule and f_date in str_lit.session_state.schedule:
+                    str_lit.session_state.schedule[f_date] = None
+                
+                end_d = max(str_lit.session_state.schedule.keys()) if str_lit.session_state.schedule else f_date
+                str_lit.session_state.balance = compute_balance(
+                    str_lit.session_state.schedule, str_lit.session_state.start_date, end_d, 
+                    str_lit.session_state.holiday_names, active_doctors
+                )
+
+                save_state_to_file(
+                    str_lit.session_state.schedule, str_lit.session_state.holiday_names, 
+                    str_lit.session_state.balance, str_lit.session_state.manual_assignments, 
+                    active_doctors, str_lit.session_state.initial_week, 
+                    str_lit.session_state.empty_tooltips
+                )
                 str_lit.info(f"Αφαιρέθηκε η ημερομηνία {f_date.strftime('%d/%m/%Y')} από τις manual αλλαγές.")
                 str_lit.rerun()
 
