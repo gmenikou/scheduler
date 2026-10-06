@@ -2,16 +2,48 @@ name: Telegram test
 
 on:
   workflow_dispatch:
+    inputs:
+      date:
+        description: "Date to check (YYYY-MM-DD). Leave empty for tomorrow."
+        required: false
+        default: ""
 
 jobs:
   send:
     runs-on: ubuntu-latest
     steps:
-      - name: Send test message
+      - uses: actions/checkout@v4
+
+      - name: Find who is on duty and send
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHAT_ID: ${{ secrets.TELEGRAM_TEST_CHAT_ID }}
+          INPUT_DATE: ${{ github.event.inputs.date }}
         run: |
-          curl -sS --fail-with-body "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
-            -d chat_id="${CHAT_ID}" \
-            -d text="Test reminder from GitHub Actions"
+          python3 - <<'EOF'
+          import json, os, datetime, urllib.request, urllib.parse
+          from zoneinfo import ZoneInfo
+
+          override = os.environ.get("INPUT_DATE", "").strip()
+          if override:
+              target = datetime.date.fromisoformat(override)
+          else:
+              today = datetime.datetime.now(ZoneInfo("Europe/Nicosia")).date()
+              target = today + datetime.timedelta(days=1)
+
+          with open("last_schedule_state.json", encoding="utf-8") as f:
+              data = json.load(f)
+
+          doctor = data.get("schedule", {}).get(target.isoformat())
+          label = target.strftime("%d/%m/%Y")
+          if doctor:
+              text = f"TEST: {label} -> {doctor} is on duty"
+          else:
+              text = f"TEST: {label} -> no doctor assigned"
+          print(text)
+
+          body = urllib.parse.urlencode({"chat_id": os.environ["CHAT_ID"], "text": text}).encode()
+          url = f"https://api.telegram.org/bot{os.environ['TELEGRAM_TOKEN']}/sendMessage"
+          with urllib.request.urlopen(url, data=body) as r:
+              print("Telegram status:", r.status)
+          EOF
