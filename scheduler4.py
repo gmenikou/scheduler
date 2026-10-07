@@ -257,7 +257,7 @@ def get_major_holiday_blocks_in_range(start_date, end_date, num_docs=7):
     return blocks
 
 # ----------------------------
-# CONTINUOUS ROTATION LOGIC (WITH -5 ROTATION)
+# STRICT WEEK-BY-WEEK CONTINUOUS ROTATION LOGIC
 # ----------------------------
 def generate_full_schedule(start_date, end_date, doctors_list, initial_week, manual_entries=None):
     return generate_full_schedule_with_balance(start_date, end_date, doctors_list, initial_week, manual_entries, initial_balance=None)
@@ -277,6 +277,7 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
 
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
 
+    # Βρίσκουμε τη Δευτέρα της εβδομάδας έναρξης ως σημείο αναφοράς
     start_weekday = start_date.weekday()
     anchor_monday = start_date - datetime.timedelta(days=start_weekday)
 
@@ -284,9 +285,10 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
         if d in manual_entries and manual_entries[d] in doctors_list:
             schedule[d] = manual_entries[d]
         else:
-            delta_days = (d - anchor_monday).days
-            week_num = delta_days // 7
-            wd = d.weekday()
+            wd = d.weekday()  # 0=Δευτέρα έως 6=Κυριακή
+            # Η Δευτέρα της τρέχουσας εβδομάδας στην οποία ανήκει η μέρα d
+            current_monday = d - datetime.timedelta(days=wd)
+            week_num = (current_monday - anchor_monday).days // 7
 
             if initial_week and len(initial_week) > wd and initial_week[wd] in doctors_list:
                 base_doc = initial_week[wd]
@@ -295,6 +297,7 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
             
             base_idx = doctors_list.index(base_doc) if base_doc in doctors_list else 0
 
+            # Η ροτά κυλάει ακριβώς ανά εβδομάδα (προηγούμενη εβδομάδα -> επόμενη εβδομάδα με βάση τη θέση)
             doc_idx = (base_idx - week_num * 5) % num_docs
             schedule[d] = doctors_list[doc_idx]
 
