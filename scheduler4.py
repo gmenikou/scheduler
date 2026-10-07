@@ -257,7 +257,7 @@ def get_major_holiday_blocks_in_range(start_date, end_date, num_docs=7):
     return blocks
 
 # ----------------------------
-# STRICT ANCHORED +5 ROTATION LOGIC
+# EXACT MONDAY-SUNDAY INITIAL + ROTATION LOGIC
 # ----------------------------
 def generate_full_schedule(start_date, end_date, doctors_list, initial_week, manual_entries=None):
     return generate_full_schedule_with_balance(start_date, end_date, doctors_list, initial_week, manual_entries, initial_balance=None)
@@ -277,24 +277,35 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
 
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
 
-    # 1. Βρίσκουμε τον ακριβή γιατρό της πρώτης μέρας (start_date) από την αρχική σειρά εβδομάδας
-    start_weekday = start_date.weekday() # 0 = Δευτέρα, ..., 6 = Κυριακή
-    first_day_doc = None
-    if initial_week and len(initial_week) > start_weekday:
-        first_day_doc = initial_week[start_weekday]
-    
-    if not first_day_doc or first_day_doc not in doctors_list:
-        first_day_doc = doctors_list[0]
+    # Βρίσκουμε την πλησιέστερη Δευτέρα πριν ή την ίδια την start_date για να ορίσουμε την αρχική εβδομάδα βάσης
+    # Η αρχική εβδομάδα ξεκινάει ΠΑΝΤΑ από τη Δευτέρα (index 0 της initial_week)
+    days_since_monday = start_date.weekday() # 0=Δευτέρα, ..., 6=Κυριακή
+    anchor_monday = start_date - datetime.timedelta(days=days_since_monday)
 
-    start_doc_idx = doctors_list.index(first_day_doc)
-
-    # 2. Συνεχής ροτά μέρα με μέρα (+5 θέσεις ανά ημέρα) από την αρχή μέχρι το τέλος
     for i, d in enumerate(all_days):
         if d in manual_entries and manual_entries[d] in doctors_list:
             schedule[d] = manual_entries[d]
         else:
-            doc_idx = (start_doc_idx + i * 5) % num_docs
-            schedule[d] = doctors_list[doc_idx]
+            # Υπολογίζουμε πόσες μέρες πέρασαν από την αρχική Δευτέρα βάσης
+            delta_days = (d - anchor_monday).days
+            week_num = delta_days // 7
+            weekday_idx = d.weekday() # 0=Δευτέρα έως 6=Κυριακή
+
+            if week_num == 0:
+                # Για την πρώτη εβδομάδα, ακολουθούμε αυστηρά την αρχική σειρά Δευτέρα-Κυριακή
+                if initial_week and len(initial_week) > weekday_idx and initial_week[weekday_idx] in doctors_list:
+                    schedule[d] = initial_week[weekday_idx]
+                else:
+                    schedule[d] = doctors_list[weekday_idx % num_docs]
+            else:
+                # Για τις επόμενες εβδομάδες εφαρμόζουμε τη ροτά (+5 θέσεις ανά μέρα ή αντίστοιχο βήμα)
+                # Ξεκινάμε από τη βάση της πρώτης μέρας του εύρους
+                start_weekday = start_date.weekday()
+                first_day_doc = initial_week[start_weekday] if initial_week and len(initial_week) > start_weekday else doctors_list[0]
+                first_idx = doctors_list.index(first_day_doc) if first_day_doc in doctors_list else 0
+                
+                doc_idx = (first_idx + i * 5) % num_docs
+                schedule[d] = doctors_list[doc_idx]
 
     str_lit.session_state.empty_tooltips = empty_tooltips
     return schedule, holiday_names, warnings
