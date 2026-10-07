@@ -83,7 +83,7 @@ def save_state_to_github_with_status(schedule, holiday_names, manual_assignments
     save_state_to_file(schedule, holiday_names, None, manual_assignments, doctors, initial_week, empty_tooltips)
     token, repo = _github_settings()
     if not token:
-        return False, "Apothikeftike mono topika: leipoun ta GITHUB_TOKEN / GITHUB_REPO sta secrets."
+        return False, "Αποθηκεύτηκε μόνο τοπικά: λείπουν τα GITHUB_TOKEN / GITHUB_REPO στα secrets."
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as f:
             file_content_str = f.read()
@@ -105,10 +105,10 @@ def save_state_to_github_with_status(schedule, holiday_names, manual_assignments
             payload["sha"] = sha
         put_resp = requests.put(url, headers=headers, json=payload, timeout=30)
         if put_resp.status_code in (200, 201):
-            return True, "I katastasi apothikeftike sto GitHub."
-        return False, f"Apotychia apothikefsis sto GitHub (HTTP {put_resp.status_code})."
+            return True, "Η κατάσταση αποθηκεύτηκε στο GitHub."
+        return False, f"Αποτυχία αποθήκευσης στο GitHub (HTTP {put_resp.status_code})."
     except Exception as e:
-        return False, f"Sfalma apothikefsis sto GitHub: {e}"
+        return False, f"Σφάλμα αποθήκευσης στο GitHub: {e}"
 
 def _fetch_state_from_github():
     token, repo = _github_settings()
@@ -124,7 +124,7 @@ def _fetch_state_from_github():
         if resp.status_code == 200:
             return json.loads(resp.content.decode("utf-8"))
     except Exception as e:
-        print("Apotychia fortosis apo GitHub:", e)
+        print("Αποτυχία φόρτωσης από GitHub:", e)
     return None
 
 def _parse_state_data(data):
@@ -147,7 +147,7 @@ def load_state_from_file():
         try:
             return _parse_state_data(github_data)
         except Exception as e:
-            print("Sfalma anagnosis state apo GitHub:", e)
+            print("Σφάλμα ανάγνωσης state από GitHub:", e)
     if not os.path.exists(STATE_FILE):
         return None
     try:
@@ -155,7 +155,7 @@ def load_state_from_file():
             data = json.load(f)
         return _parse_state_data(data)
     except Exception as e:
-        print("Sfalma fortosis state:", e)
+        print("Σφάλμα φόρτωσης state:", e)
         return None
 
 # ----------------------------
@@ -257,7 +257,7 @@ def get_major_holiday_blocks_in_range(start_date, end_date, num_docs=7):
     return blocks
 
 # ----------------------------
-# SCHEDULING LOGIC (EXACT START & +5 ROTATION)
+# STRICT ANCHORED +5 ROTATION LOGIC
 # ----------------------------
 def generate_full_schedule(start_date, end_date, doctors_list, initial_week, manual_entries=None):
     return generate_full_schedule_with_balance(start_date, end_date, doctors_list, initial_week, manual_entries, initial_balance=None)
@@ -273,16 +273,22 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
     num_docs = len(doctors_list)
 
     if not doctors_list:
-        return schedule, holiday_names, ["Den yparhoun energoi iatroi."]
+        return schedule, holiday_names, ["Δεν υπάρχουν ενεργοί ιατροί."]
 
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
 
-    # Ksekiname apofasistika apo ton proto giatro tis arxikis seiras gia tin proti mera (start_date)
-    start_doc_idx = 0
-    if initial_week and len(initial_week) > 0 and initial_week[0] in doctors_list:
-        start_doc_idx = doctors_list.index(initial_week[0])
+    # 1. Βρίσκουμε τον ακριβή γιατρό της πρώτης μέρας (start_date) από την αρχική σειρά εβδομάδας
+    start_weekday = start_date.weekday() # 0 = Δευτέρα, ..., 6 = Κυριακή
+    first_day_doc = None
+    if initial_week and len(initial_week) > start_weekday:
+        first_day_doc = initial_week[start_weekday]
+    
+    if not first_day_doc or first_day_doc not in doctors_list:
+        first_day_doc = doctors_list[0]
 
-    # Sinexis rota me vima +5 imera me imera ap' tin arxi mexri to telos
+    start_doc_idx = doctors_list.index(first_day_doc)
+
+    # 2. Συνεχής ροτά μέρα με μέρα (+5 θέσεις ανά ημέρα) από την αρχή μέχρι το τέλος
     for i, d in enumerate(all_days):
         if d in manual_entries and manual_entries[d] in doctors_list:
             schedule[d] = manual_entries[d]
