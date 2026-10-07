@@ -257,7 +257,7 @@ def get_major_holiday_blocks_in_range(start_date, end_date, num_docs=7):
     return blocks
 
 # ----------------------------
-# ROBUST STABLE ROTATION LOGIC (FIXED FOR APRIL & MONTH TRANSITIONS)
+# STRICT CONTINUOUS 7-DAY ROTATION LOGIC
 # ----------------------------
 def generate_full_schedule(start_date, end_date, doctors_list, initial_week, manual_entries=None):
     return generate_full_schedule_with_balance(start_date, end_date, doctors_list, initial_week, manual_entries, initial_balance=None)
@@ -277,16 +277,18 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
 
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
     
-    # Σταθερή βάση ημερομηνίας έναρξης (anchor) για απόλυτη συνέπεια
-    anchor_date = start_date
+    # Βρίσκουμε τη Δευτέρα της εβδομάδας της ημερομηνίας έναρξης ως απόλυτη βάση (anchor_monday)
+    # ώστε η αρίθμηση των εβδομάδων να μην αλλάζει μέση-βδόμαδα και να κυλάει ομαλά σε όλους τους μήνες.
+    start_weekday = start_date.weekday()
+    anchor_monday = start_date - datetime.timedelta(days=start_weekday)
 
     for d in all_days:
         if d in manual_entries and manual_entries[d] in doctors_list:
             schedule[d] = manual_entries[d]
         else:
-            delta_days = (d - anchor_date).days
-            week_num = delta_days // 7
             wd = d.weekday()  # 0=Δευτέρα έως 6=Κυριακή
+            current_monday = d - datetime.timedelta(days=wd)
+            week_num = (current_monday - anchor_monday).days // 7
 
             if initial_week and len(initial_week) > wd and initial_week[wd] in doctors_list:
                 base_doc = initial_week[wd]
@@ -295,7 +297,7 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
             
             base_idx = doctors_list.index(base_doc) if base_doc in doctors_list else 0
 
-            # Ακριβής κυκλική ροή με -5 θέσεις ανά εβδομάδα
+            # Ακριβής συνεχής ροή με -5 θέσεις ανά ημερολογιακή εβδομάδα
             doc_idx = (base_idx - week_num * 5) % num_docs
             schedule[d] = doctors_list[doc_idx]
 
