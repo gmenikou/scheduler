@@ -257,7 +257,7 @@ def get_major_holiday_blocks_in_range(start_date, end_date, num_docs=7):
     return blocks
 
 # ----------------------------
-# SCHEDULING LOGIC (CONTINUOUS +5 ROTATION DAY-BY-DAY)
+# SCHEDULING LOGIC (EXACT START & +5 ROTATION)
 # ----------------------------
 def generate_full_schedule(start_date, end_date, doctors_list, initial_week, manual_entries=None):
     return generate_full_schedule_with_balance(start_date, end_date, doctors_list, initial_week, manual_entries, initial_balance=None)
@@ -275,42 +275,25 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
     if not doctors_list:
         return schedule, holiday_names, ["Δεν υπάρχουν ενεργοί ιατροί."]
 
-    # 1. Ενσωμάτωση χειροκίνητων αναθέσεων πρώτα
-    for d, doc in manual_entries.items():
-        if start_date <= d <= end_date and doc in doctors_list:
-            schedule[d] = doc
-
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
 
-    # 2. Ορίζουμε την αφετηρία της ροτάς από την πρώτη μέρα (start_date). 
-    # Αν υπάρχει αρχική ρύθμιση για τη Δευτέρα ή πρώτη μέρα, τη λαμβάνουμε υπόψη, 
-    # αλλιώς ξεκινάμε από τον πρώτο γιατρό της λίστας ή από το initial_week[0].
-    base_doc_idx = 0
-    if initial_week and isinstance(initial_week, (list, tuple)) and len(initial_week) > 0:
-        first_doc = initial_week[0]
-        if first_doc in doctors_list:
-            base_doc_idx = doctors_list.index(first_doc)
+    # Βρίσκουμε τον γιατρό της πρώτης μέρας ακριβώς από την αρχική σειρά εβδομάδας (ή από τη λίστα)
+    start_doc_idx = 0
+    if initial_week and len(initial_week) > 0:
+        # Βρίσκουμε ποια μέρα της εβδομάδας είναι η start_date (0=Δευτέρα, ..., 6=Κυριακή)
+        weekday_idx = start_date.weekday()
+        if weekday_idx < len(initial_week) and initial_week[weekday_idx] in doctors_list:
+            start_doc_idx = doctors_list.index(initial_week[weekday_idx])
+        elif initial_week[0] in doctors_list:
+            start_doc_idx = doctors_list.index(initial_week[0])
 
-    # Αν υπάρχει manual ανάθεση ακριβώς στην start_date, ξεκινάμε από εκεί
-    if start_date in schedule and schedule[start_date] in doctors_list:
-        base_doc_idx = doctors_list.index(schedule[start_date])
-
-    # 3. Συνεχής ροτά μέρα με μέρα (+5 θέσεις ανά ημερολογιακή ημέρα) χωρίς παγώματα ανά εβδομάδα
+    # Γέμισμα με βάση την αρχική σειρά στην πρώτη μέρα και συνεχές +5 βήμα μέρα με μέρα
     for i, d in enumerate(all_days):
-        if d in schedule and schedule[d] in doctors_list:
-            # Αν υπάρχει manual ανάθεση σε αυτή τη μέρα, την κρατάμε και συγχρονίζουμε τη ροτά από εδώ και πέρα
-            base_doc_idx = doctors_list.index(schedule[d])
-            base_index_day = d
+        if d in manual_entries and manual_entries[d] in doctors_list:
+            schedule[d] = manual_entries[d]
         else:
-            # Υπολογίζουμε τη θέση βάσει της απόστασης ημερών από την τρέχουσα βάση
-            if i == 0:
-                current_doc_idx = base_doc_idx
-            else:
-                # Κάθε μέρα που περνάει προχωράει ακριβώς +5 θέσεις στη λίστα των γιατρών κυκλικά
-                day_diff = (d - start_date).days
-                current_doc_idx = (base_doc_idx + day_diff * 5) % num_docs
-            
-            schedule[d] = doctors_list[current_doc_idx]
+            doc_idx = (start_doc_idx + i * 5) % num_docs
+            schedule[d] = doctors_list[doc_idx]
 
     str_lit.session_state.empty_tooltips = empty_tooltips
     return schedule, holiday_names, warnings
