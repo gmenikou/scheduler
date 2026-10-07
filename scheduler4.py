@@ -257,7 +257,7 @@ def get_major_holiday_blocks_in_range(start_date, end_date, num_docs=7):
     return blocks
 
 # ----------------------------
-# EXACT MONDAY-SUNDAY INITIAL + ROTATION LOGIC (WITH -5 ROTATION)
+# CONTINUOUS ROTATION LOGIC (WITH -5 ROTATION)
 # ----------------------------
 def generate_full_schedule(start_date, end_date, doctors_list, initial_week, manual_entries=None):
     return generate_full_schedule_with_balance(start_date, end_date, doctors_list, initial_week, manual_entries, initial_balance=None)
@@ -277,7 +277,6 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
 
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
 
-    # Βρίσκουμε τη Δευτέρα της εβδομάδας έναρξης (anchor)
     start_weekday = start_date.weekday()
     anchor_monday = start_date - datetime.timedelta(days=start_weekday)
 
@@ -285,14 +284,10 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
         if d in manual_entries and manual_entries[d] in doctors_list:
             schedule[d] = manual_entries[d]
         else:
-            # Υπολογισμός της Δευτέρας της τρέχουσας εβδομάδας για κάθε ημέρα
-            wd = d.weekday() # 0=Δευτέρα έως 6=Κυριακή
-            current_monday = d - datetime.timedelta(days=wd)
-            
-            # Ο αριθμός των εβδομάδων που έχουν περάσει από την anchor_monday
-            week_num = (current_monday - anchor_monday).days // 7
+            delta_days = (d - anchor_monday).days
+            week_num = delta_days // 7
+            wd = d.weekday()
 
-            # Εύρεση του βασικού γιατρού για τη συγκεκριμένη ημέρα της εβδομάδας
             if initial_week and len(initial_week) > wd and initial_week[wd] in doctors_list:
                 base_doc = initial_week[wd]
             else:
@@ -300,7 +295,6 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
             
             base_idx = doctors_list.index(base_doc) if base_doc in doctors_list else 0
 
-            # Σταθερή εφαρμογή της ροτάς (-5 θέσεις ανά εβδομάδα)
             doc_idx = (base_idx - week_num * 5) % num_docs
             schedule[d] = doctors_list[doc_idx]
 
