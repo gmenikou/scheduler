@@ -277,29 +277,26 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
 
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
 
-    # Βρίσκουμε την πλησιέστερη Δευτέρα πριν ή την ίδια την start_date για να ορίσουμε την αρχική εβδομάδα βάσης
-    # Η αρχική εβδομάδα ξεκινάει ΠΑΝΤΑ από τη Δευτέρα (index 0 της initial_week)
-    days_since_monday = start_date.weekday() # 0=Δευτέρα, ..., 6=Κυριακή
+    # Βρίσκουμε την πρώτη Δευτέρα βάσης για την αρχική εβδομάδα
+    days_since_monday = start_date.weekday()
     anchor_monday = start_date - datetime.timedelta(days=days_since_monday)
 
     for i, d in enumerate(all_days):
         if d in manual_entries and manual_entries[d] in doctors_list:
             schedule[d] = manual_entries[d]
         else:
-            # Υπολογίζουμε πόσες μέρες πέρασαν από την αρχική Δευτέρα βάσης
             delta_days = (d - anchor_monday).days
             week_num = delta_days // 7
             weekday_idx = d.weekday() # 0=Δευτέρα έως 6=Κυριακή
 
             if week_num == 0:
-                # Για την πρώτη εβδομάδα, ακολουθούμε αυστηρά την αρχική σειρά Δευτέρα-Κυριακή
+                # Πρώτη εβδομάδα: γεμίζει από Δευτέρα έως Κυριακή με βάση την αρχική σειρά
                 if initial_week and len(initial_week) > weekday_idx and initial_week[weekday_idx] in doctors_list:
                     schedule[d] = initial_week[weekday_idx]
                 else:
                     schedule[d] = doctors_list[weekday_idx % num_docs]
             else:
-                # Για τις επόμενες εβδομάδες εφαρμόζουμε τη ροτά (+5 θέσεις ανά μέρα ή αντίστοιχο βήμα)
-                # Ξεκινάμε από τη βάση της πρώτης μέρας του εύρους
+                # Συνέχεια με τη ροτά για τις επόμενες εβδομάδες
                 start_weekday = start_date.weekday()
                 first_day_doc = initial_week[start_weekday] if initial_week and len(initial_week) > start_weekday else doctors_list[0]
                 first_idx = doctors_list.index(first_day_doc) if first_day_doc in doctors_list else 0
