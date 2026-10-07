@@ -52,10 +52,12 @@ FIXED_HOLIDAYS = [
     (12, 31, "Παραμονή Πρωτοχρονιάς"),
 ]
 
+STATE_FILE = "last_schedule_state_cyclic.json"
+
 # ----------------------------
 # STATE PERSISTENCE FUNCTIONS
 # ----------------------------
-def save_state_to_file(filename, schedule, holiday_names, balance, manual_assignments, doctors, initial_week, empty_tooltips):
+def save_state_to_file(schedule, holiday_names, balance, manual_assignments, doctors, initial_week, empty_tooltips):
     data = {
         "schedule": {d.strftime("%Y-%m-%d"): doc for d, doc in schedule.items() if doc is not None} if schedule else {},
         "holiday_names": {d.strftime("%Y-%m-%d"): name for d, name in holiday_names.items()} if holiday_names else {},
@@ -66,7 +68,7 @@ def save_state_to_file(filename, schedule, holiday_names, balance, manual_assign
     }
     
     file_content_str = json.dumps(data, ensure_ascii=False, indent=4)
-    with open(filename, "w", encoding="utf-8") as f:
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
         f.write(file_content_str)
 
 def _github_settings():
@@ -77,15 +79,15 @@ def _github_settings():
         pass
     return None, None
 
-def save_state_to_github_with_status(filename, schedule, holiday_names, manual_assignments, doctors, initial_week, empty_tooltips):
-    save_state_to_file(filename, schedule, holiday_names, None, manual_assignments, doctors, initial_week, empty_tooltips)
+def save_state_to_github_with_status(schedule, holiday_names, manual_assignments, doctors, initial_week, empty_tooltips):
+    save_state_to_file(schedule, holiday_names, None, manual_assignments, doctors, initial_week, empty_tooltips)
     token, repo = _github_settings()
     if not token:
         return False, "Αποθηκεύτηκε μόνο τοπικά: λείπουν τα GITHUB_TOKEN / GITHUB_REPO στα secrets."
     try:
-        with open(filename, "r", encoding="utf-8") as f:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
             file_content_str = f.read()
-        url = f"https://api.github.com/repos/{repo}/contents/{filename}"
+        url = f"https://api.github.com/repos/{repo}/contents/{STATE_FILE}"
         headers = {
             "Authorization": f"token {token}",
             "Accept": "application/vnd.github.v3+json"
@@ -95,7 +97,7 @@ def save_state_to_github_with_status(filename, schedule, holiday_names, manual_a
         if get_resp.status_code == 200:
             sha = get_resp.json().get("sha")
         payload = {
-            "message": f"Manual save of schedule state {filename} [skip ci]",
+            "message": f"Manual save of schedule state {STATE_FILE} [skip ci]",
             "content": base64.b64encode(file_content_str.encode("utf-8")).decode("utf-8"),
             "branch": "main"
         }
@@ -103,17 +105,17 @@ def save_state_to_github_with_status(filename, schedule, holiday_names, manual_a
             payload["sha"] = sha
         put_resp = requests.put(url, headers=headers, json=payload, timeout=30)
         if put_resp.status_code in (200, 201):
-            return True, f"Η κατάσταση αποθηκεύτηκε στο GitHub ως {filename}."
+            return True, f"Η κατάσταση αποθηκεύτηκε στο GitHub ως {STATE_FILE}."
         return False, f"Αποτυχία αποθήκευσης στο GitHub (HTTP {put_resp.status_code})."
     except Exception as e:
         return False, f"Σφάλμα αποθήκευσης στο GitHub: {e}"
 
-def _fetch_state_from_github(filename):
+def _fetch_state_from_github():
     token, repo = _github_settings()
     if not token:
         return None
     try:
-        url = f"https://api.github.com/repos/{repo}/contents/{filename}"
+        url = f"https://api.github.com/repos/{repo}/contents/{STATE_FILE}"
         headers = {
             "Authorization": f"token {token}",
             "Accept": "application/vnd.github.v3.raw"
@@ -139,17 +141,17 @@ def _parse_state_data(data):
         "initial_week": data.get("initial_week", DEFAULT_DOCTORS[:7])
     }
 
-def load_state_from_file(filename):
-    github_data = _fetch_state_from_github(filename)
+def load_state_from_file():
+    github_data = _fetch_state_from_github()
     if github_data is not None:
         try:
             return _parse_state_data(github_data)
         except Exception as e:
             print("Σφάλμα ανάγνωσης state από GitHub:", e)
-    if not os.path.exists(filename):
+    if not os.path.exists(STATE_FILE):
         return None
     try:
-        with open(filename, "r", encoding="utf-8") as f:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         return _parse_state_data(data)
     except Exception as e:
@@ -255,7 +257,7 @@ def get_major_holiday_blocks_in_range(start_date, end_date, num_docs=7):
     return blocks
 
 # ----------------------------
-# EXACT MONDAY-SUNDAY INITIAL + ROTATION LOGIC (WITH -5 ROTATION)[cite: 1]
+# EXACT MONDAY-SUNDAY INITIAL + ROTATION LOGIC (WITH -5 ROTATION)
 # ----------------------------
 def generate_full_schedule(start_date, end_date, doctors_list, initial_week, manual_entries=None):
     return generate_full_schedule_with_balance(start_date, end_date, doctors_list, initial_week, manual_entries, initial_balance=None)
@@ -617,7 +619,7 @@ def display_calendar(schedule, holiday_names, doctors_list):
                     else:
                         cols[i].markdown("")
 
-def recalculate_on_doctor_change_fair(cutoff_date, schedule, old_doctors_list, new_doctors_list, initial_week, manual_entries, current_balance, state_filename):
+def recalculate_on_doctor_change_fair(cutoff_date, schedule, old_doctors_list, new_doctors_list, initial_week, manual_entries, current_balance):
     new_schedule = {d: doc for d, doc in schedule.items() if d < cutoff_date}
     if isinstance(current_balance, pd.DataFrame):
         balance_dict = dict(zip(current_balance["Doctor"], current_balance["Total"])) if not current_balance.empty else {}
@@ -643,11 +645,7 @@ str_lit.title("📅 Πρόγραμμα Εφημεριών Ακτινολόγων
 str_lit.markdown("<span style='font-size:14px; color:gray;'>© Γιώργος Μενοίκου, PhD</span>",
             unsafe_allow_html=True)
 
-# Επιλογή αρχείου JSON αποθήκευσης/φόρτωσης από το Sidebar
-str_lit.sidebar.markdown("### 💾 Αρχείο Δεδομένων (JSON)")
-state_filename = str_lit.sidebar.text_input("Όνομα Αρχείου JSON", value="last_schedule_state.json")
-
-saved_state = load_state_from_file(state_filename)
+saved_state = load_state_from_file()
 
 defaults = {
     "manual_assignments": saved_state["manual_assignments"] if saved_state and saved_state.get("manual_assignments") is not None else {},
@@ -772,7 +770,7 @@ with left_col:
                         str_lit.session_state.holiday_names, active_doctors
                     )
                     save_state_to_file(
-                        state_filename, str_lit.session_state.schedule, str_lit.session_state.holiday_names, 
+                        str_lit.session_state.schedule, str_lit.session_state.holiday_names, 
                         str_lit.session_state.balance, str_lit.session_state.manual_assignments, 
                         active_doctors, str_lit.session_state.initial_week, 
                         str_lit.session_state.empty_tooltips
@@ -791,7 +789,7 @@ with left_col:
                             str_lit.session_state.holiday_names, active_doctors
                         )
                     save_state_to_file(
-                        state_filename, str_lit.session_state.schedule, str_lit.session_state.holiday_names, 
+                        str_lit.session_state.schedule, str_lit.session_state.holiday_names, 
                         str_lit.session_state.balance, str_lit.session_state.manual_assignments, 
                         active_doctors, str_lit.session_state.initial_week, 
                         str_lit.session_state.empty_tooltips
@@ -802,7 +800,7 @@ with left_col:
             elif submit_save:
                 if str_lit.session_state.schedule is not None:
                     ok, msg = save_state_to_github_with_status(
-                        state_filename, str_lit.session_state.schedule, str_lit.session_state.holiday_names,
+                        str_lit.session_state.schedule, str_lit.session_state.holiday_names,
                         str_lit.session_state.manual_assignments, active_doctors,
                         str_lit.session_state.initial_week, str_lit.session_state.empty_tooltips
                     )
@@ -835,11 +833,11 @@ with left_col:
                 str_lit.session_state.warnings = warnings
                 str_lit.session_state.balance = compute_balance(schedule, start_date, end_date, holiday_names, active_doctors)
                 save_state_to_file(
-                    state_filename, schedule, holiday_names, str_lit.session_state.balance, 
+                    schedule, holiday_names, str_lit.session_state.balance, 
                     str_lit.session_state.manual_assignments, active_doctors, 
                     str_lit.session_state.initial_week, str_lit.session_state.empty_tooltips
                 )
-                str_lit.success(f"Το πρόγραμμα υπολογίστηκε και αποθηκεύτηκε στο '{state_filename}'!")
+                str_lit.success("Το πρόγραμμα υπολογίστηκε εξ αρχής!")
 
         with calc_col2:
             change_date = str_lit.date_input("Ημερομηνία Αλλαγής Προσωπικού:", value=datetime.date.today())
@@ -852,15 +850,14 @@ with left_col:
                         new_doctors_list=active_doctors,
                         initial_week=str_lit.session_state.initial_week,
                         manual_entries=str_lit.session_state.manual_assignments,
-                        current_balance=str_lit.session_state.balance,
-                        state_filename=state_filename
+                        current_balance=str_lit.session_state.balance
                     )
                     str_lit.session_state.schedule = updated_schedule
                     str_lit.session_state.warnings = warnings
                     balance_df = pd.DataFrame(list(new_balance_dict.items()), columns=["Doctor", "Total"])
                     str_lit.session_state.balance = balance_df
                     save_state_to_file(
-                        state_filename, updated_schedule, str_lit.session_state.holiday_names, 
+                        updated_schedule, str_lit.session_state.holiday_names, 
                         balance_df, str_lit.session_state.manual_assignments, 
                         active_doctors, str_lit.session_state.initial_week, 
                         str_lit.session_state.empty_tooltips
