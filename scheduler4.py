@@ -277,8 +277,6 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
 
     all_days = [start_date + datetime.timedelta(days=i) for i in range(total_days)]
     
-    # Βρίσκουμε τη Δευτέρα της εβδομάδας της ημερομηνίας έναρξης ως απόλυτη βάση (anchor_monday)
-    # ώστε η αρίθμηση των εβδομάδων να μην αλλάζει μέση-βδόμαδα και να κυλάει ομαλά σε όλους τους μήνες.
     start_weekday = start_date.weekday()
     anchor_monday = start_date - datetime.timedelta(days=start_weekday)
 
@@ -297,7 +295,6 @@ def generate_full_schedule_with_balance(start_date, end_date, doctors_list, init
             
             base_idx = doctors_list.index(base_doc) if base_doc in doctors_list else 0
 
-            # Ακριβής συνεχής ροή με -5 θέσεις ανά ημερολογιακή εβδομάδα
             doc_idx = (base_idx - week_num * 5) % num_docs
             schedule[d] = doctors_list[doc_idx]
 
@@ -648,6 +645,18 @@ str_lit.title("📅 Πρόγραμμα Εφημεριών Ακτινολόγων
 str_lit.markdown("<span style='font-size:14px; color:gray;'>© Γιώργος Μενοίκου, PhD</span>",
             unsafe_allow_html=True)
 
+# Προσθήκη CSS styling για τα selectboxes της αρχικής εβδομάδας ώστε να μην σπάνε τα ονόματα
+str_lit.markdown(
+    """
+    <style>
+    div[data-baseweb="select"] > div {
+        font-size: 13px !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 saved_state = load_state_from_file()
 
 defaults = {
@@ -725,232 +734,4 @@ with left_col:
         active_doctors = str_lit.session_state.doctors
 
         str_lit.markdown("### 📋 Αρχική Σειρά Εβδομάδας (Δευτέρα - Κυριακή)")
-        initial_week_list = []
-        cols_init = str_lit.columns(7)
-        for i, day_label in enumerate(GREEK_WEEKDAY_LABELS):
-            with cols_init[i]:
-                default_doc = str_lit.session_state.initial_week[i] if i < len(str_lit.session_state.initial_week) else active_doctors[0]
-                if default_doc not in active_doctors:
-                    default_doc = active_doctors[0]
-                doc_sel = str_lit.selectbox(day_label, active_doctors, index=active_doctors.index(default_doc), key=f"init_day_{i}")
-                initial_week_list.append(doc_sel)
-        str_lit.session_state.initial_week = initial_week_list
-
-        str_lit.markdown("### ✏️ Χειροκίνητες Αναθέσεις")
-        str_lit.markdown(
-            """
-            <style>
-            .st-key-save_state_btn button {
-                background-color: #28a745 !important;
-                border-color: #28a745 !important;
-            }
-            .st-key-save_state_btn button,
-            .st-key-save_state_btn button p {
-                color: #000000 !important;
-                font-weight: 700 !important;
-            }
-            </style>
-            """,
-            unsafe_allow_html=True
-        )
-        with str_lit.form(key="manual_form"):
-            str_lit.markdown("Επιλέξτε ημερομηνία και γιατρό για προσθήκη στη λίστα αλλαγών:")
-            f_date = str_lit.date_input("Ημερομηνία Ανάθεσης", value=default_start)
-            f_doc = str_lit.selectbox("Ιατρός", active_doctors)
-            
-            f_col1, f_col2 = str_lit.columns(2)
-            submit_add = f_col1.form_submit_button("➕ Προσθήκη / Κλείδωμα")
-            submit_del = f_col2.form_submit_button("🗑 Αφαίρεση Ημερομηνίας")
-            submit_save = f_col1.form_submit_button("💾 Αποθήκευση", key="save_state_btn")
-
-            if submit_add:
-                str_lit.session_state.manual_assignments[f_date] = f_doc
-                if str_lit.session_state.schedule is not None:
-                    str_lit.session_state.schedule[f_date] = f_doc
-                    end_d = max(str_lit.session_state.schedule.keys()) if str_lit.session_state.schedule else f_date
-                    str_lit.session_state.balance = compute_balance(
-                        str_lit.session_state.schedule, str_lit.session_state.start_date, end_d, 
-                        str_lit.session_state.holiday_names, active_doctors
-                    )
-                    save_state_to_file(
-                        str_lit.session_state.schedule, str_lit.session_state.holiday_names, 
-                        str_lit.session_state.balance, str_lit.session_state.manual_assignments, 
-                        active_doctors, str_lit.session_state.initial_week, 
-                        str_lit.session_state.empty_tooltips
-                    )
-                str_lit.success(f"Προστέθηκε & κλειδώθηκε: {f_date.strftime('%d/%m/%Y')} -> {f_doc}")
-                str_lit.rerun()
-
-            elif submit_del:
-                if f_date in str_lit.session_state.manual_assignments:
-                    del str_lit.session_state.manual_assignments[f_date]
-                    if str_lit.session_state.schedule is not None and f_date in str_lit.session_state.schedule:
-                        str_lit.session_state.schedule[f_date] = None
-                        end_d = max(str_lit.session_state.schedule.keys())
-                        str_lit.session_state.balance = compute_balance(
-                            str_lit.session_state.schedule, str_lit.session_state.start_date, end_d,
-                            str_lit.session_state.holiday_names, active_doctors
-                        )
-                    save_state_to_file(
-                        str_lit.session_state.schedule, str_lit.session_state.holiday_names, 
-                        str_lit.session_state.balance, str_lit.session_state.manual_assignments, 
-                        active_doctors, str_lit.session_state.initial_week, 
-                        str_lit.session_state.empty_tooltips
-                    )
-                str_lit.info(f"Αφαιρέθηκε η ημερομηνία {f_date.strftime('%d/%m/%Y')} από τις manual αλλαγές.")
-                str_lit.rerun()
-
-            elif submit_save:
-                if str_lit.session_state.schedule is not None:
-                    ok, msg = save_state_to_github_with_status(
-                        str_lit.session_state.schedule, str_lit.session_state.holiday_names,
-                        str_lit.session_state.manual_assignments, active_doctors,
-                        str_lit.session_state.initial_week, str_lit.session_state.empty_tooltips
-                    )
-                    if ok:
-                        str_lit.success(msg)
-                    else:
-                        str_lit.error(msg)
-                else:
-                    str_lit.warning("Δεν υπάρχει ενεργό πρόγραμμα για αποθήκευση.")
-
-        if str_lit.session_state.manual_assignments:
-            str_lit.markdown("**📋 Εκκρεμείς Χειροκίνητες Αλλαγές:**")
-            for d, doc in sorted(str_lit.session_state.manual_assignments.items()):
-                str_lit.write(f"- {d.strftime('%d/%m/%Y')}: **{doc}**")
-            if str_lit.button("🗑️ Εκκαθάριση Όλων των Αλλαγών"):
-                str_lit.session_state.manual_assignments = {}
-                str_lit.rerun()
-
-        str_lit.markdown("---")
-        calc_col1, calc_col2 = str_lit.columns(2)
-        with calc_col1:
-            if str_lit.button("🔄 Νέος Υπολογισμός (Full)", type="primary"):
-                str_lit.session_state.start_date = start_date
-                holiday_names = get_holidays_in_range(start_date, end_date)
-                str_lit.session_state.holiday_names = holiday_names
-                schedule, holiday_names, warnings = generate_full_schedule(
-                    start_date, end_date, active_doctors, str_lit.session_state.initial_week, str_lit.session_state.manual_assignments
-                )
-                str_lit.session_state.schedule = schedule
-                str_lit.session_state.warnings = warnings
-                str_lit.session_state.balance = compute_balance(schedule, start_date, end_date, holiday_names, active_doctors)
-                save_state_to_file(
-                    schedule, holiday_names, str_lit.session_state.balance, 
-                    str_lit.session_state.manual_assignments, active_doctors, 
-                    str_lit.session_state.initial_week, str_lit.session_state.empty_tooltips
-                )
-                str_lit.success("Το πρόγραμμα υπολογίστηκε εξ αρχής!")
-
-        with calc_col2:
-            change_date = str_lit.date_input("Ημερομηνία Αλλαγής Προσωπικού:", value=datetime.date.today())
-            if str_lit.button("⚡ Εφαρμογή Αλλαγής (Partial)"):
-                if str_lit.session_state.schedule is not None:
-                    updated_schedule, warnings, new_balance_dict = recalculate_on_doctor_change_fair(
-                        cutoff_date=change_date,
-                        schedule=str_lit.session_state.schedule,
-                        old_doctors_list=old_doctors_snapshot,
-                        new_doctors_list=active_doctors,
-                        initial_week=str_lit.session_state.initial_week,
-                        manual_entries=str_lit.session_state.manual_assignments,
-                        current_balance=str_lit.session_state.balance
-                    )
-                    str_lit.session_state.schedule = updated_schedule
-                    str_lit.session_state.warnings = warnings
-                    balance_df = pd.DataFrame(list(new_balance_dict.items()), columns=["Doctor", "Total"])
-                    str_lit.session_state.balance = balance_df
-                    save_state_to_file(
-                        updated_schedule, str_lit.session_state.holiday_names, 
-                        balance_df, str_lit.session_state.manual_assignments, 
-                        active_doctors, str_lit.session_state.initial_week, 
-                        str_lit.session_state.empty_tooltips
-                    )
-                    str_lit.success("Η αλλαγή προσωπικού εφαρμόστηκε!")
-                else:
-                    str_lit.warning("Δεν υπάρχει ενεργό πρόγραμμα.")
-        active_doctors = str_lit.session_state.doctors
-    else:
-        str_lit.subheader("👁️ Λειτουργία Προβολής (Γιατρός)")
-        active_doctors = str_lit.session_state.doctors
-        start_date = default_start
-        end_date = default_end
-        if str_lit.session_state.schedule is None:
-            str_lit.warning("Δεν έχει αποθηκευτεί ακόμα πρόγραμμα.")
-
-    if str_lit.session_state.warnings:
-        with str_lit.expander("⚠ Προειδοποιήσεις (Κενές Ημέρες)", expanded=False):
-            for w in str_lit.session_state.warnings:
-                str_lit.write(f"- {w}")
-
-    if str_lit.session_state.balance is not None and not (isinstance(str_lit.session_state.balance, pd.DataFrame) and str_lit.session_state.balance.empty):
-        end_d = max(str_lit.session_state.schedule.keys()) if str_lit.session_state.schedule else end_date
-        str_lit.markdown("---")
-        str_lit.markdown("### 📥 Επιλογές Εξαγωγής PDF")
-        balance_to_pass = str_lit.session_state.balance
-        if isinstance(balance_to_pass, dict):
-            balance_to_pass = pd.DataFrame(list(balance_to_pass.items()), columns=["Doctor", "Total"])
-
-        pdf_balance_bytes = create_balance_pdf(balance_to_pass, str_lit.session_state.start_date, end_d)
-        str_lit.download_button("📄 Λήψη Ισοζυγίου σε PDF", pdf_balance_bytes, file_name="doctor_balance.pdf", mime="application/pdf")
-
-        if str_lit.session_state.schedule:
-            pdf_major_bytes = create_major_holidays_pdf_by_doctor(
-                str_lit.session_state.schedule, 
-                str_lit.session_state.start_date, 
-                end_d, 
-                active_doctors
-            )
-            str_lit.download_button("📄 Λήψη Μεγάλων Εορτών ανά Ιατρό σε PDF", pdf_major_bytes, file_name="major_holidays_by_doctor.pdf", mime="application/pdf")
-
-            selected_year = str_lit.selectbox("Επιλογή Έτους για Μεγάλες Εορτές", range(start_date.year, end_date.year + 1))
-            if str_lit.button("📥 Λήψη Μεγάλων Εορτών Έτους σε PDF"):
-                pdf_yearly_bytes = create_yearly_major_holidays_pdf(str_lit.session_state.schedule, selected_year, str_lit.session_state.start_date, end_d)
-                str_lit.download_button(
-                    label=f"💾 Αποθήκευση PDF Έτους {selected_year}",
-                    data=pdf_yearly_bytes,
-                    file_name=f"major_holidays_{selected_year}.pdf",
-                    mime="application/pdf"
-                )
-
-            major_blocks = get_major_holiday_blocks_in_range(str_lit.session_state.start_date, end_d, len(active_doctors))
-            all_major_dates = {d for block in major_blocks for d in block["dates"]}
-            regular_hols = {d: n for d, n in str_lit.session_state.holiday_names.items() if d not in all_major_dates}
-            
-            pdf_reg_bytes = create_regular_holidays_pdf(str_lit.session_state.schedule, str_lit.session_state.holiday_names, str_lit.session_state.start_date, end_d)
-            str_lit.download_button("📄 Λήψη Μικρών Αργιών σε PDF", pdf_reg_bytes, file_name="regular_holidays.pdf", mime="application/pdf")
-
-            pdf_calendar_bytes = create_calendar_pdf(
-                str_lit.session_state.schedule,
-                str_lit.session_state.start_date,
-                end_d,
-                str_lit.session_state.holiday_names,
-                active_doctors
-            )
-            str_lit.download_button(
-                "📥 Λήψη Πλήρους Ημερολογίου σε Landscape PDF (Ανά Μήνα)",
-                pdf_calendar_bytes,
-                file_name="calendar_landscape.pdf",
-                mime="application/pdf"
-            )
-
-        str_lit.markdown("---")
-        str_lit.markdown("### 📊 Πίνακας Ισοζυγίου")
-        str_lit.dataframe(balance_to_pass, use_container_width=True, height=260)
-
-        str_lit.markdown("---")
-        str_lit.markdown("### 🎄🐣 Μεγάλες Εορτές ανά Ιατρό")
-        major_doctor_df = compute_major_holidays_by_doctor(
-            str_lit.session_state.schedule, str_lit.session_state.start_date, end_d, active_doctors)
-        str_lit.dataframe(major_doctor_df, use_container_width=True, height=220)
-
-        str_lit.markdown("---")
-        str_lit.markdown("### 🏛 Μικρές Αργίες Χρονολογικά")
-        reg_df = compute_regular_holidays_chronological(str_lit.session_state.schedule, regular_hols)
-        str_lit.dataframe(reg_df, use_container_width=True, height=200)
-
-with right_col:
-    str_lit.subheader("🗓 Ημερολόγιο Εφημεριών")
-    if str_lit.session_state.schedule:
-        display_calendar(str_lit.session_state.schedule, str_lit.session_state.holiday_names, active_doctors)
-    else:
-        str_lit.info("Δεν υπάρχει διαθέσιμο πρόγραμμα. Παρακαλώ συνδεθείτε ως Διαχειριστής για να το υπολογίσετε ή να το ανεβάσετε.")
+        initial
