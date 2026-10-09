@@ -7,6 +7,10 @@ on:
         description: "Date to check (YYYY-MM-DD). Leave empty for tomorrow."
         required: false
         default: ""
+      send_live:
+        description: "Tick to really send to the doctor. Unticked = only a preview to you."
+        type: boolean
+        default: false
 
 jobs:
   send:
@@ -17,12 +21,26 @@ jobs:
       - name: Find who is on duty and send
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          CHAT_ID: ${{ secrets.TELEGRAM_TEST_CHAT_ID }}
+          ADMIN_CHAT_ID: ${{ secrets.TELEGRAM_TEST_CHAT_ID }}
+          DOCTOR_CHAT_IDS: ${{ secrets.DOCTOR_CHAT_IDS }}
           INPUT_DATE: ${{ github.event.inputs.date }}
+          SEND_LIVE: ${{ github.event.inputs.send_live }}
         run: |
           python3 - <<'EOF'
-          import json, os, datetime, urllib.request, urllib.parse
+          import json, os, datetime, unicodedata, urllib.request, urllib.parse
           from zoneinfo import ZoneInfo
+
+          def norm(s):
+              return unicodedata.normalize("NFC", str(s)).strip()
+
+          def send(chat_id, text):
+              body = urllib.parse.urlencode({"chat_id": chat_id, "text": text}).encode()
+              url = f"https://api.telegram.org/bot{os.environ['TELEGRAM_TOKEN']}/sendMessage"
+              with urllib.request.urlopen(url, data=body) as r:
+                  return r.status
+
+          admin = os.environ["ADMIN_CHAT_ID"]
+          live = os.environ.get("SEND_LIVE", "").strip().lower() == "true"
 
           override = os.environ.get("INPUT_DATE", "").strip()
           if override:
@@ -30,20 +48,27 @@ jobs:
           else:
               today = datetime.datetime.now(ZoneInfo("Europe/Nicosia")).date()
               target = today + datetime.timedelta(days=1)
+          label = target.strftime("%d/%m/%Y")
 
           with open("last_schedule_state_cyclic.json", encoding="utf-8") as f:
               data = json.load(f)
+          ids = {norm(k): v for k, v in json.loads(os.environ["DOCTOR_CHAT_IDS"]).items()}
 
           doctor = data.get("schedule", {}).get(target.isoformat())
-          label = target.strftime("%d/%m/%Y")
-          if doctor:
-              text = f"TEST: {label} -> {doctor} is on duty"
+          if not doctor:
+              print("No doctor assigned")
+              send(admin, f"{label}: no doctor assigned")
           else:
-              text = f"TEST: {label} -> no doctor assigned"
-          print(text)
-
-          body = urllib.parse.urlencode({"chat_id": os.environ["CHAT_ID"], "text": text}).encode()
-          url = f"https://api.telegram.org/bot{os.environ['TELEGRAM_TOKEN']}/sendMessage"
-          with urllib.request.urlopen(url, data=body) as r:
-              print("Telegram status:", r.status)
+              text = f"Υπενθύμιση: έχετε εφημερία στις {label}."
+              chat = ids.get(norm(doctor))
+              if chat is None:
+                  print("No chat ID for", doctor)
+                  send(admin, f"{label}: {doctor} is on duty but has no chat ID in DOCTOR_CHAT_IDS")
+              elif live:
+                  send(chat, text)
+                  send(admin, f"SENT to {doctor} ({label})")
+                  print("Sent to", doctor)
+              else:
+                  send(admin, f"PREVIEW (not sent): {doctor}, {label}: {text}")
+                  print("Preview only for", doctor)
           EOF
