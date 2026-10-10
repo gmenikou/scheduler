@@ -1,14 +1,17 @@
 name: Telegram test
 
 on:
+  schedule:
+    - cron: "0 17 * * *"
+    - cron: "0 18 * * *"
   workflow_dispatch:
     inputs:
       date:
-        description: "Date to check (YYYY-MM-DD). Leave empty for tomorrow."
+        description: "Check one specific date (YYYY-MM-DD). Leave empty to check +2 and +1 days."
         required: false
         default: ""
       send_live:
-        description: "Tick to really send to the doctor. Unticked = only a preview to you."
+        description: "Tick to really send to the doctors. Unticked = only a preview to you."
         type: boolean
         default: false
 
@@ -25,10 +28,14 @@ jobs:
           DOCTOR_CHAT_IDS: ${{ secrets.DOCTOR_CHAT_IDS }}
           INPUT_DATE: ${{ github.event.inputs.date }}
           SEND_LIVE: ${{ github.event.inputs.send_live }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           python3 - <<'EOF'
-          import json, os, datetime, unicodedata, urllib.request, urllib.parse
+          import json, os, sys, datetime, unicodedata
+          import urllib.request, urllib.parse, urllib.error
           from zoneinfo import ZoneInfo
+
+          SEND_HOUR = 20  # Cyprus hour at which the automatic reminders are sent
 
           def norm(s):
               return unicodedata.normalize("NFC", str(s)).strip()
@@ -36,39 +43,68 @@ jobs:
           def send(chat_id, text):
               body = urllib.parse.urlencode({"chat_id": chat_id, "text": text}).encode()
               url = f"https://api.telegram.org/bot{os.environ['TELEGRAM_TOKEN']}/sendMessage"
-              with urllib.request.urlopen(url, data=body) as r:
-                  return r.status
+              try:
+                  with urllib.request.urlopen(url, data=body) as r:
+                      return True
+              except urllib.error.HTTPError as e:
+                  print("Telegram error", e.code, e.read().decode("utf-8", "replace"))
+                  return False
 
-          admin = os.environ["ADMIN_CHAT_ID"]
-          live = os.environ.get("SEND_LIVE", "").strip().lower() == "true"
+          event = os.environ.get("EVENT_NAME", "")
+          now = datetime.datetime.now(ZoneInfo("Europe/Nicosia"))
+
+          if event == "schedule" and now.hour != SEND_HOUR:
+              print(f"Cyprus time is {now:%H:%M}, not {SEND_HOUR}:00. Nothing to do.")
+              sys.exit(0)
+
+          live = event == "schedule" or os.environ.get("SEND_LIVE", "").strip().lower() == "true"
+          admin = os.environ["ADMIN_CHAT_ID"].strip()
 
           override = os.environ.get("INPUT_DATE", "").strip()
           if override:
-              target = datetime.date.fromisoformat(override)
+              targets = [(datetime.date.fromisoformat(override), None)]
           else:
-              today = datetime.datetime.now(ZoneInfo("Europe/Nicosia")).date()
-              target = today + datetime.timedelta(days=1)
-          label = target.strftime("%d/%m/%Y")
+              targets = [(now.date() + datetime.timedelta(days=d), d) for d in (2, 1)]
 
           with open("last_schedule_state_cyclic.json", encoding="utf-8") as f:
               data = json.load(f)
           ids = {norm(k): v for k, v in json.loads(os.environ["DOCTOR_CHAT_IDS"]).items()}
 
-          doctor = data.get("schedule", {}).get(target.isoformat())
-          if not doctor:
-              print("No doctor assigned")
-              send(admin, f"{label}: no doctor assigned")
-          else:
-              text = f"Υπενθύμιση: έχετε εφημερία στις {label}."
+          ok = True
+          report = []
+          for target, days in targets:
+              label = target.strftime("%d/%m/%Y")
+              doctor = data.get("schedule", {}).get(target.isoformat())
+              if not doctor:
+                  print("No doctor assigned for", label)
+                  report.append(f"{label}: no doctor assigned")
+                  continue
+
+              if days == 2:
+                  text = f"Υπενθύμιση: έχετε εφημερία σε 2 ημέρες, {label}."
+              elif days == 1:
+                  text = f"Υπενθύμιση: έχετε εφημερία αύριο, {label}."
+              else:
+                  text = f"Υπενθύμιση: έχετε εφημερία στις {label}."
+
               chat = ids.get(norm(doctor))
               if chat is None:
                   print("No chat ID for", doctor)
-                  send(admin, f"{label}: {doctor} is on duty but has no chat ID in DOCTOR_CHAT_IDS")
+                  report.append(f"{label}: {doctor} has NO chat ID in DOCTOR_CHAT_IDS")
               elif live:
-                  send(chat, text)
-                  send(admin, f"SENT to {doctor} ({label})")
-                  print("Sent to", doctor)
+                  if send(chat, text):
+                      print("Sent to", doctor, label)
+                      report.append(f"SENT to {doctor} ({label})")
+                      send(admin, f"📋 Copy of the reminder sent to {doctor}:\n\n{text}")
+                  else:
+                      ok = False
+                      report.append(f"FAILED to send to {doctor} ({label})")
               else:
-                  send(admin, f"PREVIEW (not sent): {doctor}, {label}: {text}")
-                  print("Preview only for", doctor)
+                  report.append(f"PREVIEW (not sent): {doctor}, {label}: {text}")
+
+          if report:
+              send(admin, "\n".join(report))
+
+          if not ok:
+              sys.exit(1)
           EOF
