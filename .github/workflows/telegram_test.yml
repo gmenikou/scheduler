@@ -9,6 +9,14 @@ on:
         description: "Check one specific date (YYYY-MM-DD). Leave empty to check +2 and +1 days."
         required: false
         default: ""
+      style:
+        description: "Wording to preview when a date is typed"
+        type: choice
+        options:
+          - plain
+          - 48h
+          - 24h
+        default: plain
       send_live:
         description: "Tick to really send to the doctors. Unticked = only a preview to you."
         type: boolean
@@ -25,6 +33,7 @@ jobs:
           ADMIN_CHAT_ID: ${{ secrets.TELEGRAM_TEST_CHAT_ID }}
           DOCTOR_CHAT_IDS: ${{ secrets.DOCTOR_CHAT_IDS }}
           INPUT_DATE: ${{ github.event.inputs.date }}
+          STYLE: ${{ github.event.inputs.style }}
           SEND_LIVE: ${{ github.event.inputs.send_live }}
           EVENT_NAME: ${{ github.event_name }}
         run: python3 send_reminders.py
