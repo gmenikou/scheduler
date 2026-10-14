@@ -98,7 +98,8 @@ admin = os.environ["ADMIN_CHAT_ID"].strip()
 
 override = os.environ.get("INPUT_DATE", "").strip()
 if override:
-    targets = [(datetime.date.fromisoformat(override), None)]
+    style_days = {"48h": 2, "24h": 1}.get(os.environ.get("STYLE", "").strip())
+    targets = [(datetime.date.fromisoformat(override), style_days)]
 else:
     targets = [(base + datetime.timedelta(days=d), d) for d in (2, 1)]
 
