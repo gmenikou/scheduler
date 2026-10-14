@@ -19,7 +19,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Find who is on duty and send
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
@@ -28,50 +27,4 @@ jobs:
           INPUT_DATE: ${{ github.event.inputs.date }}
           SEND_LIVE: ${{ github.event.inputs.send_live }}
           EVENT_NAME: ${{ github.event_name }}
-        run: |
-          python3 - <<'EOF'
-          import json, os, sys, datetime, unicodedata
-          import urllib.request, urllib.parse, urllib.error
-          from zoneinfo import ZoneInfo
-
-          def norm(s):
-              return unicodedata.normalize("NFC", str(s)).strip()
-
-          def send(chat_id, text):
-              body = urllib.parse.urlencode({"chat_id": chat_id, "text": text}).encode()
-              url = f"https://api.telegram.org/bot{os.environ['TELEGRAM_TOKEN']}/sendMessage"
-              try:
-                  with urllib.request.urlopen(url, data=body) as r:
-                      return True
-              except urllib.error.HTTPError as e:
-                  print("Telegram error", e.code, e.read().decode("utf-8", "replace"))
-                  return False
-
-          event = os.environ.get("EVENT_NAME", "")
-          now = datetime.datetime.now(ZoneInfo("Europe/Nicosia"))
-
-          # If GitHub starts a scheduled run very late (after midnight),
-          # count the days from the previous evening's date.
-          base = now.date()
-          if event == "schedule" and now.hour < 6:
-              base = base - datetime.timedelta(days=1)
-
-          live = event == "schedule" or os.environ.get("SEND_LIVE", "").strip().lower() == "true"
-          admin = os.environ["ADMIN_CHAT_ID"].strip()
-
-          override = os.environ.get("INPUT_DATE", "").strip()
-          if override:
-              targets = [(datetime.date.fromisoformat(override), None)]
-          else:
-              targets = [(base + datetime.timedelta(days=d), d) for d in (2, 1)]
-
-          with open("last_schedule_state_cyclic.json", encoding="utf-8") as f:
-              data = json.load(f)
-          ids = {norm(k): v for k, v in json.loads(os.environ["DOCTOR_CHAT_IDS"]).items()}
-
-          ok = True
-          report = []
-          for target, days in targets:
-              label = target.strftime("%d/%m/%Y")
-              doctor = data.get("schedule", {}).get(target.isoformat())
-              if not doctor:
+        run: python3 send_reminders.py
