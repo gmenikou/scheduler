@@ -120,7 +120,7 @@ for target, days in targets:
     name = vocative(doctor)
     day_name = WEEKDAYS[target.weekday()]
     if days == 2:
-        text = (f"🗓️ Γεια σου {name}! Σε 2 ημέρες, {day_name} {label}, έχεις εφημερία.🩺 \n"
+        text = (f"🗓️ Γεια σου {name}! Σε 2 ημέρες, {day_name} {label}, έχεις εφημερία.🩺 \n")
     elif days == 1:
         text = (f"⏰ Καλησπέρα {name}! Αύριο, {day_name} {label}, έχεις εφημερία.\n"
                 f"Καλή ξεκούραση απόψε και καλή δύναμη! 💪🌙")
