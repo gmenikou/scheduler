@@ -52,7 +52,7 @@ FIXED_HOLIDAYS = [
     (12, 31, "Παραμονή Πρωτοχρονιάς"),
 ]
 
-STATE_FILE = "last_schedule_state_cyclic.json"
+STATE_FILE = "last_schedule_state_cyclic_1.json"
 
 # ----------------------------
 # STATE PERSISTENCE FUNCTIONS
