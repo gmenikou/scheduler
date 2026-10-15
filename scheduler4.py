@@ -353,31 +353,20 @@ def compute_regular_holidays_chronological(schedule, regular_holidays):
 
 def compute_balance(schedule, start_date, end_date, holiday_names, doctors_list):
     counts = {doc: {wd: 0 for wd in WEEKDAY_LABELS} for doc in doctors_list}
+    holiday_counts = {doc: 0 for doc in doctors_list}
+    
     for date, doc in schedule.items():
-        if doc in counts and doc is not None:
-            counts[doc][WEEKDAY_LABELS[date.weekday()]] += 1
+        if doc in doctors_list and doc is not None:
+            if start_date <= date <= end_date:
+                wd_idx = date.weekday()
+                counts[doc][WEEKDAY_LABELS[wd_idx]] += 1
+                if date in holiday_names:
+                    holiday_counts[doc] += 1
 
     df = pd.DataFrame.from_dict(counts, orient="index").reset_index()
     df.rename(columns={"index": "Doctor"}, inplace=True)
     df["Weekdays"] = df["Mon"] + df["Tue"] + df["Wed"] + df["Thu"]
-
-    major_blocks = get_major_holiday_blocks_in_range(start_date, end_date, len(doctors_list))
-    major_counts = defaultdict(int)
-    for block in major_blocks:
-        for d in block["dates"]:
-            doc = schedule.get(d)
-            if doc in doctors_list and doc is not None:
-                major_counts[doc] += 1
-
-    all_major_dates = {d for block in major_blocks for d in block["dates"]}
-    regular_hols = {d: n for d, n in holiday_names.items() if d not in all_major_dates}
-    regular_counts = defaultdict(int)
-    for d in regular_hols:
-        doc = schedule.get(d)
-        if doc in doctors_list and doc is not None:
-            regular_counts[doc] += 1
-
-    df["Αργίες"] = df["Doctor"].apply(lambda doc: major_counts.get(doc, 0) + regular_counts.get(doc, 0))
+    df["Αργίες"] = df["Doctor"].apply(lambda doc: holiday_counts.get(doc, 0))
     df["Total"] = df["Weekdays"] + df["Fri"] + df["Sat"] + df["Sun"] + df["Αργίες"]
     return df[["Doctor", "Weekdays", "Fri", "Sat", "Sun", "Αργίες", "Total"]]
 
