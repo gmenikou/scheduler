@@ -2,7 +2,7 @@ name: Telegram test
 
 on:
   schedule:
-    - cron: "17 17 * * *"
+    - cron: "55 12 * * *"
   workflow_dispatch:
     inputs:
       date:
