@@ -103,7 +103,7 @@ if override:
 else:
     targets = [(base + datetime.timedelta(days=d), d) for d in (2, 1)]
 
-with open("last_schedule_state_cyclic.json", encoding="utf-8") as f:
+with open("last_schedule_state_cyclic_1.json", encoding="utf-8") as f:
     data = json.load(f)
 ids = {norm(k): v for k, v in json.loads(os.environ["DOCTOR_CHAT_IDS"]).items()}
 
