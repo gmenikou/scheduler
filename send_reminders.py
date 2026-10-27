@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 
 MUSIC_FILE = "reminder.mp3"  # "" = no music
 
-WEEKDAYS = ["Δευτέρα", "Τρίτη", "Τετάρτη", "Πέμπτη", "Παρασκευή", "Σάββατο", "Κυριακή"]
+WEEKDAYS = ["Δευτέρα", "Τρίτη", "Τετάρτη", "Πέμπτη", "Παρασκευή", "Σάββατο", "Κυριακή"
 
 # Manual fixes for names that the automatic rule gets wrong, e.g.
 # NAME_OVERRIDES = {"Παναγιώτης": "Παναγιώτη"}
